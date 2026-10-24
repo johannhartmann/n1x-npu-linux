@@ -77,7 +77,9 @@ These sources are not assumed drop-in compatible with the P16.
 
 ## Before hardware access
 
-Audit live DSDT and all SSDTs, including extensions of `DLA0`, parent scopes,
+See the [candidate ACPI audit](docs/acpi-audit.md), including the important
+Windows/P16 address discrepancy. Verify live DSDT and all SSDTs, including
+extensions of `DLA0`, parent scopes,
 `_PS0/_PS3`, `_PR0/_PR3`, `_DEP`, and referenced PowerResource methods. Do not
 assume a successful probe is side-effect free: ACPI power transitions can precede
 it. No development module is installed or loaded by these scripts.

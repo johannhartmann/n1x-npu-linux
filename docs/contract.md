@@ -212,6 +212,29 @@ physical ACPI aperture. The firmware-upload callback receives logical offsets;
 a future MMIO backend must apply the independently established map and resource
 bounds before any access.
 
+## Windows hardware-profile chain
+
+`inspect_windows_profiles.py` executes the original ID classifier at RVA
+`0xd3c0e8`, device HAL initializer `0x194fb08`, ID getters, resource-list
+providers, and constructor branch `0xd39508..0xd395bc` in isolated RAM.
+IDs 0x254/0x256 map to device profiles 3/4, DLA input 0x303033 and selector 1.
+ID 0x354 maps to profile 6, DLA input 0x404044 and selector 2. This establishes
+the internal link from ID 0x354 to the extracted firmware descriptor tag 0x354;
+it does not yet prove the live P16's input ID.
+
+The profile-6 provider at `0xd42380` returns three 24-byte static records from
+RVA `0x13ac170`: id0 physical 0x19340000/0x40000, id1 0x3a340000/0x40000,
+id2 0x31380000/0x10000. Profiles 3/4 use provider `0xd3fcc0` and two records at
+`0x13ac140`: id0 0x19000000/0x40000, id2 0x31380000/0x10000.
+The generic resource mapper `0xd3fd80` preserves these IDs and maps the supplied
+base/length into device resource descriptors. Reported physical addresses were
+never mapped in the emulator.
+
+The P16's candidate ACPI `_CRS` matches the **older** list, not profile 6.
+This discrepancy is a required bring-up investigation, not grounds to infer a
+working physical address. See [the ACPI audit](acpi-audit.md) for all six table
+hashes, offline power-path review, and remaining live-table verification.
+
 ## Diagnostic loadable
 
 Runtime RVA `0xa6610`, raw offset `0xa5810`, size `0x5a9fc8` (5,939,144 bytes).
@@ -240,6 +263,8 @@ address lists; exact transformation into kernel/firmware descriptors remains ope
 The historical DSDT's DLA0 block contains HID/CID/revision/CCA/resources and a
 _STA returning 0 when DLAE is set, otherwise 0xf. It declares no local _PS0,
 _PS3, _PR0 or _PR3. A global device-property package references DLA0 as “dla”.
-This is not a complete audit: live SSDTs and scope extensions must still be read.
+An archived/candidate audit now covers all five SSDTs and parent scopes; no DLA
+power methods or references were found there. Live identity still needs checking.
+See [the detailed audit](acpi-audit.md).
 The read-only live-table copy currently awaits system authentication. No module
 has been bound, no NPU MMIO read/write issued, and no firmware boot attempted.
