@@ -116,9 +116,33 @@ After any attempted write, delivery must be treated as uncertain until
 recovery/quiescence. Never automatically retry or free referenced DMA storage.
 **A successful echo is not firmware-command completion.**
 
+## Recovered reply primitive
+
+`n1x_sroot_receive()` follows original receive routine `0x5328`: poll bit 0 at
+5 × stride, read the header and indicated payload words at 4 × stride, then
+write 1 at 6 × stride. It retains the raw header. Original decoder `0x4f70`
+extracts command from bits 0–7, word count from 8–11, status from 12–23 and an
+additional byte from 24–31. The additional byte is exposed as `detail` without
+assigning a hardware meaning. Request encoding and reply decoding are not
+symmetric.
+
+Thirty-six synthetic reply traces and decoded field tuples match the original
+ARM64 receive/decoder routines across three strides, four word counts, and
+success/nonzero/all-set status fields. Every callback in a three-word reply is
+fault-injected. The Linux output is published only after successful reads and
+acknowledgment. Polling is bounded and checked before reading (the original
+receive routine ignores that polling return). Count 15 is rejected before
+payload reads/acknowledgment instead of exceeding the verified 14-word buffer;
+recovery remains the caller's responsibility. Nonzero firmware status is
+returned as data, not disguised as transport failure or command success.
+
+These are separate primitives, not a complete boot transaction. The caller must
+serialize preparation, TX, echo and RX, validate command/status/payload, and
+retain DMA storage until an appropriate response or confirmed quiescence.
+
 ## Remaining bring-up gates
 
-Implement and verify bus preparation, reply decoding/completion, DMA lifetime,
+Implement and verify bus preparation, full command completion policy, DMA lifetime,
 and the complete firmware upload request. Recover the actual register stride
 and resource setup from the Windows initialization path. No mailbox MMIO,
 IRP submission, firmware loading or reset was performed. Any eventual ROT0

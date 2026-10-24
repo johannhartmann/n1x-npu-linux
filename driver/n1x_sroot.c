@@ -65,3 +65,39 @@ int n1x_sroot_send(const struct n1x_dla_io *io, __u32 stride,
         return err;
     return mismatch ? -EIO : 0;
 }
+
+int n1x_sroot_receive(const struct n1x_dla_io *io, __u32 stride,
+                      struct n1x_sroot_reply *reply,
+                      __u32 polls, __u32 interval_us)
+{
+    struct n1x_sroot_reply local = {0};
+    __u32 i;
+    int err;
+    if (!io || !io->read32 || !io->write32 || !reply || !stride ||
+        (stride & 3) || stride > ~(__u32)0 / 6 ||
+        !polls || polls > 5001 ||
+        (polls > 1 && (!interval_us || !io->delay_us)))
+        return -EINVAL;
+    err = wait_ready(io, stride * 5, polls, interval_us);
+    if (err)
+        return err;
+    err = io->read32(io->context, stride * 4, &local.header);
+    if (err)
+        return err;
+    local.count = (local.header >> 8) & 15;
+    if (local.count > N1X_SROOT_MAX_WORDS)
+        return -EMSGSIZE;
+    local.command = local.header & 255;
+    local.status = (local.header >> 12) & 4095;
+    local.detail = local.header >> 24;
+    for (i = 0; i < local.count; i++) {
+        err = io->read32(io->context, stride * 4, &local.words[i]);
+        if (err)
+            return err;
+    }
+    err = io->write32(io->context, stride * 6, 1);
+    if (err)
+        return err;
+    *reply = local;
+    return 0;
+}

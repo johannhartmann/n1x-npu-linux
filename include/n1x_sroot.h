@@ -16,4 +16,19 @@
 int n1x_sroot_send(const struct n1x_dla_io *io, __u32 stride,
                    __u8 command, const __u32 *words, __u8 count,
                    __u32 polls, __u32 interval_us);
+/* Raw reply preserved alongside fields decoded by Windows RVA 0x4f70.
+ * Transport success does not imply status == 0. Caller validates command,
+ * status, detail and payload against its outstanding request. Output is only
+ * published after all reads and acknowledgment succeed. Oversized replies and
+ * errors leave recovery/ownership with the transaction owner; no auto retry.
+ */
+struct n1x_sroot_reply {
+    __u32 header;
+    __u32 words[N1X_SROOT_MAX_WORDS];
+    __u16 status;
+    __u8 command, detail, count;
+};
+int n1x_sroot_receive(const struct n1x_dla_io *io, __u32 stride,
+                      struct n1x_sroot_reply *reply,
+                      __u32 polls, __u32 interval_us);
 #endif
