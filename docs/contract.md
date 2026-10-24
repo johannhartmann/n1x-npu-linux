@@ -270,7 +270,7 @@ shared ping ABI, not proof of the full task descriptor ABI or a successful
 ping on the P16. DMA allocation, visibility, completion and actual hardware
 ping remain unimplemented in the Linux components.
 
-All six Linux C components compile as kernel objects. The full word-upload
+All seven Linux C components compile as kernel objects. The full word-upload
 differential check continues to pass with the shared I/O callback layout.
 No loadable module, autoload alias, hardware binding or device-access backend
 has been introduced.
@@ -307,6 +307,53 @@ arguments leave output untouched. The builder does not validate DMA ownership,
 reachability, address-list contents or timeout units. The checks deliberately
 stop before scheduling; full address/action/descriptor compatibility and a
 numerical task still require validation.
+
+## Executed firmware dispatcher, ping and response handshake
+
+`emulate_firmware_commands.py` runs the **original RISC-V** dispatcher at
+0x102382, ping handler 0x102576 and response helper 0x102326. Logging and the
+engine-hang query are stubbed; DMA helpers perform RAM copies; the register
+page is RAM with a simulated host ACK. The firmware itself multiplies ping
+challenges by four, constructs response words, triggers the simulated interrupt
+and restores the old mailbox values after ACK.
+
+Twelve cases cover four valid challenges, u32 multiplication overflow, each DMA
+failure, unsupported commands, disabled response flags and missing host ACK.
+Captured responses match the public message/command/error layout: low byte
+message, next byte command, next byte error. Command 1 success yields 0x102;
+DMA error yields 0x40101; challenge overflow yields 0x110101. Error 17 is **not**
+in the R38.4 error enum, so that enum cannot be treated as exhaustive here.
+Mailbox1 echoes the command data (the aligned DMA address for ping).
+
+The response helper posts the response at internal firmware register addresses
+0x01400040/44, enables/raises SWGEN1, and loops until mailbox0 equals
+`0xD1A0CAFE`. It then restores the previous mailbox pair. With no host ACK the
+bounded offline observation remains in that loop; it is not a firmware timeout.
+Internal RISC-V register addresses are not the P16 physical CPU apertures.
+
+The Linux helper `n1x_dla_take_response` reads pending SWGEN1 from logical
+IRQSTAT 0x8, captures mailbox0/1, writes 0x80 to IRQMCLR 0xd24 and IRQSCLR 0x4,
+then writes the ACK to mailbox0. Clear/ACK ordering follows the public R38.4 ISR.
+The added pending check avoids acknowledging an unrelated/spurious interrupt.
+Failures leave the caller's output unchanged; partial clear/ACK failure requires
+recovery, not an assumption that DMA storage can be freed.
+
+`test_response.py` couples this C helper to the actual firmware emulator for
+successful and overflow pings. The real firmware resumes and restores mailboxes
+after the C helper's ACK. Six I/O failure prefixes and a spurious interrupt are
+also checked. IRQSTAT/routing are synthetic, not tested hardware behavior.
+
+The firmware switch table at code VA 0x10ad88 has active paths for commands
+1, 6, 7, 10, 11, 12–17 and 25. Entries 2–5, 8–9 and 18–24 go to the invalid-method
+path. The purpose of command 25 is not established. In particular the public
+header's LPWR commands 23/24 cannot be assumed usable in this firmware.
+
+**Command completion is not task completion.** Command 7 calls the queue-submit
+handler before returning through the common command response path. A driver
+must keep task/model/DMA resources alive until an actual task fence/status or
+verified device quiescence; receipt of message 2 for command 7 is insufficient.
+Interrupt handling must be working before firmware can wait on a host ACK.
+No physical IRQ, MMIO, DMA, firmware boot or inference has been tested.
 
 ## Diagnostic loadable
 
