@@ -270,10 +270,43 @@ shared ping ABI, not proof of the full task descriptor ABI or a successful
 ping on the P16. DMA allocation, visibility, completion and actual hardware
 ping remain unimplemented in the Linux components.
 
-All five Linux C components compile as kernel objects. The full word-upload
+All six Linux C components compile as kernel objects. The full word-upload
 differential check continues to pass with the shared I/O callback layout.
 No loadable module, autoload alias, hardware binding or device-access backend
 has been introduced.
+
+## Task descriptor checks from the RISC-V firmware
+
+Radare2 disassembly of the extracted monitor code exposes separate descriptor
+checks, found through PC-relative references to the firmware's diagnostic strings.
+`riscv_string_refs.py` finds candidate AUIPC/ADDI references; manual disassembly
+establishes the sites used below. RISC-V execution in Unicorn uses isolated RAM,
+with no firmware initialization, DMA engine or MMIO mapping.
+
+`emulate_task_header_checks.py` runs 1,033 cases against the original firmware:
+
+- The common task header is copied with length 60 at code VA 0x104cc4..0x104cd0.
+- At 0x104d20, byte offset 8 must be version 2 or 3.
+- At 0x104b04, byte offset 9 must equal engine ID 0x44.
+- At 0x104b2a, byte offset 20 is passed to 0x1045d6, which accepts only queue 0.
+- At 0x104b52, the next pointer at offset 0 must be zero or 256-byte aligned.
+- A **different UMD descriptor** check at 0x1018e4 accepts version 1 (stride
+  36 bytes) or version 2 (stride 64 bytes). This is neither the common kernel
+  descriptor version nor the FlatBuffer container version.
+
+The builtin diagnostic's blob `task0-addr0` begins with LE u32 value 1, consistent
+with the first supported UMD version. This observation does not decode the full
+UMD format or prove that the provisional FlatBuffer projection is complete.
+
+`driver/n1x_dla_task.c` builds a simple common version-2 descriptor for queue 0,
+with no actions, flags or v3 extensions. It encodes the public R38.4 packed
+`dla_task_descriptor` layout in little endian without relying on host C padding.
+An independent test compiles the actual public header and compares every byte;
+the produced descriptors also pass the firmware common-header checks. Bad
+arguments leave output untouched. The builder does not validate DMA ownership,
+reachability, address-list contents or timeout units. The checks deliberately
+stop before scheduling; full address/action/descriptor compatibility and a
+numerical task still require validation.
 
 ## Diagnostic loadable
 
