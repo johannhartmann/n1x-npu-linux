@@ -1,12 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef N1X_DLA_TRANSFER_H
 #define N1X_DLA_TRANSFER_H
-#include "n1x_dla_firmware.h"
+#include "n1x_dla_io.h"
 
-struct n1x_dla_word_io {
-    void *context;
-    int (*write32)(void *context, __u32 offset, __u32 value);
-};
 /*
  * Firmware upload only, not device initialization or CPU start. Caller must
  * establish the correct resource aperture, power/reset state and memory limits.
@@ -15,5 +11,5 @@ struct n1x_dla_word_io {
  */
 int n1x_dla_upload_words(const __u8 *blob, size_t size,
                          __u32 code_limit, __u32 data_limit,
-                         const struct n1x_dla_word_io *io);
+                         const struct n1x_dla_io *io);
 #endif

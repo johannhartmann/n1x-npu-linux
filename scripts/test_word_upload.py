@@ -19,7 +19,8 @@ WRITE = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32, ctypes.
 
 
 class IO(ctypes.Structure):
-    _fields_ = [('context', ctypes.c_void_p), ('write32', WRITE)]
+    _fields_ = [('context', ctypes.c_void_p), ('write32', WRITE),
+                ('read32', ctypes.c_void_p), ('delay_us', ctypes.c_void_p)]
 
 
 def main():
@@ -54,7 +55,7 @@ def main():
                 trace.append((offset, value))
                 return -errno.EIO if len(trace)-1 == fail_at else 0
 
-            io = IO(None, write)
+            io = IO(None, write, None, None)
             buffer = ctypes.create_string_buffer(data)
             code = upload(buffer, len(data), code_limit, data_limit, ctypes.byref(io))
             return code, trace

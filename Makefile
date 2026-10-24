@@ -1,6 +1,6 @@
 CC ?= cc
 CFLAGS ?= -O2 -g -Wall -Wextra -Werror
-.PHONY: test test-vendor clean
+.PHONY: test test-vendor kernel-check clean
 tests/test_firmware: tests/test_firmware.c driver/n1x_dla_firmware.c include/n1x_dla_firmware.h
 	$(CC) $(CFLAGS) -Iinclude tests/test_firmware.c driver/n1x_dla_firmware.c -o $@
 test: tests/test_firmware
@@ -16,5 +16,9 @@ test-vendor: test
 	venv/bin/python scripts/emulate_dma_transfer.py
 	venv/bin/python scripts/emulate_core_control.py
 	venv/bin/python scripts/test_word_upload.py
+	venv/bin/python scripts/test_core_control.py
+	venv/bin/python scripts/test_command.py
+kernel-check:
+	$(MAKE) -C /usr/lib/modules/$(shell uname -r)/build M=$(CURDIR)/driver n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o
 clean:
 	rm -f tests/test_firmware

@@ -134,7 +134,7 @@ vtable `0x108e9b8` into the subobject at parent+8. Its forwarding thunks subtrac
 8 from the context argument and dispatch via fields relative to the subobject.
 Accounting for this adjustment connects the transfer callbacks to the HAL table.
 `decode_transfer_registers.py` verifies constructor/thunk bytes and joins them to
-original accessor emulation. This establishes 20 transfer/core-control slots.
+original accessor emulation. This establishes 23 transfer/core-control/method slots.
 
 | Subobject slot | Operation | Logical register offset | Role |
 |---|---|---|---|
@@ -149,6 +149,8 @@ original accessor emulation. This establishes 20 transfer/core-control slots.
 | 0x150 / 0x158 | read / write | 0x118 | DMATRFCMD |
 | 0x160 / 0x168 | read / write | 0xb88 | CPUCTL |
 | 0x1d0 | read | 0x4c | IDLESTATE |
+| 0x190 / 0x198 | read / write | 0x68 | MTHDID |
+| 0x1a8 | write | 0x6c | MTHDWDAT |
 
 R38.4's non-firewall definitions agree where present. The block-index role at
 0x210 is observed in Windows; that public RISC-V header does not define it.
@@ -234,6 +236,44 @@ The P16's candidate ACPI `_CRS` matches the **older** list, not profile 6.
 This discrepancy is a required bring-up investigation, not grounds to infer a
 working physical address. See [the ACPI audit](acpi-audit.md) for all six table
 hashes, offline power-path review, and remaining live-table verification.
+
+## Linux core control and method transport
+
+`driver/n1x_dla_core.c` implements selection/start through the common logical
+I/O callbacks in `n1x_dla_io.h`. The selection trace matches original Windows
+RVA 0xd48c40 after an additional R38.4-based check that BOOT_VECTOR_HI (0xb84)
+is zero. It propagates every I/O error and rejects invalid BCR readback; Windows
+can log/ignore such errors. No power/reset sequence or MMIO backend is supplied.
+
+Start writes CPUCTL=1 and polls IDLESTATE=0 with a caller-selected microsecond
+interval and at most 5,001 reads. Linux delays only between polls and accepts
+idle on the final read. The interval unit is a Linux API contract, not a claim
+about the original Windows delay helper. Tests compare original start writes
+and read sequences, then exercise high-vector rejection, failed selection,
+I/O errors, timeout and invalid polling policy.
+
+The original method sender at RVA 0xd4c800 reads MTHDID (0x68) until pending bit
+16 clears, writes MTHDWDAT (0x6c) first, then writes MTHDID. The reconstructed
+subobject/HAL chain establishes all three offsets. Linux implementation
+`driver/n1x_dla_command.c` matches successful and injected-error traces. Its
+busy timeout is bounded to 5,001 total reads; the Windows routine performs an
+initial read plus up to 5,001 retries. The caller must serialize commands and
+establish DMA visibility before submission. Submission is not completion, and
+a failed final ID write does not prove that the command was not received.
+Referenced DMA buffers must survive until completion or verified quiescence.
+
+Windows ping at RVA 0xd48110 allocates 4 KiB of DMA memory, writes challenge
+0x11111111, passes its bus address shifted right by 8 with command 1, and waits
+for the word to become 0x44444444. This matches R38.4 `nvdla_ioctl_ping`'s
+command-1/aligned-address/challenge-times-four contract. It is evidence for a
+shared ping ABI, not proof of the full task descriptor ABI or a successful
+ping on the P16. DMA allocation, visibility, completion and actual hardware
+ping remain unimplemented in the Linux components.
+
+All five Linux C components compile as kernel objects. The full word-upload
+differential check continues to pass with the shared I/O callback layout.
+No loadable module, autoload alias, hardware binding or device-access backend
+has been introduced.
 
 ## Diagnostic loadable
 

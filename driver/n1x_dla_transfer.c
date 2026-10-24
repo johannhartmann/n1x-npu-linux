@@ -12,7 +12,7 @@
 #define DMEM_BLOCK_INDEX 0x210 /* Observed role; public R38.4 omits this field. */
 #define ITFEN 0x48
 
-static int upload_section(const struct n1x_dla_word_io *io,
+static int upload_section(const struct n1x_dla_io *io,
                           const __u8 *data, __u32 size,
                           __u32 control, __u32 block_index, __u32 port)
 {
@@ -38,7 +38,7 @@ static int upload_section(const struct n1x_dla_word_io *io,
 
 int n1x_dla_upload_words(const __u8 *blob, size_t size,
                          __u32 code_limit, __u32 data_limit,
-                         const struct n1x_dla_word_io *io)
+                         const struct n1x_dla_io *io)
 {
     struct n1x_dla_firmware fw;
     const __u8 *payload;
