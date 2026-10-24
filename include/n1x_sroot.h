@@ -39,4 +39,16 @@ int n1x_sroot_receive(const struct n1x_dla_io *io, __u32 stride,
  */
 int n1x_sroot_prepare(const struct n1x_dla_io *io, __u32 stride,
                       __u32 polls, __u32 interval_us);
+/* Stage an opaque method-2 image and build command 0x18's three words.
+ * Caller supplies CPU-accessible DMA storage and its logical device address;
+ * words must not overlap image/storage. Image/storage may overlap (memmove).
+ * Requires at least the Windows DMF minimum of 32 bytes and a fully 32-bit
+ * addressable allocation. Copies image[4:] and zeros the otherwise untouched
+ * final four bytes. No signature/authentication validation is implemented.
+ * Caller must establish mapping/domain, bounds and coherency before submitting.
+ * Returns without modifying outputs on invalid input. Does not submit/free DMA.
+ */
+int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
+                          const __u8 *image, size_t size,
+                          __u64 dma_address, __u32 words[3]);
 #endif

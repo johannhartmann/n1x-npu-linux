@@ -36,6 +36,7 @@ the remaining mailbox transaction and a physical Linux backend remain central bo
 requirements. The callback-only SROOT TX/echo component now matches twelve
 original Windows ARM64 traces. Its separate reply reader/decoder matches
 36 additional Windows traces. Mailbox preparation matches 48 further traces;
+Image staging and its three-word upload request are implemented;
 whole-transaction orchestration is still pending. See [SROOT transport evidence](docs/sroot-transport.md) for hashes,
 extraction, resource boundaries and verification limits. Blob signature and
 authentication semantics have not been established.

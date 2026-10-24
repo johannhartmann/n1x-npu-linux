@@ -225,7 +225,63 @@ stored values and all allocation arguments, tests both accepted start bounds,
 rejects addresses immediately outside them, and exercises allocation failure.
 The OS allocator owns the full-extent bound guarantee; the driver's redundant
 start-address check alone does not establish it. No real memory was allocated
-for DMA, and copy, flush/coherency, bounds origin and release remain unresolved.
+for DMA, and flush/coherency and bounds origin remain unresolved. Copy and observed release
+behavior are traced below, without treating cleanup as proof of quiescence.
+
+## Image framing, copying and observed lifetime
+
+Original `0x314a0` obtains the input through KMDF indices 267
+(`WdfRequestRetrieveInputMemory`) and 194 (`WdfMemoryGetBuffer`); these are
+identified by Microsoft's [KMDF table](https://github.com/microsoft/Windows-Driver-Frameworks/blob/main/src/publicinc/wdf/kmdf/1.33/wdffuncenum.h).
+It stores the CPU input pointer at +0x68 and full byte length at +0x70, rejects
+length greater than context +0x30, then reads the first little-endian u32 into
++0x1c. Accepted identifiers are `0xc0300`, `0xc0302` through `0xc0305`, and
+`0x90400`; `0xc0301` is not accepted. The DMF table imposes the outer 32-byte
+minimum. The parser alone is not a complete length validator.
+
+Copy routine `0x39b0` requires valid input/output pointers and size >4; it
+copies **input +4, length -4** into the common buffer. It neither copies the
+identifier nor initializes the final four allocated bytes. The original
+upload builder `0x31f18..0x31fb4` still sends command `0x18` with words:
+`[identifier, full_input_length, logical_dma_address_low32]`. The length is
+not reduced by four. No cryptographic interpretation of the identifier or
+opaque remainder is established.
+
+`n1x_sroot_stage_image()` reproduces the framing/request words and payload
+copy, but explicitly zeros the otherwise untouched four-byte tail. This is
+**Linux policy**, not evidence of Windows allocator initialization or proven
+firmware expectations. The tail's hardware significance remains untested.
+The helper accepts at least 32 bytes, checks capacity, identifiers and the
+entire 32-bit DMA address extent before mutation, supports overlapping input
+and output via memmove, and performs no allocation/submission. The caller owns
+DMA mapping, bounds, coherency and lifetime; the helper does not authenticate
+an image. Logical DMA address zero is representable and not confused with a
+null CPU pointer.
+
+`emulate_sroot_image.py` executes the original validation, copy call site and
+request-builder slice with stubbed KMDF/memcpy calls. A sentinel-filled
+allocation proves the untouched tail; six accepted identifiers, four rejected
+identifiers, size limits and three non-default sizes are checked.
+`test_sroot_image.py` checks 36 Linux staging cases (including in-place copies),
+invalid-input non-mutation, full-extent/address overflow and both actual P16
+opaque variant sizes 67,508/77,492 bytes. These are byte/word contract tests,
+not hardware boot or signature checks.
+
+Original cleanup `0x3e00` calls DMA_OPERATIONS +0x18 (`FreeCommonBuffer`),
+with adapter, full length, **logical** address, CPU pointer and cache-enabled
+argument zero. A `dmb sy` precedes the call. It clears input/size/CPU/DMA/physical
+fields but retains the adapter. Its guard skips freeing logical address zero;
+that observed Windows guard is not a general rule that zero cannot be a valid
+DMA mapping. The cleanup emulator checks arguments, fields and this edge case.
+
+The original upload suffix `0x31fb8..0x32194` invokes cleanup on both transport
+success and failure, then stops its timer and releases its lock. Four executed
+cases confirm this, including nonzero firmware status/detail. The wrapper
+requires both transport return and the **entire decoded status/detail word**
+to be zero; otherwise it returns `0xc0000229`. This behavior does not establish
+that all error returns imply DMA quiescence. Linux deliberately has no automatic
+free/retry path yet. A barrier alone does not prove device completion, and the
+copy path contains no independently established cache-maintenance operation.
 
 ## Remaining bring-up gates
 

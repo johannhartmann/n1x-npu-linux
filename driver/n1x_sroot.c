@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include <linux/errno.h>
+#include <linux/string.h>
 #include "n1x_sroot.h"
 
 static int wait_ready(const struct n1x_dla_io *io, __u32 offset,
@@ -154,4 +155,29 @@ int n1x_sroot_prepare(const struct n1x_dla_io *io, __u32 stride,
     if (err)
         return err;
     return (value & 255) ? -EBUSY : 0;
+}
+
+int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
+                          const __u8 *image, size_t size,
+                          __u64 dma_address, __u32 words[3])
+{
+    __u32 tag;
+    if (!buffer || !image || !words || size < 32 || capacity < size ||
+        size > ~(__u32)0 || dma_address > ~(__u32)0 ||
+        size - 1 > ~(__u32)0 - dma_address)
+        return -EINVAL;
+    tag = (__u32)image[0] | (__u32)image[1] << 8 |
+          (__u32)image[2] << 16 | (__u32)image[3] << 24;
+    if (tag != 0xc0300 && tag != 0x90400 &&
+        (tag < 0xc0302 || tag > 0xc0305))
+        return -EINVAL;
+    memmove(buffer, image + 4, size - 4);
+    /* Windows leaves these allocator-owned bytes untouched. Do not expose
+     * unspecified allocation contents; the hardware meaning is still unknown.
+     */
+    memset(buffer + size - 4, 0, 4);
+    words[0] = tag;
+    words[1] = size;
+    words[2] = dma_address;
+    return 0;
 }
