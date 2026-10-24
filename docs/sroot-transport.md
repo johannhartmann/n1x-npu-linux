@@ -160,7 +160,8 @@ payload reads/acknowledgment instead of exceeding the verified 14-word buffer;
 recovery remains the caller's responsibility. Nonzero firmware status is
 returned as data, not disguised as transport failure or command success.
 
-These are separate primitives, not a complete boot transaction. The caller must
+The primitives are composed by the exchange helper described below, but do not
+constitute a complete boot transaction. The caller must
 serialize preparation, TX, echo and RX, validate command/status/payload, and
 retain DMA storage until an appropriate response or confirmed quiescence.
 
@@ -320,9 +321,41 @@ The original readiness loop `0x4828` returns vendor code 6 if this predicate
 fires before bit 0 becomes ready. Pending-notification drain `0x5018` does not
 consult the flag, so the original overall operation is not guaranteed bounded
 by that timer. Some callers also ignore the ready-poll return, as noted above.
-Linux deliberately bounds each stage; no complete shared-deadline transaction
-or actual timer scheduling is implemented yet. This evidence does not make a
+Linux deliberately bounds each stage; no shared absolute deadline or actual
+timer scheduling is implemented yet. This evidence does not make a
 timeout a proof that firmware/DMA stopped.
+
+## Complete mailbox exchange
+
+`n1x_sroot_exchange()` composes preparation, TX/echo and RX into one callback-only
+transaction. It validates all phase parameters before any preparation write,
+returns immediately on an error and never retries, resets or frees referenced
+DMA storage. The caller must exclusively own an initially idle mailbox, retain
+any DMA mappings, implement a global deadline if needed, and validate the reply
+before assigning command-completion semantics. Every individual stage has the
+supplied bounded polling budget; this is not one shared 70-second deadline.
+
+`test_sroot_exchange.py` executes the **complete original Windows wrapper at
+0x5580**, including its original preparation, encoder, TX/echo, RX/decoder and
+compiler stack-cookie helpers. Only the memory-mapped device is synthetic;
+register operations are recorded against a simulated mailbox. Forty-eight
+complete MMIO traces match across strides 4/16, TX/RX counts 0/1/3/14, zero and
+nonzero status/detail, and initially pending stale RX notifications. Linux's
+intentional drain delays are excluded when comparing MMIO trace order. Every
+one of 21 callbacks in a three-word upload transaction is fault-injected; no
+later stage runs after error, and no partial reply is published. Busy and
+stuck-ready/echo/reply cases are also tested.
+
+The original wrapper returns transport success even for a nonzero firmware
+status (it exports the decoded status separately), and accepts a response
+command byte differing from the request. Those behaviors are reproduced as
+**transport semantics only**. Linux always returns the captured reply payload,
+including on firmware-status errors; Windows skips copying the optional payload
+when its low 12-bit status is nonzero. This preserves diagnostic evidence but
+must not be interpreted as a successful firmware operation. The outer Windows
+upload wrapper applies its additional status/detail check as described above.
+No response-identity contract has yet been recovered from a real SROOT firmware
+response, so the transport does not invent one.
 
 ## Remaining bring-up gates
 

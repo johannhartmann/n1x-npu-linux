@@ -184,3 +184,25 @@ int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
     words[2] = dma_address;
     return 0;
 }
+
+int n1x_sroot_exchange(const struct n1x_dla_io *io, __u32 stride,
+                       __u8 command, const __u32 *words, __u8 count,
+                       struct n1x_sroot_reply *reply,
+                       __u32 polls, __u32 interval_us)
+{
+    int err;
+    /* Validate all phases before preparation can write or discard stale RX. */
+    if (!io || !io->read32 || !io->write32 || !reply || !stride ||
+        (stride & 3) || stride > ~(__u32)0 / 12 ||
+        count > N1X_SROOT_MAX_WORDS || (count && !words) ||
+        !polls || polls > 5001 ||
+        (polls > 1 && (!interval_us || !io->delay_us)))
+        return -EINVAL;
+    err = n1x_sroot_prepare(io, stride, polls, interval_us);
+    if (err)
+        return err;
+    err = n1x_sroot_send(io, stride, command, words, count, polls, interval_us);
+    if (err)
+        return err;
+    return n1x_sroot_receive(io, stride, reply, polls, interval_us);
+}

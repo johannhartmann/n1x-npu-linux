@@ -54,4 +54,16 @@ int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
                           const __u8 *image, size_t size,
                           __u64 dma_address, __u32 dma_minimum,
                           __u32 dma_maximum, __u32 words[3]);
+/* One serialized prepare -> TX/echo -> RX transaction. Caller owns an idle
+ * mailbox for the entire call, any DMA storage, and any global deadline.
+ * Each polling stage uses the supplied bounded budget. No retries, DMA frees
+ * or reset/recovery are performed. Reply is published only on transport
+ * success, which DOES NOT imply firmware status/detail success or matching
+ * request identity. Validate these before treating an operation as completed.
+ * After an attempted write, an error leaves delivery/ownership uncertain.
+ */
+int n1x_sroot_exchange(const struct n1x_dla_io *io, __u32 stride,
+                       __u8 command, const __u32 *words, __u8 count,
+                       struct n1x_sroot_reply *reply,
+                       __u32 polls, __u32 interval_us);
 #endif
