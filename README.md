@@ -19,13 +19,20 @@ The extractor and Linux parser support that image; actual boot is untested.
 **The detailed T35x firmware emulations below concern HAL 2, not this HAL-1
 image.** They remain reference research and do not validate the P16 firmware's
 commands, task ABI, engine registers or instruction opcodes. Those must now be
-rechecked against HAL 1. Signed firmware/boot variants and the live ACPI audit
+rechecked against HAL 1. Opaque firmware/boot variants and the live ACPI audit
 remain unresolved; no hardware backend is enabled. Basic HAL-1 ping and
 mailbox/ACK handling have now been independently revalidated in an RV32 emulator,
 including round trips through the Linux C response handler. The HAL-1 word uploader
 also matches Windows across 16,839 callback writes, and its shared core-selection
-routine and 78 accessor cases are verified. Physical boot, signed boot selection,
+routine and 78 accessor cases are verified. Physical boot, auxiliary-driver boot selection,
 task/model ABI and instruction semantics remain unverified for HAL 1.
+
+The HAL's default firmware-load method is **2**, which uses a separate Windows
+driver through IOCTL 0x150214; subtype 1 uses 0x150218. The original policy and
+transport were traced up to the OS-call boundary. The word uploader is an
+alternate method, not this default. Identifying the auxiliary driver and its
+Linux-equivalent transport is now a central missing boot requirement. Blob
+signature/authentication semantics have not been established.
 
 ## Hardware and inputs
 

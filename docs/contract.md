@@ -23,7 +23,7 @@ outer version 1, inner version 2, payload at 512 (66304 bytes), code at payload
 parser and Linux C parser agree on these ranges. The Linux parser now accepts
 both observed inner versions 1 and 2, retaining the existing bounds checks.
 The selector-1 descriptor getter at `0xd46760` additionally returns two
-104-byte records with boot/signature variants; their selection and loading
+104-byte records with opaque boot variants; their selection and loading
 remain separate unfinished work. They are not the raw image's section table.
 
 **All firmware command/task/IL emulation sections referring to SHA-256
@@ -63,7 +63,7 @@ remain synthetic, so this validates the protocol sequence rather than a Linux
 hardware IRQ implementation. Extended method flags/routing are not exercised.
 
 This revalidates the basic ping/mailbox contract for HAL 1 only. It does not
-establish core boot configuration, signed boot variants, model/task ABI, address
+establish core boot configuration, opaque boot variants, model/task ABI, address
 translation, or instruction semantics for this image. Other sections explicitly
 using the T35x hash remain reference findings until independently rechecked.
 
@@ -91,10 +91,54 @@ before any write. The old T35x differential checks still run separately.
 Readback verification remains stubbed, as previously documented.
 
 This revalidates the existing callback-only uploader and shared selection
-sequence. It does not justify bypassing the Windows signed/secure-boot path:
+sequence. It does not justify bypassing the Windows auxiliary-driver boot path:
 the selector-1 getter also exposes 104-byte variant records, and the orchestration
 can select another loading branch. The actual P16 branch, power/reset,
 remapper setting and successful boot still require independent evidence.
+
+## Default boot policy and auxiliary-driver transport
+
+`emulate_boot_policy.py` executes the original HAL initializers, default getter
+and registry decision slices. HAL +0x410 points to `0x1c490`, which returns
+**2**, for both selectors 1/2. Configuration at `0xd4419c` stores that value at
++0x460 unless RmSocDlaFwLoadMethod is supplied. Overrides 0/1/2 select those
+values; other DWORD values normalize to 0. Twelve cases cover both selectors
+and absent/0/1/2/3/0xffffffff overrides. Actual Windows registry state is unknown.
+
+The same cases execute RmSocDlaRemapper handling: an absent value preserves the
+previous +0x478 field, 0/2 store themselves, other values normalize to 1. The
+previous value is deliberately synthetic (0x77); this does **not** establish the
+full constructor's default or active P16 remapper mode.
+
+The loader at `0xd439c0` uses method 1 for word upload, 0 for the ordinary DMA
+branch, and 2 for HAL +0x408 (`0xd45cb0`) followed by an idle wait. Thus the raw
+word/DMA image path is an alternate path, not the recovered HAL default.
+`0xd45cb0` obtains a chip-ID-specific variant through +0x3e8 (`0xd46780`) and
+submits it through +0x400 (`0xd49ef0`). Variant table records are 104 bytes and
+contain two groups of three pointer/length pairs. The group is chosen by
+(remapper != 1), while the routine tries variant indices 0..2. The exact
+installed Windows flags and successful variant have not been observed.
+
+`emulate_boot_transport.py` executes the original +0x400 wrapper and transport
+`0xd3bbc8` until the imported IoBuildDeviceIoControlRequest boundary. Imported
+KeInitializeEvent and IoBuildDeviceIoControlRequest identities, plus the later
+IofCallDriver import, are checked from the PE import table. With a synthetic
+auxiliary handle and outer transport mode +0x54=1:
+
+- Normal subtype 0 requests IOCTL **0x150214**, passing the original image
+  pointer/length unchanged, no output buffer and InternalDeviceIoControl=FALSE.
+- Subtype 1 requests IOCTL **0x150218** with the eight bytes
+  `02 03 0c 00 02 00 00 00`, also with no output buffer.
+- A missing handle at outer device +0x308 returns 0xffff without reaching the
+  OS boundary; a zero-length normal image returns 0x1f.
+
+No IRP is constructed or submitted by the emulator. Target driver identity,
+firmware framing/authentication, alternate outer-transport mode and a Linux
+counterpart remain open. Earlier descriptions calling these blobs signed were
+not proven: only their pointers, sizes, selection and transport are established.
+Do not infer compression, signature format or ELF content from their prefix.
+The next boot-enablement task is to identify the provider of the auxiliary
+handle and decode this actual default transport, while retaining the ACPI gate.
 
 ## Identity
 

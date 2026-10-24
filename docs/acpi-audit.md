@@ -74,7 +74,7 @@ at RVA `0xd3b5c8` now maps the exact string
 `emulate_windows_device_id.py` reproduces this with stubbed IoGetDeviceProperty
 and wcsstr imports. Thus the candidate P16 resource list is consistent with the
 recovered Windows hardware-ID path. The exact live Windows invocation has not
-been captured, and this does not establish remapper mode or signed boot choice.
+been captured, and this does not establish remapper mode or auxiliary boot choice.
 HAL 1 parses a separate raw firmware at RVA `0x13ac1c0`, size 66816, inner
 version 2. T35x-only firmware emulation cannot establish its protocol behavior.
 

@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Run original Windows boot-method/default and remapper registry slices in RAM."""
+import hashlib
+import json
+import struct
+import pefile
+from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE
+from unicorn import arm64_const as regs
+from extract_firmware import KMD_SHA256
+from emulate_firmware_commands import ROOT
+
+BASE, CTX, STACK, STUB = 0x140000000, 0x21000000, 0x21100000, 0x21200000
+
+
+def run(pe, selector, override=None, remapper_initial=0x77):
+    u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
+    for page, size in ((0x1951000, 0xd000), (0xd44000, 0x1000), (0xd3b000, 0x1000),
+                       (0x1c000, 0x1000), (0xe3e000, 0x1000), (0x108f000, 0x1000)):
+        u.mem_map(BASE+page, size)
+        if page != 0xd3b000:
+            u.mem_write(BASE+page, pe.get_data(page, size))
+    for address, size in ((CTX, 0x1000), (STACK, 0x10000), (STUB, 0x1000)):
+        u.mem_map(address, size)
+    ret = bytes.fromhex('c0035fd6')
+    u.mem_write(BASE+0xd3b8c0, ret)
+    u.mem_write(STUB, ret)
+    u.mem_write(BASE+0xe3eaf0, struct.pack('<Q', STUB))
+    u.mem_write(CTX+0x496, struct.pack('<H', selector))
+    u.reg_write(regs.UC_ARM64_REG_X0, CTX)
+    u.reg_write(regs.UC_ARM64_REG_LR, STUB+0xff0)
+    u.emu_start(BASE+0x1951238, STUB+0xff0, count=50000)
+    getter = struct.unpack('<Q', u.mem_read(CTX+0x410, 8))[0]
+    assert getter == BASE+0x1c490
+    queried = []
+
+    def hook(_, address, size, user):
+        if address == BASE+0xd3b8c0:
+            name_address = u.reg_read(regs.UC_ARM64_REG_X2)
+            name = bytes(u.mem_read(name_address, 64)).split(b'\0')[0].decode()
+            queried.append(name)
+            if override is not None:
+                u.mem_write(u.reg_read(regs.UC_ARM64_REG_X3), struct.pack('<I', override))
+            u.reg_write(regs.UC_ARM64_REG_X0, 0x56 if override is None else 0)
+
+    u.hook_add(UC_HOOK_CODE, hook)
+    for register, value in ((regs.UC_ARM64_REG_X19, CTX), (regs.UC_ARM64_REG_X20, CTX),
+                            (regs.UC_ARM64_REG_X21, CTX), (regs.UC_ARM64_REG_X22, 1),
+                            (regs.UC_ARM64_REG_SP, STACK+0x8000)):
+        u.reg_write(register, value)
+    u.mem_write(CTX+0x460, struct.pack('<I', 0x77))
+    u.mem_write(CTX+0x478, struct.pack('<I', remapper_initial))
+    u.emu_start(BASE+0xd4419c, BASE+0xd44208, count=1000)
+    assert u.reg_read(regs.UC_ARM64_REG_PC) == BASE+0xd44208
+    method = struct.unpack('<I', u.mem_read(CTX+0x460, 4))[0]
+    u.emu_start(BASE+0xd44310, BASE+0xd44350, count=1000)
+    assert u.reg_read(regs.UC_ARM64_REG_PC) == BASE+0xd44350
+    remapper = struct.unpack('<I', u.mem_read(CTX+0x478, 4))[0]
+    return {'selector': selector, 'override': override, 'method': method,
+            'initial_remapper': remapper_initial, 'remapper': remapper, 'queries': queried}
+
+
+def main():
+    path = ROOT/'sources/nvidia/Display.Driver/nvlddmkm.sys'
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == KMD_SHA256
+    pe = pefile.PE(str(path), fast_load=True)
+    cases = []
+    for selector in (1, 2):
+        for override in (None, 0, 1, 2, 3, 0xffffffff):
+            result = run(pe, selector, override)
+            assert result['method'] == (2 if override is None else override if override in (1, 2) else 0)
+            assert result['remapper'] == (0x77 if override is None else override if override in (0, 2) else 1)
+            assert result['queries'] == ['RmSocDlaFwLoadMethod', 'RmSocDlaRemapper']
+            cases.append(result)
+    print(json.dumps({'passed': True, 'hardware_access': False, 'kmd_sha256': KMD_SHA256,
+                      'cases': cases, 'limitations': ['Registry reads are stubbed; actual installed Windows values are unknown',
+                                                     'Remapper initial value is supplied, not derived from the full constructor',
+                                                     'No loader, firmware transport or hardware boot is executed']}, indent=2))
+
+
+if __name__ == '__main__':
+    main()
