@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 from emulate_il_reads import ROOT, BLOB_HASH, run
+from emulate_profile1_il_reads import run as run_profile1
+from extract_profile1_firmware import PROFILE1_HASH
 from inspect_loadable import Buffer
 
 
@@ -25,6 +27,8 @@ class Result(ctypes.Structure):
 def main():
     blob = (ROOT/'sources/dla-t35x-verified.bin').read_bytes()
     assert hashlib.sha256(blob).hexdigest() == BLOB_HASH
+    profile1 = (ROOT/'sources/dla-profile1-verified.bin').read_bytes()
+    assert hashlib.sha256(profile1).hexdigest() == PROFILE1_HASH
     with tempfile.TemporaryDirectory(prefix='n1x-dla-il-') as tmp:
         library = Path(tmp)/'task.so'
         subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
@@ -37,6 +41,7 @@ def main():
     for count in (1, 3, 15, 16, 17, 31, 32, 33, 48, 64):
         observed = run(blob, count)
         extent = observed['dma_extent']
+        assert run_profile1(profile1, count) == observed
         source = struct.pack('<IIHH', 0, 256, count, 16)
         buffers = (Range*1)(Range(0x30000000, 256+extent))
         output = Result()
@@ -48,7 +53,7 @@ def main():
         assert validate(ctypes.byref(output), source, 12, buffers, 1) == -errno.EINVAL
         assert bytes(output) == before
     buffers = (Range*1)(Range(0x30000000, 4096))
-    for index, offset, count in ((1, 0, 1), (0xffffffff, 0, 1), (0, 0, 0),
+    for index, offset, count in ((1, 0, 1), (0xffffffff, 0, 1), (0x10000, 0, 1), (0, 0, 0),
                                   (0, 1, 1), (0, 4096, 1), (0, 0xffffffff, 1)):
         output = Result()
         ctypes.memset(ctypes.byref(output), 0xa5, ctypes.sizeof(output))
@@ -71,8 +76,8 @@ def main():
     assert validate(ctypes.byref(output), source, 12, buffers, 2) == 0
     assert output.address == 0x3101e000 and output.dma_bytes == 256 and output.instructions == 3
     print(json.dumps({'passed': True, 'hardware_access': False,
-                      'firmware_extent_comparisons': 10, 'short_buffer_rejections': 10,
-                      'malformed_slice_rejections': 6,
+                      'firmware_extent_comparisons': 10, 'profile1_extent_comparisons': 10, 'short_buffer_rejections': 10,
+                      'malformed_slice_rejections': 7,
                       'diagnostic_init_slice': {'index': 1, 'offset': 122880, 'instructions': 3, 'dma_bytes': 256},
                       'limitations': ['Only one known network field is validated',
                                       'Instruction semantics, embedded references and inference are not validated']}, indent=2))

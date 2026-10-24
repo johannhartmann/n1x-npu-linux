@@ -28,7 +28,8 @@ routine and 78 accessor cases are verified. Physical boot, auxiliary-driver boot
 HAL-1 common task headers and UMD version strides are now revalidated;
 Terminal WRITE_SEM actions are also revalidated, with 256-byte backing required
 for HAL-1 cache fetches. Full task/model semantics and instruction execution
-remain unverified.
+remain unverified. HAL-1 cached address-list loading/lookup and instruction-fetch
+extents are also checked against the C serializers/validator.
 
 The HAL's default firmware-load method is **2**, which uses a separate Windows
 driver through IOCTL 0x150214; subtype 1 uses 0x150218. The original policy and
@@ -87,7 +88,7 @@ routine. Tests inject write failures and verify that malformed/oversized inputs
 produce no writes. The register translator reproduces both recovered Windows mapping tables and
 adds alignment/resource bounds checks. The core-control and method-sender components are compared with the original
 Windows routines, including busy/error paths. `make kernel-check` compiles all
-seven C components against the running kernel without building or loading a
+eight C components against the running kernel without building or loading a
 module. The task serializer is checked against the compiled public reference
 structure and actual firmware common-header checks. Full task/inference
 compatibility is still unverified; no live map selection is assumed. A simulated

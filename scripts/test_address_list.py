@@ -10,11 +10,15 @@ import subprocess
 import tempfile
 from pathlib import Path
 from emulate_address_list import ROOT, BLOB_HASH, run
+from emulate_profile1_address_list import run as run_profile1
+from extract_profile1_firmware import PROFILE1_HASH
 
 
 def main():
     blob = (ROOT/'sources/dla-t35x-verified.bin').read_bytes()
     assert hashlib.sha256(blob).hexdigest() == BLOB_HASH
+    profile1 = (ROOT/'sources/dla-profile1-verified.bin').read_bytes()
+    assert hashlib.sha256(profile1).hexdigest() == PROFILE1_HASH
     with tempfile.TemporaryDirectory(prefix='n1x-dla-address-') as tmp:
         path = Path(tmp)/'task.so'
         subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
@@ -38,6 +42,10 @@ def main():
         assert result['status'] == 0
         for item in result['lookups']:
             assert item['status'] == 0 and item['value'] == addresses[item['index']]
+        target = run_profile1(profile1, addresses, (0, count-1), raw_list=output.raw[:expected_size])
+        assert target['status'] == 0 and target['transfers'][0]['bytes'] == count*8
+        for item in target['lookups']:
+            assert item['status'] == 0 and item['value'] == addresses[item['index']]
     source = (ctypes.c_uint64*1)(0)
     for count, length, addr in ((0, 256, source), (513, 8192, source),
                                (1, 255, source), (1, 256, None)):
@@ -48,7 +56,7 @@ def main():
     assert build(None, 256, source, 1) == -errno.EINVAL
     print(json.dumps({'passed': True, 'hardware_access': False,
                       'scope': 'C output through original firmware cache loader and lookup',
-                      'firmware_roundtrip_cases': 6, 'preflight_failures': 5,
+                      'firmware_roundtrip_cases': 6, 'profile1_roundtrip_cases': 6, 'preflight_failures': 5,
                       'limitations': ['Larger paged lists, model index validation and DMA ownership remain open',
                                       'No task execution or numerical inference was performed']}, indent=2))
 

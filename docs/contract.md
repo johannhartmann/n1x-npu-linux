@@ -146,6 +146,47 @@ change alone does not prove success; absence of change alone does not prove
 continued execution. Full scheduling, hardware interrupts and inference remain
 unverified.
 
+## HAL-1 address-list, DMA chunks and IL fetch extents
+
+`emulate_profile1_address_list.py` executes cached-list loader `0x104a92` and
+lookup `0x104b62`. With a synthetic engine -> task context it tests counts
+1/9/31/32/33/511/512, u64 entries, valid boundary indices, index equal to count,
+out-of-range indices, -1 and 0x10000, plus a DMA failure. The loader requests
+**count × 8 bytes**, not the T35x round-up-to-256 request. Cached lookups read
+firmware RAM without another DMA. Six actual Linux C address-list outputs also
+round-trip through this HAL-1 loader/lookup; existing zero-padded allocation
+sizes remain compatible with both variants. This is not a paged-list test.
+
+The original lookup accepts `index == count` and truncates most supplied indices
+to 16 bits: 0x10000 aliases entry zero. The experiment records the value returned
+for index==count but does not interpret it as valid. Linux's recovered IL-slice
+validator checks the original u32 index strictly against count before lookup;
+explicit index==count and 0x10000 rejection tests cover these two firmware
+weaknesses. Other model fields still need their own bounds validation.
+
+To avoid equating a stubbed DMA call length with hardware transfer size,
+`emulate_profile1_dma_chunks.py` additionally executes original read setup
+`0x104e0a`, including channel setup and CSR save/restore helpers. Only the busy
+query, logging and final hardware-issue primitive `0x10021c` are stubbed. Twenty
+cases (ten lengths across two host addresses, including a low-word carry) record
+contiguous power-of-two chunks from 4 to 256 bytes, with total length exactly
+the requested length. Invalid length/source/destination four-byte alignment
+fails before issuing chunks; each position in a 504-byte transfer is failed
+independently. This supports exact **programmed** byte counts at the last
+observed call boundary; no physical DMA, IOMMU reachability or coherency is
+proven by a stubbed hardware issue function.
+
+`emulate_profile1_il_reads.py` runs original IL dispatcher `0x102b68`. Its
+RV32 ABI is engine pointer, host low/high address and instruction count.
+DMA function `0x104ed8` and instruction executor `0x102abe` are RAM stubs;
+only fetch extents and per-batch counts are observed. Ten cases
+1/3/15/16/17/31/32/33/48/64 match the T35x fetch sequence exactly: one 256-byte
+block through count 16; otherwise `count/16 + 1` blocks, including an additional
+block for exact multiples above 16. All batch counts sum to the requested count.
+`test_il_slice.py` compares these results to the existing C validator and
+rejects one-byte-short allocations in all ten cases. The slice's field decoding
+and opcode semantics remain separate from this extent proof.
+
 ## HAL-1 word-upload and core-selection revalidation
 
 `test_profile1_loader.py` executes both original HAL initializers and confirms

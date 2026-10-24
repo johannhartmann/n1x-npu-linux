@@ -31,7 +31,8 @@ int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
 int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
                                 const struct n1x_dla_task_args *args,
                                 __u64 fence_address, __u32 fence_value);
-/* Cached-path address list (1..512 entries), padded for firmware DMA reads.
+/* Cached-path address list (1..512 entries), padded for T35x DMA reads;
+ * the same layout also passes HAL-1, which requests exactly count*8 bytes.
  * Source and output must not overlap. DMA mapping/alignment, model index bounds
  * and buffer lifetimes remain caller responsibilities. Addresses are serialized
  * verbatim, including zero; this does not validate model memory references.

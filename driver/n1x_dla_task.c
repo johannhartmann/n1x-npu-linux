@@ -111,7 +111,7 @@ int n1x_dla_validate_il_slice(struct n1x_dla_il_range *out,
     result.instructions = (__u16)slice[8] | (__u16)slice[9] << 8;
     if (index >= num_buffers || !result.instructions)
         return -EINVAL;
-    /* Original interpreter reads another cache block after exact multiples
+    /* Both HAL-1 RV32 and T35x RV64 read another cache block after exact multiples
      * of 16 above 16. Do not substitute round_up(instructions * 16, 256).
      */
     result.dma_bytes = result.instructions <= 16 ? 256 :
