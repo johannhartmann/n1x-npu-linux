@@ -88,6 +88,11 @@ AXI/HFRP ports, task descriptors and public ioctl headers. The older Orin
 reference is commit `6e071c061fe140e974ef893687f7029ab98376b8`.
 These sources are not assumed drop-in compatible with the P16.
 
+The Linux region-record serializer is compared byte-for-byte with the original
+Windows ARM64 builder; its output is checked through the original RISC-V
+region dispatcher. The supported Printf/Trace layouts do not establish physical
+DMA coherency or complete logging support.
+
 Setup-command emulation also confirms ABI differences from the public Jetson
 header: command 17 enters preemption handling, and region 4 is rejected while
 region 6 has a handler. The driver must not copy the reference command enum

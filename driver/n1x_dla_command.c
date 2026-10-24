@@ -29,3 +29,25 @@ int n1x_dla_send_method(const struct n1x_dla_io *io, __u32 method,
         return err;
     return io->write32(io->context, MTHDID, method);
 }
+
+int n1x_dla_build_region(__u8 *out, size_t out_size, __u32 region,
+                         __u64 address, __u32 bytes)
+{
+    __u8 record[16];
+    unsigned int i;
+    if (!out || out_size < sizeof(record) || (region != 1 && region != 3) ||
+        !address || (address & 3) || !bytes || address > ~(__u64)0 - bytes)
+        return -EINVAL;
+    /* Packed SET_REGIONS payload, verified against Windows d49c20 and
+     * the T35x firmware. The command points at this record, not at address.
+     */
+    for (i = 0; i < 4; i++) {
+        record[i] = region >> (8 * i);
+        record[12 + i] = bytes >> (8 * i);
+    }
+    for (i = 0; i < 8; i++)
+        record[4 + i] = address >> (8 * i);
+    for (i = 0; i < sizeof(record); i++)
+        out[i] = record[i];
+    return 0;
+}

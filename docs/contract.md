@@ -389,6 +389,42 @@ the initialized data blob; the setup emulator maps zero-filled RAM through
 `0x190000` to cover the observed `0x18b2xx` globals. This is an emulator memory
 model, not evidence for a physical host aperture or firmware RAM capacity.
 
+## Windows region construction and Linux serialization
+
+The original selector-2 HAL has +0x138 pointing to the ping routine `0xd48110`,
++0x160 to the region builder `0xd49c20`, and +0xf8 to the method wrapper
+`0xd49fc0`. The loader `0xd439c0` calls ping after the upload/start path,
+then conditionally calls +0x160 with IDs 3, 1, 5 and 7. The controlling fields
+are +0x468, +0x46c, +0x480/+0x47e, and +0x494 respectively. Their actual P16
+values have not been established. These are conditional possibilities, not an
+observed Windows boot trace. The region-5/7 paths are incompatible with the
+extracted firmware's region dispatcher and must not be enabled by analogy.
+
+`emulate_windows_region.py` executes the original ARM64 builder, with a synthetic
+buffer-provider callback (+0x158), CPU/DMA address pair, copy/cache/OS helpers,
+and method callback. It proves that Windows writes a packed 16-byte record:
+u32 region at 0, u64 (buffer IOVA + provider offset) at 4, u32 region size at 12.
+It sends command 11 with data = **base buffer IOVA >> 8**, not the registered
+region address >> 8. The descriptor and registered storage share one provider
+allocation in these Windows test cases; this does not require Linux to share it.
+
+The resulting records for IDs 1/3/5/7 are passed through the original RISC-V
+dispatcher and response/ACK code. IDs 1 and 3 succeed; IDs 5 and 7 return error
+11. The trace case uses a zeroed eight-byte ring header at the referenced region
+and observes the firmware reading it. No ring output or wraparound is tested.
+A provider failure sends no command and writes no record; a method-send failure
+propagates its status. Synthetic cache maintenance cannot prove coherency.
+
+The Linux `n1x_dla_build_region` serializer supports the verified 1/3 record
+format. Four byte-for-byte comparisons use different provider offsets/sizes
+against original Windows execution. Seven preflight cases cover invalid output,
+short storage, unknown ID, empty/unaligned address and zero/wrapping size, without
+output mutation. These rejection rules are Linux API policy, not claimed firmware
+validation. The caller still must own/map both allocations, initialize valid
+region contents, encode a representable 256-aligned command-record address,
+maintain DMA visibility/lifetime, and handle actual firmware errors. This helper
+does not allocate buffers, initialize trace-ring state or enable logging.
+
 ## Task postaction completion evidence
 
 `emulate_postactions.py` executes the original RISC-V postaction interpreter
