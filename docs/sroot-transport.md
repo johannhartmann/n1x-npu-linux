@@ -283,6 +283,53 @@ that all error returns imply DMA quiescence. Linux deliberately has no automatic
 free/retry path yet. A barrier alone does not prove device completion, and the
 copy path contains no independently established cache-maintenance operation.
 
+## Windows DMA-adapter ownership and description
+
+The original IOCTL dispatcher `0x321e0` calls `0x6ff8`, which obtains a DMF
+module's buffer using `WdfMemoryGetBuffer` (KMDF slot 194 / +0x610) and loads
+the WDF device handle at module-buffer +0x38. For upload it passes this handle
+to `0x31c98`, together with the IRP/request handle. The allocation routine
+`0x3b08` passes that device handle to `WdfDeviceWdmGetPhysicalDevice` (KMDF
+slot 33 / +0x108), then passes the resulting PDO to `IoGetDmaAdapter`.
+This is the provider's stored device/PDO path, not an observed reference to
+the DLA device or its IOMMU domain.
+
+`emulate_sroot_dma.py` now executes the complete dispatcher/module-buffer helper
+up to the upload entry, captures the supplied handle, and reuses that handle
+in the independently executed DMA allocator slice. Synthetic KMDF callbacks
+return a distinct PDO, and the original code passes it unchanged to
+IoGetDmaAdapter. These are handle-flow observations with fake OS objects, not
+proof of a physical requester or stream ID.
+
+The allocator's actual **64-byte DEVICE_DESCRIPTION** is decoded using
+Microsoft's [published layout](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_device_description):
+
+| Field | Observed value |
+| --- | --- |
+| Version | 3 |
+| Master | 1 |
+| ScatterGather / DemandMode / AutoInitialize | 0 / 0 / 0 |
+| Dma32BitAddresses / IgnoreCount / Reserved1 / Dma64BitAddresses | 0 / 1 / 0 / 0 |
+| InterfaceType | 17 (ACPIBus) |
+| MaximumLength | Current full input length |
+| DmaAddressWidth | 64 |
+| BusNumber / DmaChannel / DmaPort / DmaControllerInstance / DmaRequestLine / DeviceAddress | 0 |
+
+The flag order matters: byte 9 is **IgnoreCount**, not Dma64BitAddresses.
+The latter legacy flag is byte 11. The nonzero version-3 DmaAddressWidth is a
+separate field. Microsoft describes [ACPIBus](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ne-wdm-_interface_type)
+as an enumeration route, not a physical bus-master/SMMU identity. These fields
+request a bus-master DMA adapter with a 64-bit address width; the **specific
+common-buffer allocation** is independently bounded to the below-4-GiB registry
+window. Neither flag nor width supplies a cache-coherency declaration or proof
+that direct physical addressing is safe.
+
+The earlier emulator captured 80 raw stack bytes for this description. It now
+captures and checks only the actual 64-byte structure, avoiding interpretation
+of neighboring stack storage. Live Windows DMA adapter internals and the
+secure-side reader of command 0x18 still remain unknown. In particular, this
+trace does not justify borrowing DLA0's Linux DMA device or forcing ROT0 coherent.
+
 ## Registry DMA window and upload timer
 
 The pinned recovery INF (SHA-256
