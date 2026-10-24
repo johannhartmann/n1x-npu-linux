@@ -200,8 +200,7 @@ and argument signature identify this as
 (see Microsoft's [DMA_OPERATIONS](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_dma_operations)).
 The source bounds are 32-bit context fields +0x28/+0x2c, widened to 64-bit
 minimum/maximum values; length comes from +0x70, flags and preferred node are
-zero, and a cache-type output pointer is supplied. The origin of these bounds
-and the returned cache type still need tracing.
+zero, and a cache-type output pointer is supplied. The bound origin is verified below; the returned cache type still needs tracing.
 
 | Context offset | Proven role |
 | --- | --- |
@@ -225,7 +224,7 @@ stored values and all allocation arguments, tests both accepted start bounds,
 rejects addresses immediately outside them, and exercises allocation failure.
 The OS allocator owns the full-extent bound guarantee; the driver's redundant
 start-address check alone does not establish it. No real memory was allocated
-for DMA, and flush/coherency and bounds origin remain unresolved. Copy and observed release
+for DMA, and flush/coherency remain unresolved. Copy and observed release
 behavior are traced below, without treating cleanup as proof of quiescence.
 
 ## Image framing, copying and observed lifetime
@@ -251,10 +250,10 @@ opaque remainder is established.
 copy, but explicitly zeros the otherwise untouched four-byte tail. This is
 **Linux policy**, not evidence of Windows allocator initialization or proven
 firmware expectations. The tail's hardware significance remains untested.
-The helper accepts at least 32 bytes, checks capacity, identifiers and the
-entire 32-bit DMA address extent before mutation, supports overlapping input
-and output via memmove, and performs no allocation/submission. The caller owns
-DMA mapping, bounds, coherency and lifetime; the helper does not authenticate
+The helper accepts at least 32 bytes, checks capacity, identifiers, the Windows window-derived length limit and the
+entire DMA address extent against both supplied bounds before mutation, supports overlapping input
+and output via memmove, and performs no allocation/submission. The caller supplies the DMA window and owns
+DMA mapping, coherency and lifetime; the helper does not authenticate
 an image. Logical DMA address zero is representable and not confused with a
 null CPU pointer.
 
@@ -282,6 +281,48 @@ to be zero; otherwise it returns `0xc0000229`. This behavior does not establish
 that all error returns imply DMA quiescence. Linux deliberately has no automatic
 free/retry path yet. A barrier alone does not prove device completion, and the
 copy path contains no independently established cache-maintenance operation.
+
+## Registry DMA window and upload timer
+
+The pinned recovery INF (SHA-256
+`ea6f08cd6a3df63f8423c11cbb5175ab794bc670c4bf5d7b6e825df5d30eaa40`)
+installs `DmdAddrStart=0xe0000000` and `DmdAddrEnd=0xffffffff` as DWORD values
+in the device hardware key. This is a **logical DMA window**, not proof of
+reserved CPU-physical RAM or a safe physical mapping.
+
+Original setup `0x30538..0x30704` builds these exact Unicode names and invokes
+helper `0x2a88` twice. The helper opens the device hardware registry key,
+queries four bytes per value, and closes each handle. Setup stores start/end
+at context +0x28/+0x2c and **end minus start** at +0x30 (not plus one).
+A missing start value or inverted bounds exits before resource mapping.
+The verified INF therefore gives a maximum input length of `0x1fffffff`.
+`emulate_sroot_policy.py` executes this initialization and registry helper
+with synthetic KMDF registry calls, including missing/inverted cases.
+
+Linux image staging now requires explicit inclusive minimum/maximum arguments,
+checks the same end-minus-start length limit and requires the **whole**
+allocation extent to fit that window. The P16 recipe must supply
+`0xe0000000..0xffffffff`; earlier synthetic examples below that range do not
+establish P16-compatible mapping. A 32-bit DMA mask alone cannot establish the
+minimum-address constraint. The kernel backend still needs an appropriate
+mapping/domain allocation strategy; the vendor registry values do not prove
+how the live SMMU maps SROOT DMA.
+
+The upload starts its WDF timer with the signed due-time constant
+`-700000000` in 100-ns units, i.e. a **70-second relative deadline**.
+Original timer callback `0x3fe0` retrieves the parent/context and sets byte
++0x18 to 1; predicate `0x3f80` returns that byte (or 1 for a null context).
+The emulator executes callback/predicate before and after simulated dispatch,
+then captures the actual WdfTimerStart arguments from the upload slice.
+Original polling plus the original predicate also return 6 for an expired/not-ready
+case and 0 for a ready register even when the expiration flag is already set.
+The original readiness loop `0x4828` returns vendor code 6 if this predicate
+fires before bit 0 becomes ready. Pending-notification drain `0x5018` does not
+consult the flag, so the original overall operation is not guaranteed bounded
+by that timer. Some callers also ignore the ready-poll return, as noted above.
+Linux deliberately bounds each stage; no complete shared-deadline transaction
+or actual timer scheduling is implemented yet. This evidence does not make a
+timeout a proof that firmware/DMA stopped.
 
 ## Remaining bring-up gates
 

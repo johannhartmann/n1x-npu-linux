@@ -23,15 +23,15 @@ def main():
         lib = ctypes.CDLL(str(library))
     stage = lib.n1x_sroot_stage_image
     stage.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_size_t,
-                      ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint32)]
+                      ctypes.c_uint64, ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32)]
 
-    def check(blob, dma=0x40100000, invalid=False, size=None, capacity=None, inplace=False):
+    def check(blob, dma=0xe0010000, invalid=False, size=None, capacity=None, inplace=False, minimum=0xe0000000, maximum=0xffffffff):
         source = ctypes.create_string_buffer(blob)
         output = source if inplace else ctypes.create_string_buffer(b'\xa5'*len(blob))
         before = output.raw
         words = (ctypes.c_uint32*3)(*[0xa5a5a5a5]*3)
         status = stage(output, len(blob) if capacity is None else capacity, source,
-                       len(blob) if size is None else size, dma, words)
+                       len(blob) if size is None else size, dma, minimum, maximum, words)
         if invalid:
             assert status == -errno.EINVAL and output.raw == before and list(words) == [0xa5a5a5a5]*3
         else:
@@ -57,11 +57,16 @@ def main():
     check(blob, dma=0x100000000, invalid=True)
     check(blob, dma=0xffffffe1, invalid=True)
     check(blob, dma=0xffffffe0)  # Last byte exactly 0xffffffff.
-    check(blob, dma=0)  # Valid DMA address; not a null CPU pointer.
+    check(blob, dma=0, invalid=True)  # Outside the P16 vendor window.
+    check(blob, dma=0xdfffffff, invalid=True)
+    check(blob, dma=0xe0000000, size=0x20000000, capacity=0x20000000, invalid=True)
+    check(blob, maximum=0xe001001e, invalid=True)
+    check(blob, minimum=0xffffffff, maximum=0xe0000000, invalid=True)
+    check(blob, dma=0, minimum=0)  # Generic explicit window; zero is a valid DMA value.
     words = (ctypes.c_uint32*3)(1, 2, 3)
     buffer = ctypes.create_string_buffer(blob)
     for dst, src, out in ((None, buffer, words), (buffer, None, words), (buffer, buffer, None)):
-        assert stage(dst, 32, src, 32, 0x40000000, out) == -errno.EINVAL
+        assert stage(dst, 32, src, 32, 0xe0010000, 0xe0000000, 0xffffffff, out) == -errno.EINVAL
     # Two opaque variants actually selected by the P16 HAL's method-2 table.
     import pefile
     path = ROOT/'sources/nvidia/Display.Driver/nvlddmkm.sys'

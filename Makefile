@@ -20,6 +20,7 @@ test-vendor: test
 	venv/bin/python scripts/emulate_boot_transport.py
 	venv/bin/python scripts/inspect_auxiliary_drivers.py
 	venv/bin/python scripts/emulate_sroot_resources.py
+	venv/bin/python scripts/emulate_sroot_policy.py
 	venv/bin/python scripts/emulate_sroot_dma.py
 	venv/bin/python scripts/emulate_sroot_image.py
 	venv/bin/python scripts/test_sroot_image.py

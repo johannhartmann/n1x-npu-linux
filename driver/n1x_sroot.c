@@ -159,12 +159,15 @@ int n1x_sroot_prepare(const struct n1x_dla_io *io, __u32 stride,
 
 int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
                           const __u8 *image, size_t size,
-                          __u64 dma_address, __u32 words[3])
+                          __u64 dma_address, __u32 dma_minimum,
+                          __u32 dma_maximum, __u32 words[3])
 {
     __u32 tag;
     if (!buffer || !image || !words || size < 32 || capacity < size ||
-        size > ~(__u32)0 || dma_address > ~(__u32)0 ||
-        size - 1 > ~(__u32)0 - dma_address)
+        size > ~(__u32)0 || dma_minimum > dma_maximum ||
+        size > dma_maximum - dma_minimum ||
+        dma_address < dma_minimum || dma_address > dma_maximum ||
+        size - 1 > dma_maximum - dma_address)
         return -EINVAL;
     tag = (__u32)image[0] | (__u32)image[1] << 8 |
           (__u32)image[2] << 16 | (__u32)image[3] << 24;
