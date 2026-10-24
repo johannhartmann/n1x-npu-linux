@@ -114,7 +114,11 @@ startup: it allocates buffers, reads code/data through callbacks `0x48/0x78`,
 and compares the results to the input. This function is stubbed in the transfer
 emulator. The alternate transfer routine at `0xd4bf80` builds an aligned DMA
 buffer, shifts its bus address by 8, issues commands in 256-byte steps and polls
-completion. Its full behavior has not been emulated yet.
+completion. An offline emulation now verifies its allocator/copy operations, 175 code
+commands `0x2610`, 164 data commands `0x2600`, correct 256-byte alignment for an
+unaligned synthetic IOVA, nine callback error paths with cleanup, and a busy
+poll timeout after 5,001 reads. These are synthetic callback responses, not a
+DMA execution or proof of the hardware timing.
 
 The original HAL initializer at `0x1951238` has also been emulated for selectors
 0, 1 and 2. Selector 2 installs the verified firmware parser/getter. Its mapping
@@ -122,6 +126,59 @@ to the live hardware and the subobject's concrete register callbacks remain open
 The callback at `0xd4aa30` maps `0x1f800000` and `0x1f900000` and toggles fields;
 these addresses are outside the historical DLA `_CRS`. Its role is unresolved,
 and it is not a verified NPU boot sequence. No such writes have been issued.
+
+## Register mapping and core control
+
+Constructor RVA `0x195d114..0x195d134` installs descriptor `0x108e9a0` and
+vtable `0x108e9b8` into the subobject at parent+8. Its forwarding thunks subtract
+8 from the context argument and dispatch via fields relative to the subobject.
+Accounting for this adjustment connects the transfer callbacks to the HAL table.
+`decode_transfer_registers.py` verifies constructor/thunk bytes and joins them to
+original accessor emulation. This establishes 20 transfer/core-control slots.
+
+| Subobject slot | Operation | Logical register offset | Role |
+|---|---|---|---|
+| 0x40 / 0x50 / 0x60 | write | 0x180 / 0x184 / 0x188 | code control / data / block index |
+| 0x70 / 0x80 / 0x90 | write | 0x1c0 / 0x1c4 / 0x210 | data control / data / block index |
+| 0xf8 | write | 0x48 | ITFEN |
+| 0x100 / 0x108 | read / write | 0x444 | TRANSCFG |
+| 0x118 | write | 0x10c | DMACTL |
+| 0x128 | write | 0x110 | DMATRFBASE |
+| 0x138 | write | 0x114 | DMATRFMOFFS |
+| 0x148 | write | 0x11c | DMATRFFBOFFS |
+| 0x150 / 0x158 | read / write | 0x118 | DMATRFCMD |
+| 0x160 / 0x168 | read / write | 0xb88 | CPUCTL |
+| 0x1d0 | read | 0x4c | IDLESTATE |
+
+R38.4's non-firewall definitions agree where present. The block-index role at
+0x210 is observed in Windows; that public RISC-V header does not define it.
+The C uploader implements the observed word-upload sequence, checks the complete
+container and caller-provided code/data limits before writing, and stops on the
+first callback error. Its full 22,039-write trace matches the original ARM64
+routine; ten injected failures and five preflight failures pass. It does not
+include readback verification, power/reset, CPU selection/start or an MMIO backend.
+
+Original core selection at RVA `0xd48c40` writes logical offset `0xb80` with
+`0x100000`, then `0xe68` with `0x10`, and reads back `0xe68` checking mask `0x11`.
+Original start at `0xd49e90` writes `1` to `0xb88`, then calls `0xd4ce48` to wait
+for IDLESTATE to become zero. Five offline cases cover immediate idle, delayed
+idle, 5,001-read timeout and read/write errors. The Windows start wrapper ignores
+a failed start write; a Linux implementation must propagate this error instead.
+Idle is not proof of a firmware ping or inference readiness. Another CPUCTL
+wrapper (`0xd48ad0`) writes 4/8; its role must not be confused with the start write.
+
+Selector initialization at RVA `0xd3c8d0` maps input `0x303033` to selector 1,
+`0x404044` to selector 2, and zero to selector 3. The source of this input on the
+live P16 still needs tracing; ACPI revision 0x34 alone does not prove selector 2.
+
+**Logical offsets are not physical addresses.** The resource reader at
+`0xd39878` resolves a resource descriptor before accessing registers.
+Translator `0xd392c0` optionally maps a logical offset using 12-byte entries
+`{u32 logical_start, u32 mapped_start, u32 length}` from resource+0x18, with the
+entry count at +0x20. Without a table it passes offsets through. Some accessors
+emit `0x80400330`; adding that to `_CRS` resource 0 would be unjustified. The
+actual descriptor/table construction and mapping to both ACPI apertures remain
+required before attaching any physical MMIO backend.
 
 ## Diagnostic loadable
 

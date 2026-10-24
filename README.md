@@ -2,8 +2,9 @@
 
 Reverse engineering of the NVIDIA NPU on ASUS ProArt P16 H7607BA to implement
 Linux support. **Inference and device bring-up are not implemented yet.** The
-current driver component validates the extracted firmware offline; it neither
-binds the ACPI device nor writes hardware registers.
+current driver components validate the firmware and implement its word-upload
+sequence through caller-provided callbacks. No hardware backend is supplied;
+the tests neither bind the ACPI device nor write hardware registers.
 
 ## Hardware and inputs
 
@@ -33,6 +34,8 @@ venv/bin/python scripts/extract_diagnostic.py \
   sources/nvidia/Display.Driver/nvdla_runtime.dll sources/diagnostic-verified.nvda
 venv/bin/python scripts/emulate_firmware_parser.py
 venv/bin/python scripts/emulate_bitbang_transfer.py
+# After extraction, run all vendor-backed differential checks:
+make test-vendor
 ```
 
 The extractor rejects a different KMD hash and refuses to overwrite output.
@@ -41,7 +44,10 @@ logging and memset are stubbed. A separate transfer emulator verifies all
 firmware words and callback-error propagation against RAM-only interfaces;
 readback verification is stubbed. No Windows driver or firmware is executed on
 the machine's devices. The bounded C parser rejects truncated/overflowing and
-overlapping sections without modifying its output on failure.
+overlapping sections without modifying its output on failure. The C upload
+component matches all 22,039 writes from the original Windows word-transfer
+routine. Tests inject write failures and verify that malformed/oversized inputs
+produce no writes. Both C components compile against the running Linux kernel.
 
 `inspect_pe.py`, `arm64_string_refs.py`, `msvc_vtables.py`, and
 `indirect_slots.py` produce reproducible offline entry-point and dispatch

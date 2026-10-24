@@ -51,7 +51,7 @@ def run(pe, blob, fail_slot=None):
     def hook(_, address, size, user):
         slot = address-STUBS
         if slot in slots:
-            # Slot 0x118 is a read/poll callback. The rest consume one u32.
+            # Slot 0x118 writes DMACTL; slot 0xf8 writes ITFEN.
             ptr = reg(2) if slot in (0x118, 0xf8) else reg(3)
             value = struct.unpack('<I', uc.mem_read(ptr, 4))[0]
             calls.append((slot, value))
@@ -104,7 +104,7 @@ def main():
         'data_block_count': 0xa400//256, 'readback_verification_rva': '0xd4cad8',
         'failure_propagation_slots': failures,
         'limitations': ['Physical registers and hardware selector are not established',
-                        'Read callback returns synthetic success; readback verification is stubbed']}, indent=2))
+                        'All write callbacks return synthetic status; readback verification is stubbed']}, indent=2))
 
 
 if __name__ == '__main__':
