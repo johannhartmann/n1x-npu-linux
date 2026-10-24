@@ -32,8 +32,9 @@ driver through IOCTL 0x150214; subtype 1 uses 0x150218. The original policy and
 transport were traced up to the OS-call boundary. The word uploader is an
 alternate method, not this default. The auxiliary provider is now identified as **nvsrootmbx.sys / NVDA8600 (ROT0)**:
 its original registration slice and both IOCTL table entries match. Recovering
-its mailbox protocol and a Linux implementation remains a central boot
-requirement. See [SROOT transport evidence](docs/sroot-transport.md) for hashes,
+the remaining mailbox transaction and a physical Linux backend remain central boot
+requirements. The callback-only SROOT TX/echo component now matches twelve
+original Windows ARM64 traces; it does not yet process firmware replies. See [SROOT transport evidence](docs/sroot-transport.md) for hashes,
 extraction, resource boundaries and verification limits. Blob signature and
 authentication semantics have not been established.
 

@@ -69,9 +69,58 @@ or the initial upstream search. The NVIDIA NV-Kernels power_wrap/SSPM work is
 not established as a SROOT transport implementation. A broad recursive upstream
 tree query was truncated and cannot prove absence across that repository.
 
-Next: trace handler `0x321e0` into SendFwImageToSroot and NotifySrootReinitFw,
-recover the mailbox request/completion protocol, payload lengths and timeout/error
-behavior, and compare any Linux candidate with those observations. No mailbox
-MMIO, IRP submission, firmware loading or reset was performed. Any eventual
-ROT0 binding also requires live AML/power-path audit; the existing DLA0 audit
-must not be treated as covering an unexamined auxiliary device.
+## Recovered TX primitive
+
+Handler `0x321e0` dispatches firmware upload to `0x31c98` and reinitialization
+to `0x31760`. The upload builder uses command byte `0x18` with three payload
+words from device-context offsets `0x1c`, `0x70`, and the low word at `0x80`.
+The latter is rejected if its high 32 bits are nonzero. DMA allocation and
+ownership semantics still need independent validation.
+
+Original transport `0x5580` prepares the bus (`0x54c0`), sends/verifies an echo
+(`0x5130`), then separately receives a firmware reply (`0x5328`).
+`driver/n1x_sroot.c` implements only the TX/echo primitive, through callbacks.
+The register spacing comes from descriptor +0x50, mapped base from +0x58.
+No live value for that spacing or mapping is established.
+
+| Offset relative to SROOT base | Observed TX operation |
+| --- | --- |
+| 2 × stride | Poll bit 0 until set before sending |
+| 1 × stride | Write header, followed by payload words to the same FIFO |
+| 3 × stride | Write 1 after the payload |
+| 8 × stride | Poll bit 0 until the complemented echo is available |
+| 7 × stride | Read complemented header and each payload word |
+| 9 × stride | Write 1 to acknowledge the echo |
+
+For zero-status/zero-metadata requests, the header is
+`command | (word_count << 8)`. The Linux helper accepts 0–14 words. The
+Windows encoder has additional fields; they are not assigned speculative
+sequence/channel meanings. A header mismatch returns immediately; a payload
+mismatch consumes the remaining echo words and acknowledges before failing.
+
+`test_sroot_send.py` executes original ARM64 code at RVA `0x5130`, including its
+header encoder, polling, writes and echo checker, in synthetic RAM. Twelve
+successful traces match the Linux C component across counts 0/1/3/14 and
+synthetic strides 4/8/16. Four echo-corruption cases check error behavior.
+Every callback position in a three-word transfer is fault-injected; timeout
+and invalid-input cases also pass. This does not emulate firmware or prove
+physical register readiness.
+
+Two deliberate Linux policies differ from Windows: polling is bounded and a
+failed initial ready poll prevents all writes (Windows ignores that return).
+On echo failure, Windows additionally runs `0x5018`, draining pending RX
+status at 5 × stride via acknowledgments at 6 × stride, and echo status at
+8 × stride via 9 × stride. Linux leaves this recovery to the transaction
+owner rather than discarding a possibly significant firmware response.
+After any attempted write, delivery must be treated as uncertain until
+recovery/quiescence. Never automatically retry or free referenced DMA storage.
+**A successful echo is not firmware-command completion.**
+
+## Remaining bring-up gates
+
+Implement and verify bus preparation, reply decoding/completion, DMA lifetime,
+and the complete firmware upload request. Recover the actual register stride
+and resource setup from the Windows initialization path. No mailbox MMIO,
+IRP submission, firmware loading or reset was performed. Any eventual ROT0
+binding requires live AML/power-path audit; the existing candidate DLA0 audit
+does not cover an unexamined auxiliary device or establish live-table identity.

@@ -19,6 +19,7 @@ test-vendor: test
 	venv/bin/python scripts/emulate_boot_policy.py
 	venv/bin/python scripts/emulate_boot_transport.py
 	venv/bin/python scripts/inspect_auxiliary_drivers.py
+	venv/bin/python scripts/test_sroot_send.py
 	venv/bin/python scripts/emulate_bitbang_transfer.py
 	venv/bin/python scripts/emulate_dma_transfer.py
 	venv/bin/python scripts/emulate_core_control.py
@@ -38,6 +39,6 @@ test-vendor: test
 	venv/bin/python scripts/test_il_slice.py
 	venv/bin/python scripts/emulate_init_il.py
 kernel-check:
-	$(MAKE) -C /usr/lib/modules/$(shell uname -r)/build M=$(CURDIR)/driver n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o
+	$(MAKE) -C /usr/lib/modules/$(shell uname -r)/build M=$(CURDIR)/driver n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o n1x_sroot.o
 clean:
 	rm -f tests/test_firmware
