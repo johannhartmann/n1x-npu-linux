@@ -88,6 +88,11 @@ AXI/HFRP ports, task descriptors and public ioctl headers. The older Orin
 reference is commit `6e071c061fe140e974ef893687f7029ab98376b8`.
 These sources are not assumed drop-in compatible with the P16.
 
+Setup-command emulation also confirms ABI differences from the public Jetson
+header: command 17 enters preemption handling, and region 4 is rejected while
+region 6 has a handler. The driver must not copy the reference command enum
+unchanged; details and verification limits are in the [contract](docs/contract.md).
+
 ## Before hardware access
 
 See the [candidate ACPI audit](docs/acpi-audit.md), including the important

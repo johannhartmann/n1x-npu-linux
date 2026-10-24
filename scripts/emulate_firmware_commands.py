@@ -18,9 +18,9 @@ CMD, HOST, STACK, STOP = 0x20000000, 0x20001000, 0x20100000, 0x20200000
 ACK = 0xd1a0cafe
 
 
-def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=True, host_handler=None):
+def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=True, host_handler=None, payload=None, memory=None, observe=()):
     uc = Uc(UC_ARCH_RISCV, UC_MODE_RISCV64)
-    for addr, size in ((0x100000, 0xb000), (0x180000, 0xb000), (MMIO, 0x2000),
+    for addr, size in ((0x100000, 0xb000), (0x180000, 0x10000), (MMIO, 0x2000),
                        (CMD, 0x2000), (STACK, 0x10000), (STOP, 0x1000)):
         uc.mem_map(addr, size)
     uc.mem_write(0x100000, blob[0x200:0xb100])
@@ -29,10 +29,12 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
     for address in (0x101e9a, 0x101686, 0x10559e, 0x105662):
         uc.mem_write(address, ret)
     uc.mem_write(CMD, struct.pack('<III', 0, method, HOST >> 8))
-    uc.mem_write(HOST, struct.pack('<I', challenge))
+    uc.mem_write(HOST, struct.pack('<I', challenge) if payload is None else bytes(payload))
+    for address, data in (memory or {}).items():
+        uc.mem_write(address, bytes(data))
     previous = (0x11223344, 0x55667788)
     uc.mem_write(MMIO+0x40, struct.pack('<II', *previous))
-    dma, interrupts = [], []
+    dma, interrupts, transfers = [], [], []
 
     def hook(_, address, size, user):
         if address in (0x101e9a, 0x101686):
@@ -42,9 +44,15 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             destination = uc.reg_read(regs.UC_RISCV_REG_A1)
             length = uc.reg_read(regs.UC_RISCV_REG_A2)
             direction = 'host_to_firmware' if address == 0x10559e else 'firmware_to_host'
-            assert length == 4
-            assert source == HOST if direction == 'host_to_firmware' else destination == HOST
+            if payload is None:
+                assert length == 4
+            host_address = source if direction == 'host_to_firmware' else destination
+            assert HOST <= host_address and host_address+length <= CMD+0x2000
+            if payload is None:
+                assert host_address == HOST
             dma.append(direction)
+            transfers.append({'direction': direction, 'source': hex(source),
+                              'destination': hex(destination), 'length': length})
             if direction == dma_error:
                 uc.reg_write(regs.UC_RISCV_REG_A0, (1 << 64)-4)
             else:
@@ -68,7 +76,8 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
     return {'returned': uc.reg_read(regs.UC_RISCV_REG_PC) == STOP,
             'pc': hex(uc.reg_read(regs.UC_RISCV_REG_PC)),
             'host_word': struct.unpack('<I', uc.mem_read(HOST, 4))[0],
-            'dma': dma, 'interrupts': interrupts,
+            'dma': dma, 'interrupts': interrupts, 'transfers': transfers,
+            'observed': {hex(address): bytes(uc.mem_read(address, size)).hex() for address, size in observe},
             'final_mailboxes': struct.unpack('<II', uc.mem_read(MMIO+0x40, 8))}
 
 

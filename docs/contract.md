@@ -355,6 +355,40 @@ verified device quiescence; receipt of message 2 for command 7 is insufficient.
 Interrupt handling must be working before firmware can wait on a host ACK.
 No physical IRQ, MMIO, DMA, firmware boot or inference has been tested.
 
+## Setup command ABI differences
+
+`emulate_firmware_setup.py` runs 18 cases through the original dispatcher,
+response/ACK path and setup handlers. DMA is a RAM copy and logging is stubbed;
+no engine register backend or device is used.
+
+- Command 10 reads exactly 20 bytes: u32 subcommand, u64 data, u64 reserved.
+  Subcommands 1 and 2 copy only the low 32 bits of data to firmware variables
+  at `0x18b200` and `0x18b204`. Subcommands 0 and 3 return error 3. Field names
+  TRACE_ENABLE and TRACE_EVENT_MASK come from the public header; their downstream
+  effects have not been exercised. Read failure propagates error 4.
+- Command 11 reads a four-byte region ID, then dispatches IDs 1, 2, 3 and 6.
+  IDs 0, 4, 5 and 7 return error 11. This differs from the public enum, which
+  names region 4 GCOV and does not name region 6. Do not rename 6 GCOV by analogy.
+  Region 1 handler `0x101df8` copies a 16-byte record to `0x1889b0`: u32 ID,
+  u64 address at offset 4, u32 size at offset 12, matching packed region_printf.
+  Region 2 reads 56 bytes, matching the public GoS record's size. Regions 3 and
+  6 read 16 bytes and may perform additional reads when address/size are nonzero;
+  their complete buffer semantics remain open. Zero address/size succeeds for
+  all four IDs, but is not evidence that logging is configured or safely disabled.
+- **Command 17 is a preemption path, not SET_INIT_CONFIG.** The dispatch calls
+  `0x105e78`, whose original diagnostic says the current state does not allow
+  preemption. With actual firmware state variable `0x18930c` set to 2, 3 or 4,
+  it returns error 12 without DMA. Static analysis shows the allowed path calls
+  `0x105d5c` and executes preemption-related engine logic; it has not been run.
+  The R38.4 public enum assigning SET_INIT_CONFIG=17 cannot be reused here.
+
+These observations invalidate a blanket reuse of Jetson command numbers even
+where the task and semaphore layouts agree. No initialization command list has
+yet been established for the P16. Firmware-local BSS variables extend beyond
+the initialized data blob; the setup emulator maps zero-filled RAM through
+`0x190000` to cover the observed `0x18b2xx` globals. This is an emulator memory
+model, not evidence for a physical host aperture or firmware RAM capacity.
+
 ## Task postaction completion evidence
 
 `emulate_postactions.py` executes the original RISC-V postaction interpreter
