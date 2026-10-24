@@ -12,7 +12,7 @@ from pathlib import Path
 import pefile
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE
 from unicorn import arm64_const as regs
-from extract_firmware import KMD_SHA256
+from extract_firmware import KMD_SHA256, parse_header
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = 0x140000000
@@ -40,8 +40,10 @@ def run(pe, blob, fail_slot=None):
         uc.mem_write(VTABLE+slot, struct.pack('<Q', STUBS+slot))
         uc.mem_write(STUBS+slot, RET)
     uc.mem_write(OBJ, struct.pack('<Q', VTABLE))
-    uc.mem_write(FW, blob[0x200:])
-    uc.mem_write(HEADER, struct.pack('<6I', 0, 0, 0, 0xaf00, 0xaf00, 0xa400))
+    parsed = parse_header(blob)
+    uc.mem_write(FW, blob[parsed['payload_offset']:])
+    uc.mem_write(HEADER, struct.pack('<6I', 0, 0, parsed['code_offset'],
+                                    parsed['code_size'], parsed['data_offset'], parsed['data_size']))
     calls = []
     continuation = []
 

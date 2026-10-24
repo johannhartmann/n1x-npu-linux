@@ -20,7 +20,7 @@ READ, WRITE = BASE+0xd39878, BASE+0xd39f38
 SENTINEL = 0x12345678
 
 
-def decode(pe):
+def decode(pe, selector=2):
     uc = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     for addr, size in ((BASE+0x1951000, 0xd000), (BASE+0xd48000, 0x3000),
                        (BASE+0xd39000, 0x1000), (CTX, 0x2000),
@@ -30,7 +30,7 @@ def decode(pe):
     uc.mem_write(BASE+0xd48000, pe.get_data(0xd48000, 0x3000))
     uc.mem_write(READ, bytes.fromhex('c0035fd6'))
     uc.mem_write(WRITE, bytes.fromhex('c0035fd6'))
-    uc.mem_write(CTX+0x496, struct.pack('<H', 2))
+    uc.mem_write(CTX+0x496, struct.pack('<H', selector))
     uc.reg_write(regs.UC_ARM64_REG_X0, CTX)
     uc.reg_write(regs.UC_ARM64_REG_LR, STOP)
     uc.emu_start(BASE+0x1951238, STOP, count=50000)

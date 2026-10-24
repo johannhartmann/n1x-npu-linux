@@ -67,6 +67,35 @@ establish core boot configuration, signed boot variants, model/task ABI, address
 translation, or instruction semantics for this image. Other sections explicitly
 using the T35x hash remain reference findings until independently rechecked.
 
+## HAL-1 word-upload and core-selection revalidation
+
+`test_profile1_loader.py` executes both original HAL initializers and confirms
+that +0x3e0 selects the same core-selection function `0xd48c40` for selectors 1
+and 2. It sets BOOT_VECTOR_LO 0xb80 to 0x100000, writes BCR_CTRL 0xe68 = 0x10,
+and checks readback bits 0x11. The guest firmware's RV32 versus RV64 instruction
+set does not produce a different register sequence in this shared function.
+That is evidence about this function, not proof of processor mode on hardware.
+
+All 78 indexed accessor cases emitted by the original HAL initializers are
+identical for selectors 1 and 2, including resource index zero and logical
+offsets. Combined with the existing constructor/thunk decoder this revalidates
+the word-transfer register mapping for HAL 1. It does not determine the physical
+backend's active remapper setting or power state.
+
+The original word uploader `0xd4bbe0` is now run with the HAL-1 image's actual
+section sizes, rather than the former hardcoded T35x header. Its 16839 callback
+writes match the Linux C uploader byte-for-byte, including DMACTL, IMEM/DMEM
+control/data/block indices and ITFEN. Six injected callback failures propagate
+with exactly the expected write prefix; two undersized code/data limits reject
+before any write. The old T35x differential checks still run separately.
+Readback verification remains stubbed, as previously documented.
+
+This revalidates the existing callback-only uploader and shared selection
+sequence. It does not justify bypassing the Windows signed/secure-boot path:
+the selector-1 getter also exposes 104-byte variant records, and the orchestration
+can select another loading branch. The actual P16 branch, power/reset,
+remapper setting and successful boot still require independent evidence.
+
 ## Identity
 
 | Artifact | SHA-256 |
