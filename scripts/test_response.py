@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from emulate_firmware_commands import run as firmware, BLOB_HASH, MMIO, ACK
+from emulate_profile1_commands import run as firmware_profile1, PROFILE1_HASH
 from test_core_control import IO, WRITE, READ, DELAY
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,20 +71,24 @@ def main():
     assert host(pending=False) == (-errno.EAGAIN, expected[:1], (0xa5a5a5a5, 0x5a5a5a5a))
     assert take(None, None) == -errno.EINVAL
     integrated = []
-    for challenge, expected_word in ((1, 0x102), (0x11111111, 0x102), (0x40000000, 0x110101)):
-        captured = []
+    profile1 = (ROOT/'sources/dla-profile1-verified.bin').read_bytes()
+    assert hashlib.sha256(profile1).hexdigest() == PROFILE1_HASH
+    for label, execute, image in (('T35x RV64', firmware, blob),
+                                   ('HAL 1 RV32', firmware_profile1, profile1)):
+        for challenge, expected_word in ((1, 0x102), (0x11111111, 0x102), (0x40000000, 0x110101)):
+            captured = []
 
-        def interrupt(uc):
-            captured.append(host(uc))
+            def interrupt(uc):
+                captured.append(host(uc))
 
-        result = firmware(blob, challenge=challenge, host_handler=interrupt)
-        assert result['returned'] and len(captured) == 1
-        status, trace, (word, data) = captured[0]
-        assert status == 0 and trace == expected and word == expected_word
-        assert (word, data) == result['interrupts'][0]
-        assert result['final_mailboxes'] == (0x11223344, 0x55667788)
-        integrated.append({'challenge': hex(challenge), 'response': hex(word),
-                           'firmware_returned_after_linux_ack': True})
+            result = execute(image, challenge=challenge, host_handler=interrupt)
+            assert result['returned'] and len(captured) == 1
+            status, trace, (word, data) = captured[0]
+            assert status == 0 and trace == expected and word == expected_word
+            assert (word, data) == result['interrupts'][0]
+            assert result['final_mailboxes'] == (0x11223344, 0x55667788)
+            integrated.append({'image': label, 'challenge': hex(challenge), 'response': hex(word),
+                               'firmware_returned_after_linux_ack': True})
     print(json.dumps({'scope': 'Linux C response capture/clear/ACK with synthetic IRQSTAT and real FW mailbox code',
                       'ordered_callback_count': len(expected), 'error_prefixes_checked': 6,
                       'spurious_irq_has_no_writes': True, 'integrated_firmware_cases': integrated,

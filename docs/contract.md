@@ -33,6 +33,40 @@ but live ACPI identity, remapper selection and boot/security handling remain
 unverified. Revalidate firmware-derived Linux behavior against HAL 1 before
 using it on this machine. No NPU hardware access was performed.
 
+## HAL-1 RV32 ping and IRQ response revalidation
+
+The HAL-1 raw image uses **RV32**, including compressed JAL instructions and
+32-bit saved pointers/return addresses, rather than the T35x image's RV64 code.
+The correct RV32 disassembly resolves calls that RV64 misreads as ADDIW. All
+HAL-1 execution evidence in this section uses Unicorn UC_MODE_RISCV32.
+
+`emulate_profile1_commands.py` executes command dispatcher `0x102232`, ping
+handler `0x10251c`, response wrapper `0x10044c` and mailbox handler `0x1021b2`.
+Code maps at `0x100000`; initialized data at `0x180000`; a synthetic context is
+installed through the global pointer at `0x1862bc`. Its ping scratch word is at
+context +0x32ac. DMA functions `0x104ed8` and `0x105004` use RV32 register pairs
+for u64 host addresses. Logging, command-entry/exit bookkeeping and the error
+path's hang query are stubbed; DMA copies RAM. No actual device is accessed.
+
+Eleven cases reproduce challenges 0/1/0x11111111/0x3fffffff multiplied by four,
+overflow 0x40000000 (error 17), read/write errors (error 4), unsupported commands
+0/2 (error 1), ping without response flags, and a missing host ACK. Basic success
+response 0x102, overflow 0x110101 and DMA-error 0x40101 match the previously
+observed T35x encoding. The firmware saves mailbox0/1, posts the reply, raises
+SWGEN1 and waits for ACK 0xd1a0cafe, then restores both mailboxes. Missing ACK
+remains waiting at the observation budget; no timeout is inferred.
+
+`test_response.py` now couples the same Linux C capture/clear/ACK helper to
+**both** images, for three challenges each including overflow. The actual HAL-1
+firmware resumes after the C handler's ACK. IRQSTAT, interrupt routing and DMA
+remain synthetic, so this validates the protocol sequence rather than a Linux
+hardware IRQ implementation. Extended method flags/routing are not exercised.
+
+This revalidates the basic ping/mailbox contract for HAL 1 only. It does not
+establish core boot configuration, signed boot variants, model/task ABI, address
+translation, or instruction semantics for this image. Other sections explicitly
+using the T35x hash remain reference findings until independently rechecked.
+
 ## Identity
 
 | Artifact | SHA-256 |
