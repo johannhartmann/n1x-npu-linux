@@ -69,6 +69,29 @@ or the initial upstream search. The NVIDIA NV-Kernels power_wrap/SSPM work is
 not established as a SROOT transport implementation. A broad recursive upstream
 tree query was truncated and cannot prove absence across that repository.
 
+## Resource initialization and register spacing
+
+Original resource-enumeration/mapping slice `0x30704..0x309d0` requires exactly
+two translated resource descriptors. For memory descriptors (type 3), index 0
+supplies context +0x38 physical base and +0x40 length; index 1 supplies +0x48
+base and **+0x50 length**. It then calls `MmMapIoSpaceEx` (verified PE import
+at `0x191d0`) with the **first** base/length and protection value `0x204`,
+storing the mapping at +0x58. Later mailbox accesses use the **second resource's
+length** as register stride. The second base is not independently mapped here.
+
+`emulate_sroot_resources.py` executes this original slice with stubbed WDF
+resource queries and `MmMapIoSpaceEx`. Two distinct resource configurations
+verify base/length propagation, stride selection, mapping arguments and output.
+A one-resource case skips mapping. These are synthetic OS resources, not an
+observation of Windows hardware execution.
+
+With archived ROT0 descriptors `0x18010000/0x1000` and
+`0x18010000/0x10`, this implies **stride 16 bytes**, rather than two independent
+MMIO apertures. The TX FIFO would be at logical offset 0x10, RX FIFO at 0x40,
+and echo FIFO at 0x70, all inside the first 0x1000-byte resource. These offsets
+remain conditional on live resource/table identity and the full ACPI power
+path audit. Nothing has been physically mapped or read.
+
 ## Recovered TX primitive
 
 Handler `0x321e0` dispatches firmware upload to `0x31c98` and reinitialization
@@ -81,7 +104,8 @@ Original transport `0x5580` prepares the bus (`0x54c0`), sends/verifies an echo
 (`0x5130`), then separately receives a firmware reply (`0x5328`).
 `driver/n1x_sroot.c` implements only the TX/echo primitive, through callbacks.
 The register spacing comes from descriptor +0x50, mapped base from +0x58.
-No live value for that spacing or mapping is established.
+The initialization path establishing these fields is verified below; live
+resource identity still remains unverified.
 
 | Offset relative to SROOT base | Observed TX operation |
 | --- | --- |
@@ -143,8 +167,8 @@ retain DMA storage until an appropriate response or confirmed quiescence.
 ## Remaining bring-up gates
 
 Implement and verify bus preparation, full command completion policy, DMA lifetime,
-and the complete firmware upload request. Recover the actual register stride
-and resource setup from the Windows initialization path. No mailbox MMIO,
+and the complete firmware upload request. Verify the recovered resource/stride rule against live ACPI resources before
+creating a physical backend. No mailbox MMIO,
 IRP submission, firmware loading or reset was performed. Any eventual ROT0
 binding requires live AML/power-path audit; the existing candidate DLA0 audit
 does not cover an unexamined auxiliary device or establish live-table identity.
