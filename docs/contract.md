@@ -67,6 +67,38 @@ establish core boot configuration, opaque boot variants, model/task ABI, address
 translation, or instruction semantics for this image. Other sections explicitly
 using the T35x hash remain reference findings until independently rechecked.
 
+## HAL-1 task-header and UMD stride revalidation
+
+The actual RV32 dispatcher routes command 7, after its engine-hang query, to
+submit routine `0x104458` (A0 = shifted descriptor address; A1 = 1). Its pool
+allocation scan and initial copy path read **60 bytes** via DMA function
+`0x104ed8` into the first synthetic pool slot. The emulator executes this path,
+including the original memory-clear routine, and stubs only DMA. Three addresses
+(`0x20001000`, `0x1234567800`, `0xfffffffe00`) verify RV32 low/high DMA argument
+reconstruction from the 32-bit method data shifted left eight bits. They do not
+prove that these synthetic addresses are mapped or device-reachable.
+
+`emulate_profile1_task_header.py` executes common-header checks starting at
+`0x1046fa`. Header version at byte 8 must be 2 or 3; engine byte 9 must be
+0x44; queue byte 20 must be zero (original validator `0x103f3e` is executed).
+The next pointer at byte 0 is u64 and its low byte must be zero unless the whole
+pointer is zero. All 256 values of version/engine/queue, five aligned and five
+misaligned next pointers give 778 checks. Stops occur before enqueue/scheduling;
+the descriptor's size, address-list/action fields and extension path are not
+validated by this experiment.
+
+A separate original UMD-version slice at `0x101766` reads byte `0x185d04` and
+selects per-entry strides 36 for UMD version 1 and 64 for version 2; the other
+254 byte values take its invalid-version path. The stack-stored stride and
+branch endpoints are observed directly. UMD entry semantics remain unverified.
+
+`test_task_descriptor.py` now feeds six actual Linux C serializer outputs
+(two simple and four fenced descriptors) into **both** original common-header
+checks. All are accepted. Its postaction execution tests still use T35x; only
+the first 60 bytes of the fenced descriptors are verified here for HAL 1.
+This establishes the shared basic wire header, not complete task compatibility,
+queue execution, a working task fence or numerical inference on the P16.
+
 ## HAL-1 word-upload and core-selection revalidation
 
 `test_profile1_loader.py` executes both original HAL initializers and confirms

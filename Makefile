@@ -15,6 +15,7 @@ test-vendor: test
 	venv/bin/python scripts/emulate_windows_device_id.py
 	venv/bin/python scripts/test_profile1_firmware.py
 	venv/bin/python scripts/emulate_profile1_commands.py
+	venv/bin/python scripts/emulate_profile1_task_header.py
 	venv/bin/python scripts/test_profile1_loader.py
 	venv/bin/python scripts/emulate_boot_policy.py
 	venv/bin/python scripts/emulate_boot_transport.py

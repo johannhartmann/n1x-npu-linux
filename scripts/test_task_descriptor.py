@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 from emulate_task_header_checks import run, BLOB_HASH
+from emulate_profile1_task_header import check as check_profile1
+from extract_profile1_firmware import PROFILE1_HASH
 from emulate_postactions import run as run_postactions, HOST
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +26,9 @@ class Args(ctypes.Structure):
 def main():
     blob = (ROOT/'sources/dla-t35x-verified.bin').read_bytes()
     assert hashlib.sha256(blob).hexdigest() == BLOB_HASH
+    profile1 = (ROOT/'sources/dla-profile1-verified.bin').read_bytes()
+    assert hashlib.sha256(profile1).hexdigest() == PROFILE1_HASH
+    profile1_code = profile1[512:512+36864]
     reference_hash = hashlib.sha256(REFERENCE.read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory(prefix='n1x-dla-task-') as tmp:
         library = Path(tmp)/'task.so'
@@ -81,6 +86,7 @@ void reference_fenced(uint8_t *out, uint64_t next, uint64_t addresses,
         reference(expected, params.next, params.address_list, params.num_addresses, params.timeout)
         assert output.raw[:60] == expected.raw and output.raw[60:] == b'\xa5'*4
         assert run(blob[0x200:0xb100], raw_header=output.raw[:60]) == 'accepted_common_header'
+        assert check_profile1(profile1_code, raw_header=output.raw[:60]) == 'accepted_common_header'
     for params in (Args(1, 0x10000, 0, 9), Args(0, 0, 0, 9),
                    Args(0, 0x10001, 0, 9), Args(0, 0x10008, 0, 9), Args(0, 0x10000, 0, 0)):
         output = ctypes.create_string_buffer(b'\xa5'*64, 64)
@@ -104,6 +110,7 @@ void reference_fenced(uint8_t *out, uint64_t next, uint64_t addresses,
                    params.timeout, HOST, value)
         assert output.raw[:96] == expected.raw and output.raw[96:] == b'\xa5'*4
         assert run(blob[0x200:0xb100], raw_header=output.raw[:60]) == 'accepted_common_header'
+        assert check_profile1(profile1_code, raw_header=output.raw[:60]) == 'accepted_common_header'
         result = run_postactions(blob, b'', descriptor=output.raw[:96])
         assert result['returned'] and result['status'] == 0 and result['host_word'] == value
         assert [t['direction'] for t in result['transfers']] == ['read', 'read', 'read', 'write']
@@ -117,10 +124,11 @@ void reference_fenced(uint8_t *out, uint64_t next, uint64_t addresses,
     assert fenced(None, 96, ctypes.byref(params), HOST, 1) == -errno.EINVAL
     print(json.dumps({'scope': 'C serialization versus compiled public L4T struct and RISC-V common-header checks',
                       'reference_header_sha256': reference_hash,
-                      'task_bytes': 60, 'fenced_task_allocation_bytes': 96,
+                      'task_bytes': 60, 'profile1_common_header_serializer_cases': 6, 'fenced_task_allocation_bytes': 96,
                       'fenced_reference_header_and_firmware_list_cases': 4, 'valid_reference_and_firmware_cases': 2,
                       'preflight_failures_without_output_changes': 8,
                       'limitations': ['Full descriptor/address/action semantics have not been proven on the NPU',
+                                      'HAL-1 postactions are not exercised here; those tests still use the T35x reference',
                                       'DMA buffers, lifetime, firmware completion and numerical inference remain open'],
                       'hardware_access': False, 'passed': True}, indent=2))
 

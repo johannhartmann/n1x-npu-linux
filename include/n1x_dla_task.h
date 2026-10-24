@@ -11,7 +11,8 @@ struct n1x_dla_task_args {
     __u16 num_addresses;
 };
 /* Build a queue-0 v2 descriptor with no actions, flags or extensions. Pure
- * serialization; it does not establish DMA ownership, address reachability or
+ * serialization; the common header is accepted by both HAL-1 RV32 and T35x
+ * RV64 checks. This does not establish DMA ownership, address reachability or
  * full firmware compatibility. Caller must provide a 256-byte-aligned address-list IOVA, mapped valid buffers and
  * keep them alive until completion/quiescence. Output is unchanged on failure.
  */

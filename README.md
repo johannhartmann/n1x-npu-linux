@@ -25,20 +25,17 @@ mailbox/ACK handling have now been independently revalidated in an RV32 emulator
 including round trips through the Linux C response handler. The HAL-1 word uploader
 also matches Windows across 16,839 callback writes, and its shared core-selection
 routine and 78 accessor cases are verified. Physical boot, auxiliary-driver boot selection,
-task/model ABI and instruction semantics remain unverified for HAL 1.
+HAL-1 common task headers and UMD version strides are now revalidated;
+full task/model semantics, postactions and instruction execution remain unverified.
 
 The HAL's default firmware-load method is **2**, which uses a separate Windows
 driver through IOCTL 0x150214; subtype 1 uses 0x150218. The original policy and
 transport were traced up to the OS-call boundary. The word uploader is an
 alternate method, not this default. The auxiliary provider is now identified as **nvsrootmbx.sys / NVDA8600 (ROT0)**:
-its original registration slice and both IOCTL table entries match. Recovering
-the remaining mailbox transaction and a physical Linux backend remain central boot
-requirements. The callback-only SROOT TX/echo component now matches twelve
-original Windows ARM64 traces. Its separate reply reader/decoder matches
-36 additional Windows traces. Mailbox preparation matches 48 further traces;
-Image staging and its three-word upload request are implemented;
-The prepare/TX/echo/RX transaction also matches 48 complete Windows wrapper
-traces. Physical boot orchestration, mapping and DMA lifetime remain pending. See [SROOT transport evidence](docs/sroot-transport.md) for hashes,
+its original registration slice and both IOCTL table entries match. The
+callback-only implementation stages the image and performs mailbox preparation,
+TX/echo and RX. It matches 48 complete Windows wrapper traces, in addition to
+individual component and fault-injection checks. Physical boot orchestration, mapping and DMA lifetime remain pending. See [SROOT transport evidence](docs/sroot-transport.md) for hashes,
 extraction, resource boundaries and verification limits. Blob signature and
 authentication semantics have not been established.
 

@@ -24,7 +24,7 @@ int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
         (args->address_list & 255) || !args->num_addresses)
         return -EINVAL;
     /* L4T R38.4 dla_task_descriptor: packed, aligned(4), version 2.
-     * Actual t35x firmware independently verifies version at 8, engine at 9,
+     * Both HAL-1 RV32 and T35x RV64 firmware verify version at 8, engine at 9,
      * queue at 20 and next-pointer alignment, and copies a 60-byte header.
      */
     put64(descriptor, args->next);
