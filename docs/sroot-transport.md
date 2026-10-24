@@ -365,3 +365,10 @@ creating a physical backend. No mailbox MMIO,
 IRP submission, firmware loading or reset was performed. Any eventual ROT0
 binding requires live AML/power-path audit; the existing candidate DLA0 audit
 does not cover an unexamined auxiliary device or establish live-table identity.
+
+The [ROT0 ACPI/DMA audit](acpi-audit.md) now identifies an additional prerequisite:
+ROT0 lacks `_CCA` in both archived/candidate sets. With this kernel's required-CCA
+configuration, the normal ACPI DMA path would install dma_dummy_ops if the live
+namespace matches. An ordinary platform binding plus a 32-bit mask is therefore
+not an established allocation strategy. Live IORT/coherency/requester evidence
+is required before a physical DMA backend is implemented.

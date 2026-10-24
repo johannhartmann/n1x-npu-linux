@@ -58,9 +58,16 @@ def declarations(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path)
+    parser.add_argument('--target', default=r'\_SB_.DLA0',
+                        help=r'Absolute namespace path to review (default: \_SB_.DLA0)')
     args = parser.parse_args()
-    target = ('_SB_', 'DLA0')
-    powers = {'_PS0', '_PS3', '_PR0', '_PR3', '_DEP', '_PSC', '_PRW'}
+    if not re.fullmatch(r'\\(?:[A-Za-z_][A-Za-z0-9_]{0,3})(?:\.[A-Za-z_][A-Za-z0-9_]{0,3})*', args.target):
+        parser.error('--target must be an absolute ACPI namespace path')
+    target = path_for((), args.target)
+    ancestors = {target[:i] for i in range(len(target)+1)}
+    powers = {'_PS0', '_PS1', '_PS2', '_PS3', '_PR0', '_PR1', '_PR2', '_PR3',
+              '_DEP', '_PSC', '_PRW', '_INI', '_STA', '_PSW', '_DSW',
+              '_CCA', '_DMA', '_DSD'}
     paths = list(sorted(args.directory.glob('*.dsl')))
     if not paths:
         parser.error('no decompiled tables')
@@ -71,13 +78,13 @@ def main():
         for namespace, kind, line in rows:
             if namespace[:len(target)] == target or (
                     namespace and namespace[-1] in powers and
-                    namespace[:-1] in ((), target[:1], target)):
+                    namespace[:-1] in ancestors):
                 relevant.append({'path': '\\'+'.'.join(namespace), 'kind': kind, 'line': line})
         report.append({'file': str(path), 'indexed_declarations': len(rows),
                        'relevant_declarations': relevant,
-                       'literal_dla0_lines': [i for i, line in enumerate(text.splitlines(), 1) if 'DLA0' in line]})
+                       'literal_target_lines': [i for i, line in enumerate(text.splitlines(), 1) if target[-1] in line]})
     print(json.dumps({'scope': 'Static decompiled ASL index for human review; no AML evaluation',
-                      'target': '\\_SB_.DLA0', 'tables': report,
+                      'target': '\\'+'.'.join(target), 'tables': report,
                       'limitations': ['Aliases, conditions and method side effects require manual review',
                                       'Archived candidates do not prove the live firmware contents']}, indent=2))
 

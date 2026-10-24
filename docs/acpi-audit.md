@@ -57,6 +57,75 @@ safety proof. Each SSDT was disassembled separately with iasl 20251212.
 A joint `iasl -da` attempt encountered vendor duplicate namespace objects
 (TPM0/PBRR); its partial output was not used as evidence for the SSDT audit.
 
+## SROOT/ROT0 path reviewed
+
+The same archived and candidate six-table sets were reviewed for
+`\_SB_.ROT0` / `NVDA8600`, now identified as the SROOT boot provider. The
+complete candidate DSDT block (lines 387–406 in its iasl output) contains only
+`_HID=NVDA8600`, `_UID=0`, `_HRV=1` and a static `_CRS` with two overlapping
+Memory32Fixed descriptors: `0x18010000/0x1000` and `0x18010000/0x10`.
+There is no local method, `_STA`, `_INI`, `_PS0..3`, `_PR0..3`, `_DEP`, `_PSC`,
+`_PRW`, `_PSW` or `_DSW`. None of those power/initialization objects appears at
+root or `_SB_` on its parent path in any of the six tables. The five SSDTs
+contain no ROT0 reference; no Alias declaration occurs in either reviewed set.
+No ROT0-linked PowerResource is therefore exposed by this candidate namespace.
+This result does not establish the live namespace or firmware/secure-world
+side effects of touching the mailbox.
+
+The namespace indexer now accepts `--target`, handles every ancestor prefix
+and includes initialization, DMA/coherency and additional power objects in the
+parent review. Reproduce the static indexes with:
+
+```sh
+venv/bin/python scripts/audit_acpi_namespace.py sources/acpi-candidate --target '\_SB_.ROT0'
+venv/bin/python scripts/audit_acpi_namespace.py sources/acpi-archive --target '\_SB_.ROT0'
+venv/bin/python scripts/audit_acpi_namespace.py sources/acpi-candidate
+```
+
+Both ROT0 indexes contain only the five declarations listed above. The default
+DLA0 index is unchanged apart from the generic output key `literal_target_lines`.
+As before, the indexer does not interpret AML, resolve arbitrary aliases or
+certify binding safety.
+
+## ROT0 DMA/coherency gap
+
+Unlike DLA0 (`_CCA=1`), ROT0 has **no `_CCA`**, and none is declared/inherited on
+its candidate root/_SB_ parent path. The installed kernel build configuration
+sets `CONFIG_ACPI_CCA_REQUIRED=y`. The local 7.2.8 source was inspected in both
+`kernel-recipe/src/linux-7.2.8` and `linux-7.2.8-p16-asus`; the relevant files
+match byte-for-byte in both checkouts:
+
+| File | SHA-256 |
+| --- | --- |
+| drivers/acpi/scan.c | 6d347c65a1c995907f97a3cee50597f2155dd494ae648c0936c3dfb4bac43c26 |
+| drivers/base/platform.c | 1c5710433d3b4780d538f88fca11338d4c0967a4b59aad6ade3b175460a91aa0 |
+| installed build .config | d114b788fbe20195ec6f37b473a7533c04f315033ec3b56b144d0681040fc939 |
+
+`acpi_init_coherency()` inherits a seen `_CCA` from its ACPI parent or evaluates
+the local object. `acpi_dma_supported()` returns false without a seen `_CCA`
+when the required option is enabled; `acpi_get_dma_attr()` then returns
+`DEV_DMA_NOT_SUPPORTED`. `platform_dma_configure()` passes that attribute to
+`acpi_dma_configure_id()`, whose first branch installs **dma_dummy_ops** and
+returns zero before architecture DMA or IOMMU configuration. Setting a platform
+driver's `driver_managed_dma` flag does not skip this preceding ACPI call.
+The upstream [ACPI source](https://code.googlesource.com/linux/torvalds/linux/+/de758035702576ac0e5ac0f93e3cce77144c3bd3/drivers/acpi/scan.c)
+also documents the `_CCA` requirement/inheritance rule; the exact running-build
+assessment here uses the pinned local source above.
+
+**Inference conditional on live tables matching:** binding an ordinary ROT0
+platform driver would not automatically provide usable DMA merely by setting
+its 32-bit mask. Read-only sysfs currently shows DLA0 in IOMMU group 19 with a
+SMMU link, whereas ROT0 has neither link. Absence of a link on an unbound device
+does not prove absence of an IORT mapping, DMA requester or physical capability.
+The pending live-table audit must also include **IORT**, before choosing a
+SROOT DMA device/domain and satisfying the Windows logical window
+`0xe0000000..0xffffffff`.
+
+Do not add `_CCA=1`, force direct DMA or reuse DLA0's IOMMU domain on the basis
+of shared chip identity. Cache coherency and the actual SROOT DMA requester
+still need evidence. The Windows allocator's returned logical/physical address
+separation remains relevant; see [SROOT transport](sroot-transport.md).
+
 ## Address discrepancy requiring resolution
 
 The Windows profile chain is now executable offline:
@@ -84,9 +153,9 @@ not sufficient grounds to request/map unadvertised physical addresses.
 
 ## Remaining live verification
 
-1. Obtain a read-only dump of current DSDT and **all** SSDTs, including dynamically
+1. Obtain a read-only dump of current DSDT, **IORT** and **all** SSDTs, including dynamically
    loaded tables if present, and compare hashes to this candidate manifest.
-2. Re-audit any differences on the DLA/parent power path before binding. ACPI can
+2. Re-audit any differences on the DLA and ROT0/parent power paths before binding. ACPI can
    perform power transitions before a driver's probe callback executes.
 3. Establish the live hardware profile/aperture and remapper mode independently.
 4. Only then attach MMIO, power/reset and bounded DMA backends, boot the firmware,
