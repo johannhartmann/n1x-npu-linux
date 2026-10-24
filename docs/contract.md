@@ -506,6 +506,43 @@ five preflight errors leave output unchanged. Zero addresses are preserved,
 not certified valid. Source/output must not overlap. Reachability, allocation
 ownership, model index/offset bounds and coherency remain caller obligations.
 
+## Network instruction-list slice bounds
+
+The original v2 execution path resolves address-list entry 0 and DMA-reads
+**256 bytes** into its network configuration at `0x188740` (`0x1011d8`). The
+diagnostic blob named task0-addr0 contains only 128 initialized bytes; any future
+host allocation must provide the full accessible read extent. Its contents are
+not thereby proven a fully compatible network descriptor.
+
+The INIT_IL call at `0x101218` passes network +20 to `0x103212`. That helper reads
+u32 address-list index at +0, u32 byte offset at +4, and u16 instruction count at
++8; it resolves the index, checks u64 address addition, and calls `0x102fde`.
+The last two bytes of this 12-byte slice are not read by that helper. In the
+diagnostic's observed field the tuple is (index=1, offset=122880, count=3,
+trailing_u16=16). Under the provisional memory projection index 1 is task0-ib,
+124928 bytes; both its 48 logical instruction bytes and its 256-byte fetch fit.
+This observation does not decode the instruction semantics or validate the model.
+
+`emulate_il_reads.py` executes the original `0x102fde` dispatcher, stubbing only
+logging, 256-byte DMA fetches and the instruction executor `0x102d60`. Ten counts
+verify actual fetch offsets and dispatched batch counts. Instructions are 16
+bytes. Counts <=16 fetch one 256-byte block. Counts >16 fetch
+`(count / 16 + 1) * 256` bytes with integer division. In particular count 32
+fetches 768 bytes and dispatches batches 16,16,0; simple round_up(count*16,256)
+would underestimate the read extent. This is firmware behavior, not a reason
+to submit an empty instruction list.
+
+`n1x_dla_validate_il_slice` checks a single recovered slice against caller-owned
+buffer ranges, requires index < number_of_buffers and a nonzero count, checks
+256-byte source alignment and address-addition overflow, and bounds the full
+DMA extent rather than just the logical instruction bytes. It leaves output
+unchanged on error. Its ten computed extents match original dispatch execution;
+ten one-byte-short ranges and six malformed slices are rejected. The actual
+diagnostic INIT_IL field passes with a synthetic mapped address. This is one
+building block: complete network schema traversal, instruction opcode validation,
+embedded addresses/register references and all other model slices remain open.
+The helper is not a complete submission validator and is not wired to hardware.
+
 ## Diagnostic loadable
 
 Runtime RVA `0xa6610`, raw offset `0xa5810`, size `0x5a9fc8` (5,939,144 bytes).

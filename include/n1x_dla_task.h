@@ -36,4 +36,23 @@ int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
 size_t n1x_dla_address_list_bytes(__u16 count);
 int n1x_dla_build_address_list(__u8 *out, size_t out_size,
                               const __u64 *addresses, __u16 count);
+struct n1x_dla_buffer_range {
+    __u64 address;
+    __u64 bytes;
+};
+struct n1x_dla_il_range {
+    __u64 address;
+    __u32 dma_bytes;
+    __u16 instructions;
+};
+/* Validate one recovered 12-byte IL slice (index/offset/count), including all
+ * firmware cache reads. Does not validate instruction opcodes, their embedded
+ * memory/register references, or the complete model. Buffers must describe
+ * real mapped allocations, including accessible padding. Output unchanged on
+ * error. Reserved slice bytes are not interpreted.
+ */
+int n1x_dla_validate_il_slice(struct n1x_dla_il_range *out,
+                              const __u8 *slice, size_t slice_size,
+                              const struct n1x_dla_buffer_range *buffers,
+                              __u16 num_buffers);
 #endif

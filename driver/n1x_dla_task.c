@@ -90,3 +90,41 @@ int n1x_dla_build_address_list(__u8 *out, size_t out_size,
         out[i] = 0;
     return 0;
 }
+
+int n1x_dla_validate_il_slice(struct n1x_dla_il_range *out,
+                              const __u8 *slice, size_t slice_size,
+                              const struct n1x_dla_buffer_range *buffers,
+                              __u16 num_buffers)
+{
+    struct n1x_dla_il_range result = {0};
+    __u32 index, offset;
+    __u64 address, bytes;
+    unsigned int i;
+    if (!out || !slice || slice_size < 12 || !buffers || !num_buffers)
+        return -EINVAL;
+    index = 0;
+    offset = 0;
+    for (i = 0; i < 4; i++) {
+        index |= (__u32)slice[i] << (8 * i);
+        offset |= (__u32)slice[4 + i] << (8 * i);
+    }
+    result.instructions = (__u16)slice[8] | (__u16)slice[9] << 8;
+    if (index >= num_buffers || !result.instructions)
+        return -EINVAL;
+    /* Original interpreter reads another cache block after exact multiples
+     * of 16 above 16. Do not substitute round_up(instructions * 16, 256).
+     */
+    result.dma_bytes = result.instructions <= 16 ? 256 :
+                      (result.instructions / 16 + 1) * 256;
+    bytes = buffers[index].bytes;
+    address = buffers[index].address;
+    if (!address || offset > bytes || result.dma_bytes > bytes - offset ||
+        address > ~(__u64)0 - offset)
+        return -EINVAL;
+    result.address = address + offset;
+    if ((result.address & 255) ||
+        result.address > ~(__u64)0 - result.dma_bytes)
+        return -EINVAL;
+    *out = result;
+    return 0;
+}

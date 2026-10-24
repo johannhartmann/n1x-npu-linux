@@ -104,6 +104,12 @@ header: command 17 enters preemption handling, and region 4 is rejected while
 region 6 has a handler. The driver must not copy the reference command enum
 unchanged; details and verification limits are in the [contract](docs/contract.md).
 
+A recovered network instruction-list slice now has a Linux index/offset/buffer
+validator that accounts for the firmware's full 256-byte fetches, including an
+extra fetch after some exact batch boundaries. Its range calculation is checked
+against original firmware dispatch and the diagnostic model's INIT_IL field.
+Complete instruction/model validation remains unfinished.
+
 ## Before hardware access
 
 See the [candidate ACPI audit](docs/acpi-audit.md), including the important
