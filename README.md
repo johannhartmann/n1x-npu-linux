@@ -47,7 +47,9 @@ the machine's devices. The bounded C parser rejects truncated/overflowing and
 overlapping sections without modifying its output on failure. The C upload
 component matches all 22,039 writes from the original Windows word-transfer
 routine. Tests inject write failures and verify that malformed/oversized inputs
-produce no writes. Both C components compile against the running Linux kernel.
+produce no writes. The register translator reproduces both recovered Windows mapping tables and
+adds alignment/resource bounds checks. All three C components compile against
+the running Linux kernel. No live map selection is assumed.
 
 `inspect_pe.py`, `arm64_string_refs.py`, `msvc_vtables.py`, and
 `indirect_slots.py` produce reproducible offline entry-point and dispatch

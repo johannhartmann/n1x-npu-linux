@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Compile verified components as kernel objects; no loadable module exists yet.
 ccflags-y += -I$(src)/../include
-obj-y += n1x_dla_firmware.o n1x_dla_transfer.o
+obj-y += n1x_dla_firmware.o n1x_dla_transfer.o n1x_dla_registers.o

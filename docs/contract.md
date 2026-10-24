@@ -177,8 +177,40 @@ Translator `0xd392c0` optionally maps a logical offset using 12-byte entries
 `{u32 logical_start, u32 mapped_start, u32 length}` from resource+0x18, with the
 entry count at +0x20. Without a table it passes offsets through. Some accessors
 emit `0x80400330`; adding that to `_CRS` resource 0 would be unjustified. The
-actual descriptor/table construction and mapping to both ACPI apertures remain
-required before attaching any physical MMIO backend.
+live descriptor population and mapping to both ACPI apertures remain
+required before attaching any physical MMIO backend. The concrete static table
+installer and contents are recovered below.
+
+## Recovered remapper tables
+
+The setter at RVA `0xd39ae8` stores a table pointer/count in the selected
+resource descriptor. NPU installer `0xd49e20` selects two concrete static tables
+using DLA context+0x478, configured via `RmSocDlaRemapper`:
+
+- Value 1: table RVA `0x14803d0`, count 10 from RVA `0x1480338`.
+- Value 2: table RVA `0x1480340`, count 11 from RVA `0x1480334`.
+- Other installer values return `0xffff`; this must not be confused with the
+  translator's independent no-table pass-through behavior.
+
+Mode 2 maps logical 0..0x1ff to 0x2000..0x21ff, 0x210..0x21f to
+0x2210..0x221f, 0x444 to 0x2244, 0xb80..0xb8f to 0x2280..0x228f, and
+0xe60..0xe7f to 0x2380..0x239f, with additional bounded ranges preserved in
+`driver/n1x_dla_registers.c`. These agree with R38.4's firewall offsets for the
+transfer and core-control registers. Mode 1 exposes a smaller subset that does
+not include the firmware upload ports. Neither table accepts 0x80400330.
+
+`emulate_address_translation.py` executes the original installer, setter and
+translator in RAM and tests 6,303 cases, including each range's edges, holes,
+unaligned offsets and pass-through behavior. The Linux C translator matches
+both mapped modes and additionally rejects unaligned direct access, insufficient
+resource space for a complete u32, invalid modes and null output. Failures leave
+output unchanged. Kernel-object compilation succeeds.
+
+This closes the static table contents and translation algorithm. It does **not**
+establish the live mode or identify the Windows resource descriptor with a P16
+physical ACPI aperture. The firmware-upload callback receives logical offsets;
+a future MMIO backend must apply the independently established map and resource
+bounds before any access.
 
 ## Diagnostic loadable
 
