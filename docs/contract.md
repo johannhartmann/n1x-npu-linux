@@ -187,6 +187,58 @@ block for exact multiples above 16. All batch counts sum to the requested count.
 rejects one-byte-short allocations in all ten cases. The slice's field decoding
 and opcode semantics remain separate from this extent proof.
 
+## HAL-1 diagnostic network-prefix and INIT-IL execution
+
+`emulate_profile1_init_il.py` uses the pinned HAL-1 firmware and unmodified
+48 bytes of diagnostic INIT-IL from task0-ib offset 122880. Original table
+initializer `0x102cec` installs 32-bit function pointers at `0x185d6c`.
+The original batch interpreter is `0x102abe`; opcode 3 selects poll handler
+`0x102a92`, requiring subtype byte 1. With synthetic ready-register values the
+three actual instructions succeed, reading 32-bit values at internal offsets
+0x7008, 0x5000, 0x6000. Handler invocation, offsets and success are observed,
+not substituted with a stubbed instruction executor.
+
+The HAL-1 handler adds register offsets to **firmware-internal base
+0x01400000**, unlike the T35x emulator's 0x10019180000. Neither value by itself
+identifies a Linux host physical mapping. The poll masks the read word, shifts
+it by the instruction's byte-3 amount and loops **while equal** to its u32
+comparison value. For these instructions, bit 0 set lets polling progress;
+zero keeps the first instruction waiting at the observation limit. This limit
+is not an observed firmware timeout. Wrong subtype, opcode zero and batch
+count 17 return -3 before any register read. Batches are limited to 16.
+
+The same emulator then executes actual address-list loader `0x104a92`, original
+slice parser `0x102d7a`, instruction-fetch dispatcher `0x102b68`, batch and poll
+handlers in one chain. It copies two synthetic mapped u64 address-list entries,
+uses real diagnostic slice bytes `(index=1, offset=122880, count=3, trailing=16)`,
+and observes DMA lengths [16, 256] (address list and instruction cache). The
+u32 index/u32 byte-offset/u16 count layout is thereby revalidated for HAL 1;
+this path does not interpret the final two slice bytes. The complete mapping
+of all loadable memory IDs and non-init instructions remains provisional.
+
+Finally it starts the **original v2 execution prefix at 0x100fea**, after its
+previously verified address-list loading stage, stopping at `0x101052` before
+subsequent network/task execution. The prefix resolves address-list[0], fetches
+**256 bytes** into firmware network buffer `0x185740`, initializes the actual
+handler table and calls the slice parser with **network +20** (`0x185754`).
+The trace is [16, 256, 256] (address list, network descriptor, instruction cache),
+followed by all three original poll handlers. This confirms that +20 is selected
+by the real caller; it is not merely an emulator-chosen slice pointer.
+
+The diagnostic task0-addr0 blob has only **128 initialized bytes**. The test
+pads its mapped network allocation to 256 bytes; the explicit DMA extent guard
+rejects the same prefix when allowed network backing is limited to 128 bytes.
+A future model loader must provide accessible backing for the full 256-byte
+read and determine how the runtime supplies any additional network fields.
+Zero padding here permits examination of the **init prefix only**; it does not
+prove that later fields or the whole network would execute correctly. No
+production model allocator/executor is claimed implemented by this test.
+
+All DMA is checked RAM copying, register ready bits are synthetic, and logging
+is stubbed. No physical MMIO, SMMU mapping, firmware boot, queue scheduling or
+numerical computation was performed. This closes the initial-loadable-to-handler
+ABI gap while retaining the live-hardware and whole-model boundaries.
+
 ## HAL-1 word-upload and core-selection revalidation
 
 `test_profile1_loader.py` executes both original HAL initializers and confirms

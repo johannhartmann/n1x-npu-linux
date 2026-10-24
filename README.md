@@ -29,7 +29,9 @@ HAL-1 common task headers and UMD version strides are now revalidated;
 Terminal WRITE_SEM actions are also revalidated, with 256-byte backing required
 for HAL-1 cache fetches. Full task/model semantics and instruction execution
 remain unverified. HAL-1 cached address-list loading/lookup and instruction-fetch
-extents are also checked against the C serializers/validator.
+extents are also checked against the C serializers/validator. The diagnostic
+INIT-IL now passes the original HAL-1 network-prefix, slice decoder and opcode
+handlers in RAM; real register readiness and task execution remain untested.
 
 The HAL's default firmware-load method is **2**, which uses a separate Windows
 driver through IOCTL 0x150214; subtype 1 uses 0x150218. The original policy and

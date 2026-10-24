@@ -20,6 +20,7 @@ test-vendor: test
 	venv/bin/python scripts/emulate_profile1_dma_chunks.py
 	venv/bin/python scripts/emulate_profile1_address_list.py
 	venv/bin/python scripts/emulate_profile1_il_reads.py
+	venv/bin/python scripts/emulate_profile1_init_il.py
 	venv/bin/python scripts/test_profile1_loader.py
 	venv/bin/python scripts/emulate_boot_policy.py
 	venv/bin/python scripts/emulate_boot_transport.py
