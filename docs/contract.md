@@ -94,10 +94,57 @@ branch endpoints are observed directly. UMD entry semantics remain unverified.
 
 `test_task_descriptor.py` now feeds six actual Linux C serializer outputs
 (two simple and four fenced descriptors) into **both** original common-header
-checks. All are accepted. Its postaction execution tests still use T35x; only
-the first 60 bytes of the fenced descriptors are verified here for HAL 1.
+checks. All are accepted. Terminal WRITE_SEM postactions are additionally
+revalidated for HAL 1 in the following section. Other actions remain unverified.
 This establishes the shared basic wire header, not complete task compatibility,
 queue execution, a working task fence or numerical inference on the P16.
+
+## HAL-1 WRITE_SEM and backing-allocation correction
+
+Actual RV32 postaction interpreter `0x1037ac` uses opcode `0x80` for
+WRITE_SEM: u64 host address, u32 value, then opcode zero terminates the stream.
+Caller `0x103d56` reads postaction count at header +15 and list-table offset at
++18; its firmware-local context stores the host descriptor base at +128 as two
+32-bit words. DMA helpers are the same HAL-1 low/high-address functions verified
+for ping. A synthetic context is installed through global pointer `0x1862bc`.
+Logging and DMA are stubbed; the original caller/interpreter execute in RV32.
+
+**Unlike the T35x interpreter's 16-byte lookahead, HAL 1 fetches aligned
+256-byte cache blocks.** A stream at descriptor offset 64 fetches the whole
+block starting at descriptor offset zero. Thus the previous 96-byte fenced
+allocation was insufficient for P16, although its wire fields were correct.
+`N1X_DLA_FENCED_TASK_V2_BYTES` and the serializer now require/initialize **256
+bytes**. The logical descriptor size field remains **96**, list record is at
+60..63, stream at 64..77, and bytes 78..255 are zero padding. The descriptor
+base must be 256-byte aligned, and every backing byte mapped. This fixes an
+actual target-compatibility gap; it is not merely additional test coverage.
+
+`emulate_profile1_postactions.py` executes 31 direct-interpreter cases: four
+fence values across offsets 0/1/2/3/250/255, two malformed declared sizes,
+DMA errors (including crossing a cache-block boundary), and two invalid opcodes.
+Crossing streams fetch two consecutive 256-byte blocks before writing. The DMA
+trace records source addresses and extents. The host word starts at a sentinel.
+Malformed size 13 or 15 still writes the requested value, then returns -7;
+read failures return -8 and write failures return -4. No physical cache ordering
+or hardware ownership is inferred from RAM-copy DMA.
+
+`test_task_descriptor.py` runs actual Linux C fenced outputs through the
+original HAL-1 caller/interpreter. Four values produce DMA lengths [4, 256, 4]
+(list record, cache block, fence write). Restricting the host allocation to the
+old 96-byte extent causes the cache fetch to fail with -8 and leaves the fence
+untouched. The emulator checks allocation extents explicitly, rather than
+letting a broadly mapped synthetic RAM page hide that overread. Both malformed
+list sizes are also checked through the caller and retain the write-then-error
+behavior. The same 256-byte outputs still pass the T35x reference checks.
+
+The caller immediately returns zero without any postaction/DMA operation when
+its incoming task-status argument is nonzero (tested with 1 and -4). Therefore
+an errored task may leave its fence unchanged, while a malformed list can write
+a fence before reporting an error. The future host driver must combine task
+error/status, deadlines and verified quiescence with fence observation. Fence
+change alone does not prove success; absence of change alone does not prove
+continued execution. Full scheduling, hardware interrupts and inference remain
+unverified.
 
 ## HAL-1 word-upload and core-selection revalidation
 
@@ -630,10 +677,11 @@ host base + list.offset and list.size. Logging and DMA remain the only stubs.
 This establishes single-list traversal, not task execution or the correctness
 of the preceding queue/context-construction path.
 
-`n1x_dla_build_fenced_task_v2` emits 96 initialized bytes: header 0..59,
-postaction-list record 60..63, WRITE_SEM stream 64..77, padding 78..95. The size
-field is 96 and the list size is 14. The caller's observed lookahead reads
-76..91, within the backing allocation. Four fence values are compared against
+`n1x_dla_build_fenced_task_v2` now emits 256 initialized bytes to also cover
+the P16 HAL-1 cache fetch described above: header 0..59, list record 60..63,
+WRITE_SEM stream 64..77, padding 78..255. The logical size field is 96 and the
+list size is 14. This T35x caller's observed lookahead reads 76..91 are a subset
+of that backing allocation; its former 96-byte allocation was not valid for HAL 1. Four fence values are compared against
 compiled public structures and passed through both common-header checks and
 the actual caller/interpreter. The original basic serializer remains available.
 The fence address must be nonzero and four-byte aligned; the caller must use a

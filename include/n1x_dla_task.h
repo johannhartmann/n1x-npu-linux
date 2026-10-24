@@ -3,7 +3,7 @@
 #define N1X_DLA_TASK_H
 #include "n1x_dla_firmware.h"
 #define N1X_DLA_TASK_V2_BYTES 60
-#define N1X_DLA_FENCED_TASK_V2_BYTES 96
+#define N1X_DLA_FENCED_TASK_V2_BYTES 256
 struct n1x_dla_task_args {
     __u64 next;
     __u64 address_list;
@@ -18,10 +18,14 @@ struct n1x_dla_task_args {
  */
 int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
                          const struct n1x_dla_task_args *args);
-/* Adds a terminal WRITE_SEM postaction, including DMA lookahead padding.
+/* Adds a terminal WRITE_SEM postaction: logical descriptor size 96 bytes,
+ * backing allocation 256 bytes for HAL-1 cache-block reads. Caller must place
+ * the descriptor at a 256-byte-aligned device address and map all 256 bytes.
  * Caller must initialize a coherent fence word to a different value before
  * submission and inspect task error/status as well as the fence. The value
  * does not prove success, nor provide a CPU memory barrier or DMA ownership.
+ * HAL-1 skips postactions when task status is nonzero, so errors may leave the
+ * fence unchanged; never wait solely on this word without an error/deadline path.
  * Same lifetime and unchanged-on-failure rules as the basic serializer.
  */
 int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,

@@ -26,7 +26,9 @@ including round trips through the Linux C response handler. The HAL-1 word uploa
 also matches Windows across 16,839 callback writes, and its shared core-selection
 routine and 78 accessor cases are verified. Physical boot, auxiliary-driver boot selection,
 HAL-1 common task headers and UMD version strides are now revalidated;
-full task/model semantics, postactions and instruction execution remain unverified.
+Terminal WRITE_SEM actions are also revalidated, with 256-byte backing required
+for HAL-1 cache fetches. Full task/model semantics and instruction execution
+remain unverified.
 
 The HAL's default firmware-load method is **2**, which uses a separate Windows
 driver through IOCTL 0x150214; subtype 1 uses 0x150218. The original policy and
@@ -92,7 +94,7 @@ compatibility is still unverified; no live map selection is assumed. A simulated
 round trip runs the original RISC-V ping/response code and the Linux C ACK
 handler together, with RAM-only DMA/register/interrupt backends. The original
 firmware postaction interpreter is also exercised with WRITE_SEM streams,
-alignment variants and DMA failures. A 96-byte fenced task serializer is checked
+alignment variants and DMA failures. A fenced task serializer with logical size 96 and 256-byte backing is checked
 against public structures and the original firmware list traversal/interpreter.
 Malformed list lengths can write a fence
 before returning an error; see the [protocol contract](docs/contract.md).

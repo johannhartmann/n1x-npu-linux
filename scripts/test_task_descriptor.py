@@ -13,6 +13,7 @@ from emulate_task_header_checks import run, BLOB_HASH
 from emulate_profile1_task_header import check as check_profile1
 from extract_profile1_firmware import PROFILE1_HASH
 from emulate_postactions import run as run_postactions, HOST
+from emulate_profile1_postactions import run as run_profile1_postactions
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT/'sources/linux-nv-oot-r38/drivers/video/tegra/host/nvdla/dla_os_interface.h'
@@ -62,7 +63,7 @@ void reference_fenced(uint8_t *out, uint64_t next, uint64_t addresses,
     task.size = 96;
     task.num_postactions = 1;
     task.postactions = 60;
-    memset(out, 0, 96);
+    memset(out, 0, 256);
     memcpy(out, &task, sizeof(task));
     memcpy(out + 60, &list, sizeof(list));
     out[64] = 0x80;
@@ -103,32 +104,49 @@ void reference_fenced(uint8_t *out, uint64_t next, uint64_t addresses,
     ref_fenced = lib.reference_fenced
     ref_fenced.argtypes = reference.argtypes + [ctypes.c_uint64, ctypes.c_uint32]
     for value in (0, 1, 0x12345678, 0xffffffff):
-        output = ctypes.create_string_buffer(b'\xa5'*100, 100)
-        expected = ctypes.create_string_buffer(96)
-        assert fenced(output, 100, ctypes.byref(params), HOST, value) == 0
+        output = ctypes.create_string_buffer(b'\xa5'*260, 260)
+        expected = ctypes.create_string_buffer(256)
+        assert fenced(output, 260, ctypes.byref(params), HOST, value) == 0
         ref_fenced(expected, params.next, params.address_list, params.num_addresses,
                    params.timeout, HOST, value)
-        assert output.raw[:96] == expected.raw and output.raw[96:] == b'\xa5'*4
+        assert output.raw[:256] == expected.raw and output.raw[256:] == b'\xa5'*4
         assert run(blob[0x200:0xb100], raw_header=output.raw[:60]) == 'accepted_common_header'
         assert check_profile1(profile1_code, raw_header=output.raw[:60]) == 'accepted_common_header'
-        result = run_postactions(blob, b'', descriptor=output.raw[:96])
+        result = run_postactions(blob, b'', descriptor=output.raw[:256])
         assert result['returned'] and result['status'] == 0 and result['host_word'] == value
         assert [t['direction'] for t in result['transfers']] == ['read', 'read', 'read', 'write']
-    for size, address, arguments in ((95, HOST, ctypes.byref(params)),
-                                      (96, 0, ctypes.byref(params)),
-                                      (96, HOST+1, ctypes.byref(params)),
-                                      (96, HOST, None)):
-        output = ctypes.create_string_buffer(b'\xa5'*100, 100)
+        target = run_profile1_postactions(profile1, b'', descriptor=output.raw[:256])
+        assert target['returned'] and target['status'] == 0 and target['host_word'] == value
+        assert [t['length'] for t in target['transfers']] == [4, 256, 4]
+        short = run_profile1_postactions(profile1, b'', descriptor=output.raw[:96])
+        assert short['returned'] and short['status'] == -8 and short['host_word'] == 0xdeadbeef
+    for task_status in (1, -4):
+        skipped = run_profile1_postactions(profile1, b'', descriptor=output.raw[:256], task_status=task_status)
+        assert skipped['returned'] and skipped['status'] == 0
+        assert not skipped['transfers'] and skipped['host_word'] == 0xdeadbeef
+    for list_size in (13, 15):
+        malformed = bytearray(output.raw[:256])
+        malformed[62:64] = list_size.to_bytes(2, 'little')
+        failed = run_profile1_postactions(profile1, b'', descriptor=malformed)
+        assert failed['returned'] and failed['status'] == -7 and failed['host_word'] == 0xffffffff
+    for size, address, arguments in ((96, HOST, ctypes.byref(params)),
+                                      (255, HOST, ctypes.byref(params)),
+                                      (256, 0, ctypes.byref(params)),
+                                      (256, HOST+1, ctypes.byref(params)),
+                                      (256, HOST, None)):
+        output = ctypes.create_string_buffer(b'\xa5'*260, 260)
         assert fenced(output, size, arguments, address, 1) == -errno.EINVAL
-        assert output.raw == b'\xa5'*100
-    assert fenced(None, 96, ctypes.byref(params), HOST, 1) == -errno.EINVAL
+        assert output.raw == b'\xa5'*260
+    assert fenced(None, 256, ctypes.byref(params), HOST, 1) == -errno.EINVAL
     print(json.dumps({'scope': 'C serialization versus compiled public L4T struct and RISC-V common-header checks',
                       'reference_header_sha256': reference_hash,
-                      'task_bytes': 60, 'profile1_common_header_serializer_cases': 6, 'fenced_task_allocation_bytes': 96,
+                      'task_bytes': 60, 'profile1_common_header_serializer_cases': 6, 'fenced_task_allocation_bytes': 256, 'fenced_task_logical_bytes': 96,
+                      'profile1_postaction_serializer_cases': 4, 'profile1_undersized_backing_rejections': 4,
+                      'profile1_failed_task_skips_postactions': 2, 'profile1_malformed_fenced_lists': 2,
                       'fenced_reference_header_and_firmware_list_cases': 4, 'valid_reference_and_firmware_cases': 2,
-                      'preflight_failures_without_output_changes': 8,
+                      'basic_preflight_failures': 8, 'fenced_preflight_failures': 6,
                       'limitations': ['Full descriptor/address/action semantics have not been proven on the NPU',
-                                      'HAL-1 postactions are not exercised here; those tests still use the T35x reference',
+                                      'Only terminal WRITE_SEM lists are checked; other HAL-1 actions remain unverified',
                                       'DMA buffers, lifetime, firmware completion and numerical inference remain open'],
                       'hardware_access': False, 'passed': True}, indent=2))
 

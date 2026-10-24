@@ -53,7 +53,7 @@ int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
     err = n1x_dla_build_task_v2(descriptor, sizeof(descriptor), args);
     if (err)
         return err;
-    put16(descriptor + 10, sizeof(descriptor));
+    put16(descriptor + 10, 96); /* Logical descriptor size, excluding cache padding. */
     descriptor[15] = 1; /* One postaction list; no preactions. */
     put16(descriptor + 18, 60);
     put16(descriptor + 60, 64); /* List offset relative to descriptor base. */
@@ -62,8 +62,8 @@ int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
     put64(descriptor + 65, fence_address);
     for (i = 0; i < 4; i++)
         descriptor[73 + i] = fence_value >> (8 * i);
-    /* Byte 77 terminates the stream. Padding through byte 95 keeps the
-     * interpreter's aligned 16-byte lookahead read inside the allocation.
+    /* Byte 77 terminates the stream. Padding through byte 255 covers HAL-1
+     * aligned 256-byte cache fetches (and T35x 16-byte lookahead reads).
      */
     for (i = 0; i < sizeof(descriptor); i++)
         out[i] = descriptor[i];
