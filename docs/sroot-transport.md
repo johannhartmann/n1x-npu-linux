@@ -404,6 +404,52 @@ upload wrapper applies its additional status/detail check as described above.
 No response-identity contract has yet been recovered from a real SROOT firmware
 response, so the transport does not invent one.
 
+## Separate reinitialization request
+
+IOCTL `0x150218` reaches `NotifySrootReinitFw` at RVA `0x31760`. Its pure
+normalizer `0x37f0` accepts either four bytes (little-endian image identifier,
+implicit mode 1) or eight bytes (identifier followed by u32 mode). Identifiers
+are the same six values as image upload; mode must be 1 or 2. Unsupported sizes,
+identifiers and modes return `0xc000000d`. The surrounding WDF size gate rejects
+sizes above eight; the helper's size checks also reject shorter non-four/eight
+requests. These are request encodings, not established descriptions of what
+modes 1/2 do in secure firmware.
+
+Original builder `0x31a34..0x31a88` sends command **0x1a**, count **3**, payload
+**[identifier, 0, mode]**. The zero middle word is part of the protocol; the
+request does not reference an image buffer/DMA address. The known KMD subtype-1
+input `02 03 0c 00 02 00 00 00` therefore becomes `[0xc0302, 0, 2]`.
+`n1x_sroot_build_reinit()` implements this transformation, with no output mutation
+on invalid input. Public command constants distinguish upload 0x18 and reinit
+0x1a. The resulting three words use the existing exchange helper; transport
+success alone does not prove successful reinitialization or NPU readiness.
+
+`test_sroot_reinit.py` executes the original normalizer and request-builder
+slice for 18 valid and 13 invalid cases, compares Linux payloads, tests null
+parameters and matches a complete original/C exchange trace for the exact P16
+request (TX header 0x31a). All WDF objects, readiness and replies are synthetic;
+no real reset/reinitialization was attempted. Both wrappers require zero
+transport and decoded status/detail on their success path.
+
+**Do not impose an unconditional upload-then-reinit recipe from these two
+IOCTLs alone.** Original KMD method-2 upload helper `0xd45cb0` invokes HAL +0x400
+with subtype zero and records the successful variant; that function itself
+does not append a subtype-1 call. The separately observed method-2 selection
+slice `0xd47460` checks HAL byte +0x486: nonzero calls upload slot +0x408;
+zero calls +0x400 with `(blob=NULL, length=0, subtype=1)`. Three original-slice
+emulations cover byte values 0/1/255 and capture selected callbacks/arguments.
+The enclosing function `0xd47430` continues into other core/start checks.
+The initializer at `0x195d194` explicitly clears byte +0x486; configuration
+`0xd44284..0xd442b8` reads registry value **RmSocDlaSrootReinitMode**. Only a
+successful read of value 1 sets the byte to 1; other present values clear it,
+and an absent value preserves it. `emulate_boot_policy.py` now executes the
+initializer store and registry slice for absent/0/1/2/3/0xffffffff across both
+HAL selectors, in addition to the existing method/remapper checks. The registry
+boolean is distinct from the normalized reinit request's mode 1/2. Complete
+cold/resume call ordering still needs tracing before defining Linux boot state
+transitions. Do not infer this field from upload-success byte +0x48c, which is
+a different field.
+
 ## Remaining bring-up gates
 
 Implement and verify full command completion policy, DMA lifetime,

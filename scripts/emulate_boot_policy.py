@@ -49,14 +49,21 @@ def run(pe, selector, override=None, remapper_initial=0x77):
         u.reg_write(register, value)
     u.mem_write(CTX+0x460, struct.pack('<I', 0x77))
     u.mem_write(CTX+0x478, struct.pack('<I', remapper_initial))
+    u.mem_write(CTX+0x486, b'\x77')
+    # Original constructor's store, isolated from unrelated setup operations.
+    u.emu_start(BASE+0x195d194, BASE+0x195d198, count=10)
+    assert bytes(u.mem_read(CTX+0x486, 1)) == b'\0'
     u.emu_start(BASE+0xd4419c, BASE+0xd44208, count=1000)
     assert u.reg_read(regs.UC_ARM64_REG_PC) == BASE+0xd44208
     method = struct.unpack('<I', u.mem_read(CTX+0x460, 4))[0]
+    u.emu_start(BASE+0xd44284, BASE+0xd442b8, count=1000)
+    assert u.reg_read(regs.UC_ARM64_REG_PC) == BASE+0xd442b8
+    reinit_mode = bytes(u.mem_read(CTX+0x486, 1))[0]
     u.emu_start(BASE+0xd44310, BASE+0xd44350, count=1000)
     assert u.reg_read(regs.UC_ARM64_REG_PC) == BASE+0xd44350
     remapper = struct.unpack('<I', u.mem_read(CTX+0x478, 4))[0]
     return {'selector': selector, 'override': override, 'method': method,
-            'initial_remapper': remapper_initial, 'remapper': remapper, 'queries': queried}
+            'sroot_reinit_mode_byte': reinit_mode, 'initial_remapper': remapper_initial, 'remapper': remapper, 'queries': queried}
 
 
 def main():
@@ -69,7 +76,8 @@ def main():
             result = run(pe, selector, override)
             assert result['method'] == (2 if override is None else override if override in (1, 2) else 0)
             assert result['remapper'] == (0x77 if override is None else override if override in (0, 2) else 1)
-            assert result['queries'] == ['RmSocDlaFwLoadMethod', 'RmSocDlaRemapper']
+            assert result['sroot_reinit_mode_byte'] == int(override == 1)
+            assert result['queries'] == ['RmSocDlaFwLoadMethod', 'RmSocDlaSrootReinitMode', 'RmSocDlaRemapper']
             cases.append(result)
     print(json.dumps({'passed': True, 'hardware_access': False, 'kmd_sha256': KMD_SHA256,
                       'cases': cases, 'limitations': ['Registry reads are stubbed; actual installed Windows values are unknown',

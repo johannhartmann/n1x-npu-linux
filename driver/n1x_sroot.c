@@ -157,6 +157,12 @@ int n1x_sroot_prepare(const struct n1x_dla_io *io, __u32 stride,
     return (value & 255) ? -EBUSY : 0;
 }
 
+static int valid_image_tag(__u32 tag)
+{
+    return tag == 0xc0300 || tag == 0x90400 ||
+           (tag >= 0xc0302 && tag <= 0xc0305);
+}
+
 int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
                           const __u8 *image, size_t size,
                           __u64 dma_address, __u32 dma_minimum,
@@ -171,8 +177,7 @@ int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
         return -EINVAL;
     tag = (__u32)image[0] | (__u32)image[1] << 8 |
           (__u32)image[2] << 16 | (__u32)image[3] << 24;
-    if (tag != 0xc0300 && tag != 0x90400 &&
-        (tag < 0xc0302 || tag > 0xc0305))
+    if (!valid_image_tag(tag))
         return -EINVAL;
     memmove(buffer, image + 4, size - 4);
     /* Windows leaves these allocator-owned bytes untouched. Do not expose
@@ -205,4 +210,25 @@ int n1x_sroot_exchange(const struct n1x_dla_io *io, __u32 stride,
     if (err)
         return err;
     return n1x_sroot_receive(io, stride, reply, polls, interval_us);
+}
+
+int n1x_sroot_build_reinit(__u32 words[3], const __u8 *request, size_t size)
+{
+    __u32 tag = 0, mode = 1;
+    unsigned int i;
+    if (!words || !request || (size != 4 && size != 8))
+        return -EINVAL;
+    for (i = 0; i < 4; i++)
+        tag |= (__u32)request[i] << (8 * i);
+    if (size == 8) {
+        mode = 0;
+        for (i = 0; i < 4; i++)
+            mode |= (__u32)request[4 + i] << (8 * i);
+    }
+    if (!valid_image_tag(tag) || (mode != 1 && mode != 2))
+        return -EINVAL;
+    words[0] = tag;
+    words[1] = 0;
+    words[2] = mode;
+    return 0;
 }

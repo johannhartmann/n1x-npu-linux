@@ -38,7 +38,8 @@ driver through IOCTL 0x150214; subtype 1 uses 0x150218. The original policy and
 transport were traced up to the OS-call boundary. The word uploader is an
 alternate method, not this default. The auxiliary provider is now identified as **nvsrootmbx.sys / NVDA8600 (ROT0)**:
 its original registration slice and both IOCTL table entries match. The
-callback-only implementation stages the image and performs mailbox preparation,
+callback-only implementation stages the image, builds the separate reinit
+request and performs mailbox preparation,
 TX/echo and RX. It matches 48 complete Windows wrapper traces, in addition to
 individual component and fault-injection checks. Physical boot orchestration, mapping and DMA lifetime remain pending. See [SROOT transport evidence](docs/sroot-transport.md) for hashes,
 extraction, resource boundaries and verification limits. Blob signature and

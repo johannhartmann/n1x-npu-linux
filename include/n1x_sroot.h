@@ -3,6 +3,8 @@
 #define N1X_SROOT_H
 #include "n1x_dla_io.h"
 #define N1X_SROOT_MAX_WORDS 14
+#define N1X_SROOT_CMD_UPLOAD 0x18
+#define N1X_SROOT_CMD_REINIT 0x1a
 /* Transport-only TX for zero-status/zero-metadata request headers. io must use
  * the separate SROOT resource, not the DLA aperture. stride is the recovered
  * register spacing, still to be established on live hardware. Callbacks must
@@ -66,4 +68,12 @@ int n1x_sroot_exchange(const struct n1x_dla_io *io, __u32 stride,
                        __u8 command, const __u32 *words, __u8 count,
                        struct n1x_sroot_reply *reply,
                        __u32 polls, __u32 interval_us);
+/* Build the separate reinitialization command's payload. Windows input is
+ * little-endian tag (4 bytes, implicit mode 1), or tag + mode (8 bytes).
+ * Accepted modes are 1/2; output is [tag, 0, mode], sent with command 0x1a.
+ * P16 KMD subtype 1 uses input tag 0xc0302, mode 2. No DMA storage is referenced
+ * by these three words. This only serializes: do not equate reinit reply with
+ * proven NPU boot or DMA quiescence. Outputs unchanged on invalid input.
+ */
+int n1x_sroot_build_reinit(__u32 words[3], const __u8 *request, size_t size);
 #endif
