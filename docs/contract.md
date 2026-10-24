@@ -355,6 +355,36 @@ verified device quiescence; receipt of message 2 for command 7 is insufficient.
 Interrupt handling must be working before firmware can wait on a host ACK.
 No physical IRQ, MMIO, DMA, firmware boot or inference has been tested.
 
+## Task postaction completion evidence
+
+`emulate_postactions.py` executes the original RISC-V postaction interpreter
+at code VA `0x103cd2`, with logging stubbed and DMA replaced by RAM copies.
+The firmware accepts a 14-byte stream: opcode `0x80`, little-endian u64 host
+address, little-endian u32 value, then opcode `0x00` (terminate). This matches
+the public WRITE_SEM payload. Sixteen cases cover all four stream alignments
+and four u32 values, including zero and `0xffffffff`.
+
+The opcode fetch performs a 16-byte aligned DMA read. For the valid terminal
+WRITE_SEM stream the firmware reads the terminating opcode before writing the
+four-byte semaphore. Both reads require accessible backing beyond the 14-byte
+stream: for an aligned stream the second read starts at byte 12 and ends at
+byte 27. The wire size must remain 14; allocation padding is separate.
+
+**Malformed lists can still write the semaphore.** Declaring 13 or 15 bytes
+instead of 14 causes the firmware to write the value, then fetch/check the
+terminator and return `-7`. Thus a fence value alone is not evidence of a
+successful task. The driver must validate descriptor/action lengths and retain
+an independent task-error/status path. Injected failures in the first/second
+DMA read return `-8`; failure of the semaphore write returns `-4`. These three
+simulated failures leave the host sentinel unchanged. Unknown opcodes 1 and
+255 return `-7` without a write.
+
+The 23 cases exercise this interpreter directly, not the caller's action-list
+traversal, model execution, physical DMA ordering, or cache coherency. The
+basic Linux task serializer still emits no postactions; a fenced serializer
+requires caller/list traversal validation first. No task completion on actual
+hardware has been demonstrated.
+
 ## Diagnostic loadable
 
 Runtime RVA `0xa6610`, raw offset `0xa5810`, size `0x5a9fc8` (5,939,144 bytes).
