@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Compile the parser as a kernel object; no loadable module exists yet.
+ccflags-y += -I$(src)/../include
+obj-y += n1x_dla_firmware.o

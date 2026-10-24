@@ -1,0 +1,12 @@
+/sources/
+/tools/
+/venv/
+/results/
+__pycache__/
+/tests/test_firmware
+*.o
+*.ko
+*.mod*
+.*.cmd
+Module.symvers
+modules.order
