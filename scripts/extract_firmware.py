@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract a hash-pinned N1X DLA image from NVIDIA's Windows ARM64 KMD."""
+"""Extract a hash-pinned T35x DLA research image from NVIDIA's Windows ARM64 KMD."""
 import argparse,hashlib,json,struct
 from pathlib import Path
 import pefile

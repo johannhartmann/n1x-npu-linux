@@ -88,7 +88,7 @@ def main():
         {'id': 2, 'physical': '0x31380000', 'bytes': '0x10000'}]
     print(json.dumps({'scope': 'Original ARM64 classifiers, HAL initializer, getters and branch slice in RAM',
                       'profiles': rows, 'limitations': [
-                          'The live machine supplies no verified mapping from ACPI HRV to Windows input_chip_id',
+                          'Separate original hardware-ID classifier maps REV_0034 to 0x254; live Windows invocation remains unobserved',
                           'The 0x354 resource list differs from the historical P16 DSDT',
                           'These are candidate physical addresses, not authorization or proof for MMIO access']}, indent=2))
 

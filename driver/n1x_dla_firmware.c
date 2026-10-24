@@ -26,7 +26,7 @@ int n1x_dla_parse_firmware(const __u8 *data, size_t size,
     if (total != size || header < 24 || !fits(header, 0x4c, total))
         return -EINVAL;
     ucode = data + header;
-    if (get32(ucode) != 1)
+    if (get32(ucode) != 1 && get32(ucode) != 2)
         return -EINVAL;
     parsed.payload_offset = get32(data + 16);
     parsed.payload_size = get32(data + 20);

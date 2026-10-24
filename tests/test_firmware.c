@@ -19,7 +19,7 @@ int main(int argc,char **argv)
  valid();assert(!n1x_dla_parse_firmware(fw,sizeof(fw),&out));
  assert(out.monitor_code_size==512 && out.monitor_data_offset==512);
  const unsigned bad[][2]={{0,0},{4,2},{8,1537},{12,0xfffffff0},
- {16,0xfffffff0},{20,0xffffffff},{256,2},{0x128,0xffffffff},
+ {16,0xfffffff0},{20,0xffffffff},{256,3},{0x128,0xffffffff},
  {0x12c,0xffffffff},{0x130,256},{0x134,513}};
  for(size_t i=0;i<sizeof(bad)/sizeof(bad[0]);i++){
   valid();put(bad[i][0],bad[i][1]);memset(&out,0xa5,sizeof(out));

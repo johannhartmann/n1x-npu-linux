@@ -29,10 +29,15 @@ def run(blob,null_arg=None):
     u.emu_start(0x140d4c640,STOP,count=1000)
     return {'status':u.reg_read(UC_ARM64_REG_X0),'payload_pointer':hex(struct.unpack('<Q',u.mem_read(OUT,8))[0]),'decoded_words':list(struct.unpack('<6I',u.mem_read(OUT+0x100,24)))}
 
-rows=[]
-r=run(original);assert r=={'status':0,'payload_pointer':hex(BASE+0x200),'decoded_words':[0,0,0,0xaf00,0xaf00,0xa400]};rows.append(dict(case='valid_pinned_image',**r))
-for name,offset,value in [('bad_magic',0,0),('header_overflow',12,0xfffffff0),('header_oob',12,len(original)),('payload_overflow',16,0xfffffff0),('payload_oob',20,len(original)),('section_overflow',0x12c,0xffffffff),('section_oob',0x12c,len(original))]:
-    blob=bytearray(original);struct.pack_into('<I',blob,offset,value);r=run(blob);assert r['status']!=0;rows.append(dict(case=name,**r))
-for arg in (1,2,3):
-    r=run(original,arg);assert r['status']==0x1f;rows.append(dict(case=f'null_arg_{arg}',**r))
-print(json.dumps({'scope':'offline original ARM64 parser; logging and memset stubbed; no hardware access','cases':rows,'passed':len(rows)},indent=2))
+def main():
+    rows=[]
+    r=run(original);assert r=={'status':0,'payload_pointer':hex(BASE+0x200),'decoded_words':[0,0,0,0xaf00,0xaf00,0xa400]};rows.append(dict(case='valid_pinned_image',**r))
+    for name,offset,value in [('bad_magic',0,0),('header_overflow',12,0xfffffff0),('header_oob',12,len(original)),('payload_overflow',16,0xfffffff0),('payload_oob',20,len(original)),('section_overflow',0x12c,0xffffffff),('section_oob',0x12c,len(original))]:
+        blob=bytearray(original);struct.pack_into('<I',blob,offset,value);r=run(blob);assert r['status']!=0;rows.append(dict(case=name,**r))
+    for arg in (1,2,3):
+        r=run(original,arg);assert r['status']==0x1f;rows.append(dict(case=f'null_arg_{arg}',**r))
+    print(json.dumps({'scope':'offline original ARM64 parser; logging and memset stubbed; no hardware access','cases':rows,'passed':len(rows)},indent=2))
+
+
+if __name__ == "__main__":
+    main()

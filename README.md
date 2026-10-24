@@ -8,6 +8,20 @@ caller-provided callbacks. A basic queue-0 task serializer and response capture/
 No hardware backend is supplied;
 the tests neither bind the ACPI device nor write hardware registers.
 
+## Target selection correction
+
+The original Windows hardware-ID classifier now confirms
+`ACPI\VEN_NVDA&DEV_200A&REV_0034 -> 0x254 -> device profile 3 -> DLA HAL 1`.
+Its static resources match the P16 candidate ACPI aperture `0x19000000`.
+HAL 1 parses a different 66,816-byte RISC-V image with inner header version 2.
+The extractor and Linux parser support that image; actual boot is untested.
+
+**The detailed T35x firmware emulations below concern HAL 2, not this HAL-1
+image.** They remain reference research and do not validate the P16 firmware's
+commands, task ABI, engine registers or instruction opcodes. Those must now be
+rechecked against HAL 1. Signed firmware/boot variants and the live ACPI audit
+remain unresolved; no hardware backend is enabled.
+
 ## Hardware and inputs
 
 - ACPI `NVDA200A`, compatible ID `NVDA2042`, hardware revision `0x34`, `DLA0`.
@@ -29,6 +43,8 @@ addresses, proven facts, and remaining bring-up requirements.
 make test
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
+venv/bin/python scripts/extract_profile1_firmware.py \
+  sources/nvidia/Display.Driver/nvlddmkm.sys sources/dla-profile1-verified.bin
 venv/bin/python scripts/extract_firmware.py \
   sources/nvidia/Display.Driver/nvlddmkm.sys sources/dla-t35x-verified.bin
 ./tests/test_firmware sources/dla-t35x-verified.bin

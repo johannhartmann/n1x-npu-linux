@@ -68,9 +68,15 @@ The Windows profile chain is now executable offline:
 
 Original classifiers, HAL assignments, getters and constructor branch were run
 in RAM by `inspect_windows_profiles.py`. Profile 6 selects the firmware parser
-for the extracted t35x image. The older profile's resource addresses happen to
-match the candidate P16 `_CRS`; this does not prove the P16 uses the older DLA
-firmware. ACPI HRV 0x34 has not been traced to the Windows input ID.
+for the extracted t35x image. A subsequent original hardware-ID classification
+at RVA `0xd3b5c8` now maps the exact string
+`ACPI\VEN_NVDA&DEV_200A&REV_0034` to **0x254** (device profile 3 / DLA HAL 1).
+`emulate_windows_device_id.py` reproduces this with stubbed IoGetDeviceProperty
+and wcsstr imports. Thus the candidate P16 resource list is consistent with the
+recovered Windows hardware-ID path. The exact live Windows invocation has not
+been captured, and this does not establish remapper mode or signed boot choice.
+HAL 1 parses a separate raw firmware at RVA `0x13ac1c0`, size 66816, inner
+version 2. T35x-only firmware emulation cannot establish its protocol behavior.
 
 A Linux driver must not combine the new firmware with the old physical aperture
 merely because each was found independently. The static Windows resources are

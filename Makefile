@@ -12,6 +12,8 @@ test-vendor: test
 	venv/bin/python scripts/decode_transfer_registers.py
 	venv/bin/python scripts/emulate_address_translation.py
 	venv/bin/python scripts/inspect_windows_profiles.py
+	venv/bin/python scripts/emulate_windows_device_id.py
+	venv/bin/python scripts/test_profile1_firmware.py
 	venv/bin/python scripts/emulate_bitbang_transfer.py
 	venv/bin/python scripts/emulate_dma_transfer.py
 	venv/bin/python scripts/emulate_core_control.py

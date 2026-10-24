@@ -4,6 +4,35 @@ All offsets refer to the exact files below. Preferred image bases are
 `0x140000000` for the KMD and `0x180000000` for the DLLs. RVA and raw file offset
 are distinct. Analysis date: 2026-10-24.
 
+## Target-selection correction (2026-10-25)
+
+The original Windows hardware-ID classifier at RVA `0xd3b5c8` maps
+`ACPI\VEN_NVDA&DEV_200A&REV_0034` to **0x254**, not 0x354. OS imports are
+IoGetDeviceProperty(DevicePropertyHardwareID=1) and wcsstr, verified through the
+PE import table. Six emulator cases cover REV_0034/2540 -> 254, REV_0036 -> 256,
+unknown revisions and a failed property read. Constructor call sites
+`0xd38b6c` and `0xd38c58` pass that result into `0x1950ec8`, then the recovered
+classifier/HAL chain selects device profile 3 and DLA selector 1. Alternative
+construction paths exist; a live Windows boot trace has not been collected.
+
+HAL 1 firmware parser wrapper `0xd48410` passes the raw image at RVA `0x13ac1c0`
+to the common parser `0xd4c640`. The image is 66816 bytes, SHA-256
+`2754b289e39b8d9ae9383d952f738bd1c5027fdd2573a564f664f9f66ac2f997`,
+outer version 1, inner version 2, payload at 512 (66304 bytes), code at payload
+0 (36864 bytes) and data at payload 36864 (29440 bytes). The original Windows
+parser and Linux C parser agree on these ranges. The Linux parser now accepts
+both observed inner versions 1 and 2, retaining the existing bounds checks.
+The selector-1 descriptor getter at `0xd46760` additionally returns two
+104-byte records with boot/signature variants; their selection and loading
+remain separate unfinished work. They are not the raw image's section table.
+
+**All firmware command/task/IL emulation sections referring to SHA-256
+8f5b... are T35x/HAL-2 reference research. They do not prove HAL-1/P16 protocol
+compatibility.** The P16's matching static resource chain is now explained,
+but live ACPI identity, remapper selection and boot/security handling remain
+unverified. Revalidate firmware-derived Linux behavior against HAL 1 before
+using it on this machine. No NPU hardware access was performed.
+
 ## Identity
 
 | Artifact | SHA-256 |
@@ -11,7 +40,7 @@ are distinct. Analysis date: 2026-10-24.
 | NVIDIA 617.42 ARM64 installer | `425a75f54655ddcc8ee6859cec49bc431a17ef18094daaf59f205b159fb6e2bd` |
 | nvlddmkm.sys | `73b3187cdf84c0306df78595e49626d096e84dfc1e6356543db57b145007f987` |
 | nvdla_runtime.dll | `c58e3425eeee93f89b1ae68f814552aa1cacaaf85d913ca12a9b14f83902d49b` |
-| extracted firmware | `8f5b76232c982a15d44806e7e90b094abcbe3ae377e6b05bda127b492e0fad75` |
+| T35x/HAL-2 research firmware | `8f5b76232c982a15d44806e7e90b094abcbe3ae377e6b05bda127b492e0fad75` |
 | built-in diagnostic loadable | `51d26d83317807984d6a4b29be68e6e370175a0a0bd30fad2179a057e3c28543` |
 | ASUS WinRE installer | `42c211bf3f14b226c5bfd04d2c6d8998997c84c90ef19f2db3839cae3d8fce1d` |
 
@@ -222,7 +251,7 @@ providers, and constructor branch `0xd39508..0xd395bc` in isolated RAM.
 IDs 0x254/0x256 map to device profiles 3/4, DLA input 0x303033 and selector 1.
 ID 0x354 maps to profile 6, DLA input 0x404044 and selector 2. This establishes
 the internal link from ID 0x354 to the extracted firmware descriptor tag 0x354;
-it does not yet prove the live P16's input ID.
+the separately recovered hardware-ID classifier now maps REV_0034 to 0x254; see the correction above.
 
 The profile-6 provider at `0xd42380` returns three 24-byte static records from
 RVA `0x13ac170`: id0 physical 0x19340000/0x40000, id1 0x3a340000/0x40000,
