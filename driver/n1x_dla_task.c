@@ -38,3 +38,34 @@ int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
         out[i] = descriptor[i];
     return 0;
 }
+
+int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
+                                const struct n1x_dla_task_args *args,
+                                __u64 fence_address, __u32 fence_value)
+{
+    __u8 descriptor[N1X_DLA_FENCED_TASK_V2_BYTES] = {0};
+    unsigned int i;
+    int err;
+
+    if (!out || out_size < sizeof(descriptor) || !fence_address ||
+        (fence_address & 3))
+        return -EINVAL;
+    err = n1x_dla_build_task_v2(descriptor, sizeof(descriptor), args);
+    if (err)
+        return err;
+    put16(descriptor + 10, sizeof(descriptor));
+    descriptor[15] = 1; /* One postaction list; no preactions. */
+    put16(descriptor + 18, 60);
+    put16(descriptor + 60, 64); /* List offset relative to descriptor base. */
+    put16(descriptor + 62, 14); /* Opcode + u64 address + u32 value + TERM. */
+    descriptor[64] = 0x80; /* WRITE_SEM */
+    put64(descriptor + 65, fence_address);
+    for (i = 0; i < 4; i++)
+        descriptor[73 + i] = fence_value >> (8 * i);
+    /* Byte 77 terminates the stream. Padding through byte 95 keeps the
+     * interpreter's aligned 16-byte lookahead read inside the allocation.
+     */
+    for (i = 0; i < sizeof(descriptor); i++)
+        out[i] = descriptor[i];
+    return 0;
+}

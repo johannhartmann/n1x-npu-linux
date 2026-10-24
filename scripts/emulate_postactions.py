@@ -9,7 +9,7 @@ from emulate_firmware_commands import ROOT, CMD, HOST, STACK, STOP
 from emulate_task_header_checks import BLOB_HASH
 
 
-def run(blob, stream, declared_size=None, offset=0, fail_dma=None):
+def run(blob, stream, declared_size=None, offset=0, fail_dma=None, descriptor=None):
     uc = Uc(UC_ARCH_RISCV, UC_MODE_RISCV64)
     for address, size in ((0x100000, 0xb000), (0x180000, 0xb000),
                           (CMD, 0x2000), (STACK, 0x10000), (STOP, 0x1000)):
@@ -19,6 +19,12 @@ def run(blob, stream, declared_size=None, offset=0, fail_dma=None):
     for address in (0x101e9a, 0x10559e, 0x105662):
         uc.mem_write(address, bytes.fromhex('67800000'))
     uc.mem_write(CMD+offset, stream)
+    if descriptor is not None:
+        uc.mem_write(CMD, bytes(descriptor))
+        # The queue copies the wire header into a larger firmware-local context;
+        # its +128 field holds the host descriptor base, not another wire field.
+        uc.mem_write(STACK+0x1000, bytes(descriptor[:60]))
+        uc.mem_write(STACK+0x1080, struct.pack('<Q', CMD))
     uc.mem_write(HOST, struct.pack('<I', 0xdeadbeef))
     transfers = []
 
@@ -43,7 +49,12 @@ def run(blob, stream, declared_size=None, offset=0, fail_dma=None):
                             (regs.UC_RISCV_REG_A2, 0), (regs.UC_RISCV_REG_A3, 0),
                             (regs.UC_RISCV_REG_SP, STACK+0x8000), (regs.UC_RISCV_REG_RA, STOP)):
         uc.reg_write(register, value)
-    uc.emu_start(0x103cd2, STOP, count=10000)
+    entry = 0x103cd2
+    if descriptor is not None:
+        entry = 0x1043b0
+        uc.reg_write(regs.UC_RISCV_REG_A0, STACK+0x1000)
+        uc.reg_write(regs.UC_RISCV_REG_A1, 0)
+    uc.emu_start(entry, STOP, count=10000)
     status = uc.reg_read(regs.UC_RISCV_REG_A0)
     if status >= 1 << 63:
         status -= 1 << 64

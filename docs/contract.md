@@ -379,10 +379,26 @@ DMA read return `-8`; failure of the semaphore write returns `-4`. These three
 simulated failures leave the host sentinel unchanged. Unknown opcodes 1 and
 255 return `-7` without a write.
 
-The 23 cases exercise this interpreter directly, not the caller's action-list
-traversal, model execution, physical DMA ordering, or cache coherency. The
-basic Linux task serializer still emits no postactions; a fenced serializer
-requires caller/list traversal validation first. No task completion on actual
+The 23 standalone cases exercise the interpreter directly. In addition,
+`test_task_descriptor.py` now runs the original caller at `0x1043b0` with the
+actual Linux C serializer output. It copies the 60-byte header into a simulated
+firmware task context and sets the context's host-descriptor pointer at +128.
+The original caller reads num_postactions at header +15 and postactions at +18,
+DMA-reads the four-byte list record, then invokes the real interpreter with
+host base + list.offset and list.size. Logging and DMA remain the only stubs.
+This establishes single-list traversal, not task execution or the correctness
+of the preceding queue/context-construction path.
+
+`n1x_dla_build_fenced_task_v2` emits 96 initialized bytes: header 0..59,
+postaction-list record 60..63, WRITE_SEM stream 64..77, padding 78..95. The size
+field is 96 and the list size is 14. The caller's observed lookahead reads
+76..91, within the backing allocation. Four fence values are compared against
+compiled public structures and passed through both common-header checks and
+the actual caller/interpreter. The original basic serializer remains available.
+The fence address must be nonzero and four-byte aligned; the caller must use a
+mapped coherent word, initialize it to a distinct value, and keep buffers alive
+until verified completion/quiescence. No CPU barrier is implied by serialization.
+Neither physical DMA ordering/cache coherency nor task completion on actual
 hardware has been demonstrated.
 
 ## Diagnostic loadable

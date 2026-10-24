@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from emulate_task_header_checks import run, BLOB_HASH
+from emulate_postactions import run as run_postactions, HOST
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT/'sources/linux-nv-oot-r38/drivers/video/tegra/host/nvdla/dla_os_interface.h'
@@ -47,6 +48,21 @@ void reference(uint8_t *out, uint64_t next, uint64_t addresses,
     task.timeout = timeout;
     memcpy(out, &task, sizeof(task));
 }
+void reference_fenced(uint8_t *out, uint64_t next, uint64_t addresses,
+                      uint16_t count, uint64_t timeout, uint64_t fence, uint32_t value) {
+    struct dla_task_descriptor task;
+    struct dla_action_list list = {64, 14};
+    struct dla_action_semaphore sem = {fence, value};
+    reference((uint8_t *)&task, next, addresses, count, timeout);
+    task.size = 96;
+    task.num_postactions = 1;
+    task.postactions = 60;
+    memset(out, 0, 96);
+    memcpy(out, &task, sizeof(task));
+    memcpy(out + 60, &list, sizeof(list));
+    out[64] = 0x80;
+    memcpy(out + 65, &sem, sizeof(sem));
+}
 ''')
         subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
             '-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-Werror',
@@ -75,9 +91,34 @@ void reference(uint8_t *out, uint64_t next, uint64_t addresses,
     assert build(output, 59, ctypes.byref(params)) == -errno.EINVAL and output.raw == b'\xa5'*64
     assert build(None, 60, ctypes.byref(params)) == -errno.EINVAL
     assert build(output, 64, None) == -errno.EINVAL and output.raw == b'\xa5'*64
+    fenced = lib.n1x_dla_build_fenced_task_v2
+    fenced.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(Args),
+                        ctypes.c_uint64, ctypes.c_uint32]
+    ref_fenced = lib.reference_fenced
+    ref_fenced.argtypes = reference.argtypes + [ctypes.c_uint64, ctypes.c_uint32]
+    for value in (0, 1, 0x12345678, 0xffffffff):
+        output = ctypes.create_string_buffer(b'\xa5'*100, 100)
+        expected = ctypes.create_string_buffer(96)
+        assert fenced(output, 100, ctypes.byref(params), HOST, value) == 0
+        ref_fenced(expected, params.next, params.address_list, params.num_addresses,
+                   params.timeout, HOST, value)
+        assert output.raw[:96] == expected.raw and output.raw[96:] == b'\xa5'*4
+        assert run(blob[0x200:0xb100], raw_header=output.raw[:60]) == 'accepted_common_header'
+        result = run_postactions(blob, b'', descriptor=output.raw[:96])
+        assert result['returned'] and result['status'] == 0 and result['host_word'] == value
+        assert [t['direction'] for t in result['transfers']] == ['read', 'read', 'read', 'write']
+    for size, address, arguments in ((95, HOST, ctypes.byref(params)),
+                                      (96, 0, ctypes.byref(params)),
+                                      (96, HOST+1, ctypes.byref(params)),
+                                      (96, HOST, None)):
+        output = ctypes.create_string_buffer(b'\xa5'*100, 100)
+        assert fenced(output, size, arguments, address, 1) == -errno.EINVAL
+        assert output.raw == b'\xa5'*100
+    assert fenced(None, 96, ctypes.byref(params), HOST, 1) == -errno.EINVAL
     print(json.dumps({'scope': 'C serialization versus compiled public L4T struct and RISC-V common-header checks',
                       'reference_header_sha256': reference_hash,
-                      'task_bytes': 60, 'valid_reference_and_firmware_cases': 2,
+                      'task_bytes': 60, 'fenced_task_allocation_bytes': 96,
+                      'fenced_reference_header_and_firmware_list_cases': 4, 'valid_reference_and_firmware_cases': 2,
                       'preflight_failures_without_output_changes': 7,
                       'limitations': ['Full descriptor/address/action semantics have not been proven on the NPU',
                                       'DMA buffers, lifetime, firmware completion and numerical inference remain open'],

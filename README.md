@@ -59,7 +59,9 @@ compatibility is still unverified; no live map selection is assumed. A simulated
 round trip runs the original RISC-V ping/response code and the Linux C ACK
 handler together, with RAM-only DMA/register/interrupt backends. The original
 firmware postaction interpreter is also exercised with WRITE_SEM streams,
-alignment variants and DMA failures. Malformed list lengths can write a fence
+alignment variants and DMA failures. A 96-byte fenced task serializer is checked
+against public structures and the original firmware list traversal/interpreter.
+Malformed list lengths can write a fence
 before returning an error; see the [protocol contract](docs/contract.md).
 
 `inspect_pe.py`, `arm64_string_refs.py`, `msvc_vtables.py`, and
