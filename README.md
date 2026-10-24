@@ -3,7 +3,8 @@
 Reverse engineering of the NVIDIA NPU on ASUS ProArt P16 H7607BA to implement
 Linux support. **Inference and device bring-up are not implemented yet.** The
 current driver components validate the firmware, translate register offsets,
-upload firmware words, select/start the RISC-V core and send methods through
+upload firmware words, select/start the RISC-V core, wait for idle without a
+start write, and send methods through
 caller-provided callbacks. A basic queue-0 task serializer and response capture/ACK helper are also present.
 No hardware backend is supplied;
 the tests neither bind the ACPI device nor write hardware registers.

@@ -56,7 +56,7 @@ def run(pe, entry, busy_reads=0, read_error=False, write_error=False):
             delays.append(reg(0))
 
     uc.hook_add(UC_HOOK_CODE, hook)
-    for regno, value in enumerate((0, CTX)):
+    for regno, value in enumerate((0, CTX+8 if entry == 0xd4ce48 else CTX)):
         uc.reg_write(getattr(regs, f'UC_ARM64_REG_X{regno}'), value)
     uc.reg_write(regs.UC_ARM64_REG_SP, STACK+0x8000)
     uc.reg_write(regs.UC_ARM64_REG_LR, STOP)

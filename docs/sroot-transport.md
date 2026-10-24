@@ -450,6 +450,49 @@ cold/resume call ordering still needs tracing before defining Linux boot state
 transitions. Do not infer this field from upload-success byte +0x48c, which is
 a different field.
 
+## Method-2 start ordering and write-free idle wait
+
+The original HAL-1 initializer assigns +0x408 to upload helper `0xd45cb0`,
++0x400 to SROOT transport wrapper `0xd49ef0`, and +0x420 to orchestrator
+`0xd47430`. A scan of direct BL targets finds calls to common loader `0xd439c0`
+at RVAs `0xd402f4`, `0xd419b0`, `0xd42268`, `0xd4779c`; these references locate
+further parent paths but do not alone prove live cold/resume invocation order.
+
+`emulate_method2_start.py` now executes **the complete original 0xd47430**
+function, not just its selection slice. With method 2 and optional feature
+flags zero, its observed order is:
+
+1. Upload (+0x408) if byte +0x486 is nonzero; otherwise reinit (+0x400, subtype 1).
+2. If the request succeeds, wait via original `0xd4ce48` on the subobject at
+   HAL +0x68. Its accessor slot +0x1d0 is the already decoded IDLESTATE 0x4c.
+3. If the wait succeeds, invoke HAL +0xd8 with the u32 from subobject +0x50.
+   HAL 1 assigns this to `0xd49800`; the lower register/accessor behavior of
+   this final callback is separate from the orchestration experiment.
+
+Twelve cases cover both selections, immediate/delayed idle, request error,
+read error, persistent busy and a failure returned from the final callback.
+Request failure prevents polling/final callback; idle failure prevents the
+final callback. Windows ignores the final callback's return. Optional branches
+controlled by +0x47d/+0x47e and other feature flags remain untested; no complete
+boot-state machine is inferred from zeroed synthetic state.
+
+**The method-2 path above does not call the direct CPUCTL start routine.**
+Linux now exposes `n1x_dla_wait_idle()` separately from `n1x_dla_start_core()`.
+The new helper performs only IDLESTATE reads/delays, requires no write callback,
+and cannot implicitly select a core or write CPUCTL=1. The existing direct-load
+start helper retains its CPUCTL write and delegates the polling loop to the new
+helper. It must not be inserted into SROOT sequencing merely because its name
+sounds like a generic boot step.
+
+`test_core_control.py` compares the new write-free helper with original
+0xd4ce48 for immediate/delayed idle and 5001-read busy timeout, plus callback
+failures and invalid budgets. Existing selection/direct-start checks still
+pass. The Linux policy continues to delay only between observations, propagates
+read errors, and accepts idle on the final permitted observation; Windows's
+delay/limit details differ as previously documented. Idle alone is not proof
+of protocol readiness, inference or DMA quiescence. Physical resource mapping,
+power/reset, post-wait configuration and full lifecycle order remain pending.
+
 ## Remaining bring-up gates
 
 Implement and verify full command completion policy, DMA lifetime,

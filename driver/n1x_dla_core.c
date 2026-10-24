@@ -34,17 +34,14 @@ int n1x_dla_select_riscv(const struct n1x_dla_io *io)
     return (value & 0x11) == 0x11 ? 0 : -EIO;
 }
 
-int n1x_dla_start_core(const struct n1x_dla_io *io,
-                      __u32 polls, __u32 interval_us)
+int n1x_dla_wait_idle(const struct n1x_dla_io *io,
+                     __u32 polls, __u32 interval_us)
 {
     __u32 attempt, value;
     int err;
-    if (!io || !io->write32 || !io->read32 || !polls || polls > 5001 ||
+    if (!io || !io->read32 || !polls || polls > 5001 ||
         (polls > 1 && (!interval_us || !io->delay_us)))
         return -EINVAL;
-    err = io->write32(io->context, CPUCTL, 1);
-    if (err)
-        return err;
     for (attempt = 0; attempt < polls; attempt++) {
         err = io->read32(io->context, IDLESTATE, &value);
         if (err)
@@ -55,4 +52,17 @@ int n1x_dla_start_core(const struct n1x_dla_io *io,
             io->delay_us(io->context, interval_us);
     }
     return -ETIMEDOUT;
+}
+
+int n1x_dla_start_core(const struct n1x_dla_io *io,
+                      __u32 polls, __u32 interval_us)
+{
+    int err;
+    if (!io || !io->write32 || !io->read32 || !polls || polls > 5001 ||
+        (polls > 1 && (!interval_us || !io->delay_us)))
+        return -EINVAL;
+    err = io->write32(io->context, CPUCTL, 1);
+    if (err)
+        return err;
+    return n1x_dla_wait_idle(io, polls, interval_us);
 }
