@@ -101,3 +101,57 @@ int n1x_sroot_receive(const struct n1x_dla_io *io, __u32 stride,
     *reply = local;
     return 0;
 }
+
+static int drain_pending(const struct n1x_dla_io *io, __u32 status_offset,
+                         __u32 ack_offset, __u32 polls, __u32 interval_us)
+{
+    __u32 i, value;
+    int err;
+    for (i = 0; i < polls; i++) {
+        err = io->read32(io->context, status_offset, &value);
+        if (err)
+            return err;
+        if (!(value & 1))
+            return 0;
+        /* Keep the last observed pending item unacknowledged on timeout.
+         * A successful acknowledgment must be followed by a clear observation.
+         */
+        if (i + 1 == polls)
+            return -ETIMEDOUT;
+        err = io->write32(io->context, ack_offset, 1);
+        if (err)
+            return err;
+        io->delay_us(io->context, interval_us);
+    }
+    return -ETIMEDOUT;
+}
+
+int n1x_sroot_prepare(const struct n1x_dla_io *io, __u32 stride,
+                      __u32 polls, __u32 interval_us)
+{
+    __u32 value;
+    int err;
+    if (!io || !io->read32 || !io->write32 || !stride || (stride & 3) ||
+        stride > ~(__u32)0 / 12 || !polls || polls > 5001 ||
+        (polls > 1 && (!interval_us || !io->delay_us)))
+        return -EINVAL;
+    err = io->write32(io->context, stride * 12, ~(__u32)0);
+    if (err)
+        return err;
+    err = io->write32(io->context, stride * 3, 3);
+    if (err)
+        return err;
+    err = drain_pending(io, stride * 5, stride * 6, polls, interval_us);
+    if (err)
+        return err;
+    err = drain_pending(io, stride * 8, stride * 9, polls, interval_us);
+    if (err)
+        return err;
+    err = wait_ready(io, stride * 2, polls, interval_us);
+    if (err)
+        return err;
+    err = io->read32(io->context, stride * 11, &value);
+    if (err)
+        return err;
+    return (value & 255) ? -EBUSY : 0;
+}

@@ -31,4 +31,12 @@ struct n1x_sroot_reply {
 int n1x_sroot_receive(const struct n1x_dla_io *io, __u32 stride,
                       struct n1x_sroot_reply *reply,
                       __u32 polls, __u32 interval_us);
+/* Prepare an exclusively owned idle mailbox, following Windows RVA 0x54c0.
+ * This intentionally discards stale reply/echo notifications. Never call it
+ * with an outstanding request or as proof that DMA has quiesced. All stages
+ * are bounded; timeout/error requires recovery, not automatic resubmission.
+ * A nonzero low byte at 11*stride is reported as -EBUSY.
+ */
+int n1x_sroot_prepare(const struct n1x_dla_io *io, __u32 stride,
+                      __u32 polls, __u32 interval_us);
 #endif

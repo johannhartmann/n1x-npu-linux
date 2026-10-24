@@ -35,7 +35,8 @@ its original registration slice and both IOCTL table entries match. Recovering
 the remaining mailbox transaction and a physical Linux backend remain central boot
 requirements. The callback-only SROOT TX/echo component now matches twelve
 original Windows ARM64 traces. Its separate reply reader/decoder matches
-36 additional Windows traces; whole-transaction orchestration is still pending. See [SROOT transport evidence](docs/sroot-transport.md) for hashes,
+36 additional Windows traces. Mailbox preparation matches 48 further traces;
+whole-transaction orchestration is still pending. See [SROOT transport evidence](docs/sroot-transport.md) for hashes,
 extraction, resource boundaries and verification limits. Blob signature and
 authentication semantics have not been established.
 

@@ -97,8 +97,8 @@ path audit. Nothing has been physically mapped or read.
 Handler `0x321e0` dispatches firmware upload to `0x31c98` and reinitialization
 to `0x31760`. The upload builder uses command byte `0x18` with three payload
 words from device-context offsets `0x1c`, `0x70`, and the low word at `0x80`.
-The latter is rejected if its high 32 bits are nonzero. DMA allocation and
-ownership semantics still need independent validation.
+The latter is rejected if its high 32 bits are nonzero. DMA address allocation is traced below; ownership and release semantics
+still need independent validation.
 
 Original transport `0x5580` prepares the bus (`0x54c0`), sends/verifies an echo
 (`0x5130`), then separately receives a firmware reply (`0x5328`).
@@ -164,9 +164,72 @@ These are separate primitives, not a complete boot transaction. The caller must
 serialize preparation, TX, echo and RX, validate command/status/payload, and
 retain DMA storage until an appropriate response or confirmed quiescence.
 
+## Verified bus preparation
+
+`n1x_sroot_prepare()` follows original `0x54c0` and its drain helper `0x5018`:
+write `0xffffffff` at 12 × stride, write 3 at 3 × stride, drain pending RX
+status (5/6 × stride), drain pending echo status (8/9 × stride), wait for bit 0
+at 2 × stride, then read 11 × stride. Windows returns the low byte of the last
+read; the Linux primitive maps a nonzero low byte to `-EBUSY`. Upper bits alone
+do not cause failure. These are observed access patterns, not proof of reset,
+interrupt-mask or other speculative register semantics.
+
+The helper requires exclusive ownership of an **idle** mailbox. Draining
+discards stale notifications; it must never be used to discard a response to
+an outstanding request or to infer DMA quiescence. Each drain/readiness stage
+has a bounded observation budget and errors propagate immediately. A final
+pending observation returns timeout without another acknowledgment: a clear
+observation must follow every acknowledged item before the helper succeeds.
+Delays are Linux policy, absent from the original drain loop. Windows also
+ignores the final readiness polling return; Linux checks it before proceeding.
+
+`test_sroot_prepare.py` executes the original function, its original drain
+helper and polling in an ARM64 RAM emulator. Forty-eight MMIO traces match
+across three strides, pending-notification counts and status words, including
+upper-byte-only status. Fourteen callback positions are fault-injected.
+Stuck RX, stuck echo and missing TX readiness terminate within the Linux
+budget. These tests do not establish physical device behavior.
+
+## DMA common-buffer allocation
+
+Original allocation slice `0x3b24..0x3da8` calls imported `IoGetDmaAdapter`
+with description version 3. It stores the resulting adapter at context +0x60,
+then calls the DMA_OPERATIONS function at +0x110. The ARM64 pointer-table layout
+and argument signature identify this as
+[AllocateCommonBufferWithBounds](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nc-wdm-pallocate_common_buffer_with_bounds)
+(see Microsoft's [DMA_OPERATIONS](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_dma_operations)).
+The source bounds are 32-bit context fields +0x28/+0x2c, widened to 64-bit
+minimum/maximum values; length comes from +0x70, flags and preferred node are
+zero, and a cache-type output pointer is supplied. The origin of these bounds
+and the returned cache type still need tracing.
+
+| Context offset | Proven role |
+| --- | --- |
+| +0x60 | DMA adapter returned by IoGetDmaAdapter |
+| +0x70 | Requested common-buffer length (u32) |
+| +0x78 | CPU virtual address returned by common-buffer allocator |
+| +0x80 | Logical device/DMA address written by allocator |
+| +0x88 | Separate result of MmGetPhysicalAddress on CPU virtual address |
+
+The allocation routine checks the **starting** logical address against both
+bounds. The upload request subsequently uses the low 32 bits at +0x80 and
+rejects a nonzero high word. Thus the device address must not be substituted
+with the separate CPU-physical value at +0x88. Microsoft's API explicitly
+requires use of the returned logical DMA address. A future Linux backend must
+use the applicable DMA mapping API/domain; this evidence does not establish
+that SROOT and DLA share an IOMMU domain or that identity mapping is safe.
+
+`emulate_sroot_dma.py` runs the original slice with stubbed WDF/OS allocation
+calls. It uses deliberately different logical/CPU-physical addresses, checks
+stored values and all allocation arguments, tests both accepted start bounds,
+rejects addresses immediately outside them, and exercises allocation failure.
+The OS allocator owns the full-extent bound guarantee; the driver's redundant
+start-address check alone does not establish it. No real memory was allocated
+for DMA, and copy, flush/coherency, bounds origin and release remain unresolved.
+
 ## Remaining bring-up gates
 
-Implement and verify bus preparation, full command completion policy, DMA lifetime,
+Implement and verify full command completion policy, DMA lifetime,
 and the complete firmware upload request. Verify the recovered resource/stride rule against live ACPI resources before
 creating a physical backend. No mailbox MMIO,
 IRP submission, firmware loading or reset was performed. Any eventual ROT0
