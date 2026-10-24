@@ -137,8 +137,11 @@ firmware framing/authentication, alternate outer-transport mode and a Linux
 counterpart remain open. Earlier descriptions calling these blobs signed were
 not proven: only their pointers, sizes, selection and transport are established.
 Do not infer compression, signature format or ELF content from their prefix.
-The next boot-enablement task is to identify the provider of the auxiliary
-handle and decode this actual default transport, while retaining the ACPI gate.
+The provider has now been identified as nvsrootmbx.sys, bound by its INF to
+NVDA8600 / ROT0. Its actual interface-registration slice and IOCTL records are
+verified; see [SROOT transport](sroot-transport.md). Decoding its actual mailbox
+protocol and establishing a Linux counterpart remain open, with the ACPI gate
+extended to the auxiliary device before any binding.
 
 ## Identity
 

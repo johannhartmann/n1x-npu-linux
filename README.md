@@ -30,9 +30,12 @@ task/model ABI and instruction semantics remain unverified for HAL 1.
 The HAL's default firmware-load method is **2**, which uses a separate Windows
 driver through IOCTL 0x150214; subtype 1 uses 0x150218. The original policy and
 transport were traced up to the OS-call boundary. The word uploader is an
-alternate method, not this default. Identifying the auxiliary driver and its
-Linux-equivalent transport is now a central missing boot requirement. Blob
-signature/authentication semantics have not been established.
+alternate method, not this default. The auxiliary provider is now identified as **nvsrootmbx.sys / NVDA8600 (ROT0)**:
+its original registration slice and both IOCTL table entries match. Recovering
+its mailbox protocol and a Linux implementation remains a central boot
+requirement. See [SROOT transport evidence](docs/sroot-transport.md) for hashes,
+extraction, resource boundaries and verification limits. Blob signature and
+authentication semantics have not been established.
 
 ## Hardware and inputs
 
