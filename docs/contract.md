@@ -543,6 +543,53 @@ building block: complete network schema traversal, instruction opcode validation
 embedded addresses/register references and all other model slices remain open.
 The helper is not a complete submission validator and is not wired to hardware.
 
+## Diagnostic INIT_IL instruction semantics
+
+`emulate_init_il.py` runs the original opcode-table initializer `0x10316e`,
+batch dispatcher `0x102d60`, and poll handler `0x102d2a`. Only logging is stubbed;
+engine registers are synthetic RAM. The actual three 16-byte instructions are
+extracted from task0-ib at offset 122880, without modifying their bytes.
+
+All three have opcode 3 at byte 0, subtype 1 at byte 1, shift 0 at byte 3,
+u32 register offset at +4, u32 mask 1 at +8, and u32 comparison value 0 at +12.
+Handler `0x102d2a` checks subtype == 1, then repeatedly reads the register and
+loops while `(register & mask) >> shift` equals the comparison value. Thus these
+instructions wait for bit 0 to become nonzero at offsets `0x7008`, `0x5000`,
+and `0x6000`, in that order. They are **polls, not register writes**.
+
+With synthetic ready bits set, all three complete and return zero. With the
+first bit zero the 1000-instruction observation remains in the first poll; no
+second handler is reached. This is an observation limit, not a firmware timeout.
+The handler itself has no local timeout, yield or abort check in its visible
+loop. Possible asynchronous firmware recovery is not modeled. Subtype 0 is
+rejected with -3 before any register read; an absent opcode-table entry also
+returns -3. The RISC-V engine base is `0x10019180000`; its relationship to host
+physical resources is not established and it must not be mapped as host MMIO.
+
+The original initializer installs these nonzero table entries in the inspected
+firmware image (other opcode meanings remain open):
+
+| Opcode | Handler code VA |
+| --- | --- |
+| 3 | 0x102d2a |
+| 4 | 0x102c16 |
+| 32 | 0x102816 |
+| 33 | 0x102a82 |
+| 35 | 0x102ada |
+| 37 | 0x102b62 |
+| 127 | 0x10282e |
+| 128 | 0x10285e |
+| 221 | 0x102dfe |
+| 222 | 0x10288c |
+| 223 | 0x102a00 |
+| 224 | 0x102978 |
+| 225 | 0x102904 |
+
+This proves the diagnostic INIT_IL's polling behavior under supplied RAM status,
+not actual NPU readiness, firmware boot, instruction-fetch DMA, task completion,
+or inference. Future host recovery must not free task DMA merely because its
+own wait timed out while firmware may still be running a poll.
+
 ## Diagnostic loadable
 
 Runtime RVA `0xa6610`, raw offset `0xa5810`, size `0x5a9fc8` (5,939,144 bytes).

@@ -29,6 +29,7 @@ test-vendor: test
 	venv/bin/python scripts/test_address_list.py
 	venv/bin/python scripts/emulate_il_reads.py
 	venv/bin/python scripts/test_il_slice.py
+	venv/bin/python scripts/emulate_init_il.py
 kernel-check:
 	$(MAKE) -C /usr/lib/modules/$(shell uname -r)/build M=$(CURDIR)/driver n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o
 clean:

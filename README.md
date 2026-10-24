@@ -108,7 +108,10 @@ A recovered network instruction-list slice now has a Linux index/offset/buffer
 validator that accounts for the firmware's full 256-byte fetches, including an
 extra fetch after some exact batch boundaries. Its range calculation is checked
 against original firmware dispatch and the diagnostic model's INIT_IL field.
-Complete instruction/model validation remains unfinished.
+Complete instruction/model validation remains unfinished. The actual diagnostic
+INIT_IL now runs through the original opcode table and handlers against RAM
+registers: three bit-ready polls complete or remain waiting according to the
+supplied status. This is not a hardware readiness measurement.
 
 ## Before hardware access
 
