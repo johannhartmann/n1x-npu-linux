@@ -471,6 +471,41 @@ until verified completion/quiescence. No CPU barrier is implied by serialization
 Neither physical DMA ordering/cache coherency nor task completion on actual
 hardware has been demonstrated.
 
+## Address-list DMA and lookup
+
+The v2 execution path at `0x101c18` passes the reconstructed address-list pointer
+and u16 count to `0x101072`. Its loader `0x104ed6` caches up to 512 u64 entries
+in firmware RAM at `0x187700`. The DMA length is round_up(count * 8, 256), not
+just count * 8. For larger counts a separate paged lookup path exists; it has
+not yet been exercised. The diagnostic model's nine entries use the cached path.
+
+`emulate_address_list.py` executes the original loader and lookup `0x104fc0`
+with a simulated engine/task context. Only DMA and logging are stubbed. Seven
+sizes (1, 9, 31, 32, 33, 511, 512) verify padded bulk reads and first/last-index
+values. The debug firmware additionally DMA-reads each looked-up u64 from host
+memory to compare against its cache. Bulk-read failure propagates error 4.
+
+**Lookup accepts index == count.** In all seven RAM cases it returns the zero
+from backing storage after the valid entries, rather than rejecting it. Indices
+count+1 and -1 return error 3 without modifying the output word. This is an
+observed boundary behavior, not permission to use that index. Linux-side model
+validation must require every index to be strictly less than count before
+submission. That model validation has not been implemented yet.
+
+The DMA helper `0x1054da` checks source, destination and transfer length for
+256-byte alignment before its hardware-transfer loop (`0x1054e2..0x105502`).
+The task serializer therefore now rejects address-list IOVAs aligned to only
+8 bytes; previous validation was insufficient. The emulator replaces this DMA
+helper with a RAM copy, so its round trips alone do not prove that alignment
+requirement or physical DMA behavior; the check is visible in the original code.
+
+`n1x_dla_address_list_bytes` and `n1x_dla_build_address_list` support the verified
+cached path, zero-pad the allocation, and serialize full little-endian u64 values.
+Six C-generated allocations run through the original firmware reader/lookup;
+five preflight errors leave output unchanged. Zero addresses are preserved,
+not certified valid. Source/output must not overlap. Reachability, allocation
+ownership, model index/offset bounds and coherency remain caller obligations.
+
 ## Diagnostic loadable
 
 Runtime RVA `0xa6610`, raw offset `0xa5810`, size `0x5a9fc8` (5,939,144 bytes).

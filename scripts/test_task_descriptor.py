@@ -82,7 +82,7 @@ void reference_fenced(uint8_t *out, uint64_t next, uint64_t addresses,
         assert output.raw[:60] == expected.raw and output.raw[60:] == b'\xa5'*4
         assert run(blob[0x200:0xb100], raw_header=output.raw[:60]) == 'accepted_common_header'
     for params in (Args(1, 0x10000, 0, 9), Args(0, 0, 0, 9),
-                   Args(0, 0x10001, 0, 9), Args(0, 0x10000, 0, 0)):
+                   Args(0, 0x10001, 0, 9), Args(0, 0x10008, 0, 9), Args(0, 0x10000, 0, 0)):
         output = ctypes.create_string_buffer(b'\xa5'*64, 64)
         assert build(output, 64, ctypes.byref(params)) == -errno.EINVAL
         assert output.raw == b'\xa5'*64
@@ -119,7 +119,7 @@ void reference_fenced(uint8_t *out, uint64_t next, uint64_t addresses,
                       'reference_header_sha256': reference_hash,
                       'task_bytes': 60, 'fenced_task_allocation_bytes': 96,
                       'fenced_reference_header_and_firmware_list_cases': 4, 'valid_reference_and_firmware_cases': 2,
-                      'preflight_failures_without_output_changes': 7,
+                      'preflight_failures_without_output_changes': 8,
                       'limitations': ['Full descriptor/address/action semantics have not been proven on the NPU',
                                       'DMA buffers, lifetime, firmware completion and numerical inference remain open'],
                       'hardware_access': False, 'passed': True}, indent=2))

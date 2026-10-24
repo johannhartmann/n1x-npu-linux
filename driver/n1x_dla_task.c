@@ -21,7 +21,7 @@ int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
     /* Copy parameters before writing so overlapping input/output is harmless. */
     if (!out || !args || out_size < sizeof(descriptor) ||
         (args->next & 255) || !args->address_list ||
-        (args->address_list & 7) || !args->num_addresses)
+        (args->address_list & 255) || !args->num_addresses)
         return -EINVAL;
     /* L4T R38.4 dla_task_descriptor: packed, aligned(4), version 2.
      * Actual t35x firmware independently verifies version at 8, engine at 9,
@@ -67,5 +67,26 @@ int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
      */
     for (i = 0; i < sizeof(descriptor); i++)
         out[i] = descriptor[i];
+    return 0;
+}
+
+size_t n1x_dla_address_list_bytes(__u16 count)
+{
+    if (!count || count > 512)
+        return 0;
+    return ((size_t)count * 8 + 255) & ~(size_t)255;
+}
+
+int n1x_dla_build_address_list(__u8 *out, size_t out_size,
+                              const __u64 *addresses, __u16 count)
+{
+    size_t bytes = n1x_dla_address_list_bytes(count);
+    unsigned int i;
+    if (!out || !addresses || !bytes || out_size < bytes)
+        return -EINVAL;
+    for (i = 0; i < count; i++)
+        put64(out + i * 8, addresses[i]);
+    for (i = count * 8; i < bytes; i++)
+        out[i] = 0;
     return 0;
 }

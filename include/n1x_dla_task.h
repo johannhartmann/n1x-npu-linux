@@ -12,7 +12,7 @@ struct n1x_dla_task_args {
 };
 /* Build a queue-0 v2 descriptor with no actions, flags or extensions. Pure
  * serialization; it does not establish DMA ownership, address reachability or
- * full firmware compatibility. Caller must provide mapped, valid buffers and
+ * full firmware compatibility. Caller must provide a 256-byte-aligned address-list IOVA, mapped valid buffers and
  * keep them alive until completion/quiescence. Output is unchanged on failure.
  */
 int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
@@ -26,4 +26,14 @@ int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
 int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
                                 const struct n1x_dla_task_args *args,
                                 __u64 fence_address, __u32 fence_value);
+/* Cached-path address list (1..512 entries), padded for firmware DMA reads.
+ * Source and output must not overlap. DMA mapping/alignment, model index bounds
+ * and buffer lifetimes remain caller responsibilities. Addresses are serialized
+ * verbatim, including zero; this does not validate model memory references.
+ * The firmware permits index == count, so host validation must require < count.
+ * Size helper returns zero for unsupported counts. Output unchanged on error.
+ */
+size_t n1x_dla_address_list_bytes(__u16 count);
+int n1x_dla_build_address_list(__u8 *out, size_t out_size,
+                              const __u64 *addresses, __u16 count);
 #endif

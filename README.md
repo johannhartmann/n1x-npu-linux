@@ -93,6 +93,12 @@ Windows ARM64 builder; its output is checked through the original RISC-V
 region dispatcher. The supported Printf/Trace layouts do not establish physical
 DMA coherency or complete logging support.
 
+The cached address-list path (up to 512 entries) has a Linux serializer with
+256-byte padding, verified through the original firmware reader and lookup.
+Task descriptors now require a 256-byte-aligned list IOVA. Firmware accepts the
+one-past-last index, so strict model index validation remains a required missing
+piece before submission.
+
 Setup-command emulation also confirms ABI differences from the public Jetson
 header: command 17 enters preemption handling, and region 4 is rejected while
 region 6 has a handler. The driver must not copy the reference command enum
