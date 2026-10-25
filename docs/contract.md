@@ -1192,3 +1192,53 @@ budget is not a firmware timeout and the model does not establish recovery.
 The Linux host's ACPI GSI routing, firmware hardware boot, actual DMA status
 behavior, method FIFO and coherent mapping remain unverified. These tests
 establish the firmware's software receive path under explicit model conditions.
+
+## HAL-1 ping round trips with original DMA functions
+
+The strongest command test now leaves **all firmware instructions unchanged**:
+reset initialization, trap entry/return, logging, command handlers, DMA setup,
+DMA issue and DMA completion polling execute their original RV32 code. The
+`dma_register_model` option in `emulate_profile1_commands.py` removes the final
+0x104ed8/0x105004 function stubs. Existing isolated-function tests remain as
+separate references.
+
+The bounded synthetic model watches writes to internal DMA command offset 0x118
+and uses the programmed registers rather than transfer-function arguments:
+
+- External base: `(reg[0x128] << 40) | (reg[0x110] << 8)`.
+- External address: that base plus reg[0x11c].
+- DMEM address: 0x180000 plus reg[0x114].
+- Transfer size: `4 << ((command >> 8) & 7)`.
+- Observed read command: 0x2000; observed write command: 0x2020.
+
+The decoder accepts only the observed DMEM/context-2 command family and bounds
+transfers to the four-byte synthetic ping host buffer and mapped firmware RAM.
+It does not implement a general bus, IOMMU, other DMA contexts or instruction
+memory DMA. Unsupported commands/ranges fail the test rather than silently
+performing an arbitrary copy. Command size/direction interpretation agrees with
+the original functions' inputs and the resulting challenge/output values.
+
+A command-register write performs a synchronous RAM copy in the model. A later
+read of 0x118 supplies status 2 (idle, not busy). This fake completion timing is
+explicit; it does not establish a physical device's status transitions, cache
+coherency, error bits or ordering requirements. The original code independently
+performs its busy/idle polls and channel save/restore operations.
+
+`test_response.py` verifies the same four C send / original trap / original DMA /
+C ACK / original mret rounds after reset. There are exactly **seven** original
+DMA commands: four reads to scratch DMEM 0x1833ac and three writes back to the
+host. Overflow input 0x40000000 is read but not written back; the following ping
+still succeeds. Full command records, values, responses, all interrupt returns,
+mailbox restoration and remaining mask/pending bits are checked. No firmware
+function is stubbed in this added test path.
+
+A negative control returns zero instead of idle status: the original firmware
+waits before its first DMA transfer, issues no modeled copy, sends no reply and
+leaves the host input unchanged through the observation budget. This verifies
+that readiness is consumed by original code rather than bypassed by a stub.
+
+The environment still supplies the reset handshake, method FIFO, machine trap
+entry, DMA copies/status and host interrupt dispatch. Thus this is stronger
+software integration evidence, **not physical DMA, NPU bring-up or inference**.
+ACPI/IORT identity, DMA requester/coherency, SROOT boot acceptance and actual
+interrupt delivery remain prerequisites for the Linux hardware backend.

@@ -174,6 +174,35 @@ def main():
     assert stalled['trap_entries'] == [0x1002dc] and not stalled['trap_returns']
     assert stalled['dispatches'] == [(0x301, HOST >> 8)]
     assert len(stalled['interrupts']) == 1 and stalled['host_word'] == 4
+    captured.clear()
+    submissions.clear()
+    register_dma = firmware_profile1(profile1, sequence=sequence, host_handler=initialized_interrupt,
+                                     host_submit=submit, boot_from_reset=True, via_trap=True,
+                                     dma_register_model=True)
+    assert register_dma['function_stubs'] == [] and register_dma['firmware_code_unmodified']
+    assert register_dma['returned'] and register_dma['completed'] == [4, 0x44444444, 0x40000000, 12]
+    assert len(submissions) == len(captured) == 4
+    assert all(row[0] == 0 and row[1] == expected for row in captured)
+    assert [row[2][0] for row in captured] == [0x102, 0x102, 0x110101, 0x102]
+    assert register_dma['trap_entries'] == [0x1002dc]*4
+    assert register_dma['trap_returns'] == [0x100324]*4
+    assert register_dma['final_irq_mask'] == 0x1f05 and register_dma['final_irq_pending'] == 0
+    expected_dma = []
+    for overflow in (False, False, True, False):
+        expected_dma.append({'command': 0x2000, 'source': HOST, 'destination': 0x1833ac,
+                             'bytes': 4, 'direction': 'read'})
+        if not overflow:
+            expected_dma.append({'command': 0x2020, 'source': 0x1833ac, 'destination': HOST,
+                                 'bytes': 4, 'direction': 'write'})
+    assert register_dma['dma_commands'] == expected_dma
+    assert register_dma['final_mailboxes'] == (0x11223344, 0x55667788)
+    not_ready = firmware_profile1(profile1, sequence=sequence, host_handler=initialized_interrupt,
+                                  host_submit=submit, boot_from_reset=True, via_trap=True,
+                                  dma_register_model=True, trap_dma_ready=False)
+    assert not not_ready['returned'] and not not_ready['completed']
+    assert not not_ready['dma_commands'] and not not_ready['interrupts']
+    assert not_ready['host_word'] == 1 and len(captured) == 4
+    assert not_ready['pc'] in ('0x100266', '0x10026a', '0x10026e')
     print(json.dumps({'scope': 'Linux C response capture/clear/ACK with synthetic IRQSTAT and real FW mailbox code',
                       'ordered_callback_count': len(expected),
                       'persistent_hal1_commands': len(sequence),
@@ -181,7 +210,9 @@ def main():
                       'commands_through_original_trap_and_mret': len(sequence),
                       'all_interrupted_integer_registers_restored': True,
                       'missing_dma_ready_prevents_isr_return': True,
-                      'initialized_command_stubs': ['DMA read', 'DMA write'],
+                      'register_dma_command_stubs': register_dma['function_stubs'],
+                      'original_dma_register_commands': len(register_dma['dma_commands']),
+                      'missing_dma_idle_blocks_original_transfer': True,
                       'firmware_rearms_swgen1_before_each_reply': True,
                       'persistent_commands_use_linux_method_sender': True,
                       'suppressed_mask_set_blocks_delivery': True, 'error_prefixes_checked': 6,

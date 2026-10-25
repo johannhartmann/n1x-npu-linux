@@ -13,7 +13,9 @@ CTX = 0x20010000
 
 
 def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=True,
-        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False, via_trap=False, trap_dma_ready=True):
+        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False, via_trap=False, trap_dma_ready=True, dma_register_model=False):
+    if dma_register_model and (not boot_from_reset or dma_error is not None):
+        raise ValueError('Register DMA model requires reset initialization and no high-level error injection')
     if via_trap and not boot_from_reset:
         raise ValueError('Trap tests require original reset initialization')
     if boot_from_reset:
@@ -22,7 +24,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
         for address, size in ((HOST & ~4095, 0x1000), (STOP, 0x1000)):
             u.mem_map(address, size)
         call_sp = boot_state['sp']
-        stubs = (0x104ed8, 0x105004)  # Only DMA remains an environment boundary.
+        stubs = () if dma_register_model else (0x104ed8, 0x105004)
     else:
         boot_state = None
         u = Uc(UC_ARCH_RISCV, UC_MODE_RISCV32)
@@ -40,7 +42,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
     u.mem_write(HOST, struct.pack('<I', challenge))
     u.mem_write(MMIO+0x40, struct.pack('<II', 0x11223344, 0x55667788))
     transfers, interrupts, register_writes, completed, method_reads = [], [], [], [], []
-    trap_entries, trap_returns, dispatches = [], [], []
+    trap_entries, trap_returns, dispatches, dma_commands = [], [], [], []
 
     def reg(n):
         return u.reg_read(getattr(regs, f'UC_RISCV_REG_A{n}'))
@@ -54,7 +56,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             dispatches.append((reg(0), reg(1)))
         if not boot_from_reset and address in (0x101c96, 0x1073ae, 0x1073d4, 0x100e14):
             u.reg_write(regs.UC_RISCV_REG_A0, 0)
-        elif address in (0x104ed8, 0x105004):
+        elif not dma_register_model and address in (0x104ed8, 0x105004):
             if address == 0x104ed8:
                 source, destination, length = reg(0) | reg(1) << 32, reg(2), reg(3)
                 direction = 'read'
@@ -70,11 +72,29 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
 
     def write(_, access, address, size, value, user):
         offset = address-MMIO
-        if offset not in (0, 4, 0x40, 0x44, 0x74, 0xd20, 0xd24):
+        if offset not in (0, 4, 0x40, 0x44, 0x74, 0x10c, 0x110, 0x114, 0x118, 0x11c, 0x128, 0xd20, 0xd24):
             return
         assert size == 4
         register_writes.append((offset, value))
-        if offset in (0xd20, 0xd24):
+        if offset == 0x118 and dma_register_model:
+            def word(register):
+                return struct.unpack('<I', u.mem_read(MMIO+register, 4))[0]
+
+            # Decode only the DMEM/channel-2 read/write command family observed here.
+            assert value & ~0x720 == 0x2000
+            length = 4 << ((value >> 8) & 7)
+            external = (word(0x128) << 40) | (word(0x110) << 8)
+            external += word(0x11c)
+            local = 0x180000+word(0x114)
+            assert HOST <= external and external+length <= HOST+4
+            assert 0x180000 <= local and local+length <= 0x190000
+            direction = 'write' if value & 0x20 else 'read'
+            source, destination = (local, external) if direction == 'write' else (external, local)
+            u.mem_write(destination, bytes(u.mem_read(source, length)))
+            transfers.append(direction)
+            dma_commands.append({'command': value, 'source': source, 'destination': destination,
+                                 'bytes': length, 'direction': direction})
+        elif offset in (0xd20, 0xd24):
             mask = struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0]
             if offset == 0xd20 and not suppress_mask_set:
                 mask |= value
@@ -97,6 +117,9 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             u.mem_write(MMIO+8, struct.pack('<I', pending))
 
     def read(_, access, address, size, value, user):
+        if dma_register_model and address == MMIO+0x118:
+            # Synchronous fake DMA: not busy, idle bit set. No physical timing inferred.
+            u.mem_write(address, struct.pack('<I', 2 if trap_dma_ready else 0))
         if via_trap and address in (MMIO+0x64, MMIO+0x68):
             method_reads.append((address-MMIO, struct.unpack('<I', u.mem_read(address, 4))[0]))
 
@@ -141,6 +164,9 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
         if u.reg_read(regs.UC_RISCV_REG_PC) != STOP:
             break
         completed.append(struct.unpack('<I', u.mem_read(HOST, 4))[0])
+    code_unmodified = bytes(u.mem_read(0x100000, 36864)) == blob[512:512+36864]
+    if dma_register_model:
+        assert code_unmodified
     return {'returned': u.reg_read(regs.UC_RISCV_REG_PC) == STOP,
             'pc': hex(u.reg_read(regs.UC_RISCV_REG_PC)),
             'host_word': struct.unpack('<I', u.mem_read(HOST, 4))[0],
@@ -149,6 +175,8 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             'boot_from_reset': boot_from_reset, 'boot_state': boot_state,
             'via_trap': via_trap, 'method_reads': method_reads,
             'trap_entries': trap_entries, 'trap_returns': trap_returns, 'dispatches': dispatches,
+            'dma_commands': dma_commands, 'function_stubs': [hex(address) for address in stubs],
+            'firmware_code_unmodified': code_unmodified,
             'final_irq_mask': struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0],
             'final_irq_pending': struct.unpack('<I', u.mem_read(MMIO+8, 4))[0],
             'final_mailboxes': struct.unpack('<II', u.mem_read(MMIO+0x40, 8))}
