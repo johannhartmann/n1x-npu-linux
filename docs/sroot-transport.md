@@ -56,7 +56,64 @@ tools/usr/lib/7zip/7z x -y -osources/platform-drivers sources/wim/boot.wim \
 venv/bin/python scripts/inspect_auxiliary_drivers.py
 ```
 
-## Linux target and remaining work
+## Complete upload-handler replay
+
+`scripts/test_sroot_full_upload.py` enters original `SendFwImageToSroot` at
+RVA `0x31c98` and runs until its return. Unlike the earlier isolated slices,
+this executes the original validation (`0x314a0`), DMA-allocation caller
+(`0x3b08`), copy (`0x39b0`, including original memcpy `0x154a0`), request
+builder, full exchange (`0x5580`), reply decoder and cleanup (`0x3e00`) in
+one call. Stack-cookie helpers execute too. OS/KMDF calls, the CFG check,
+allocator and mailbox responses remain modeled boundaries.
+
+The input is the exact 67508-byte default image, SHA-256
+`0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4`,
+extracted from the pinned KMD. The logical DMA address is `0xfffe0000`,
+matching the first physical attempt. A deliberately different synthetic CPU
+physical address checks that this value is not substituted into the request.
+The reconstructed INF bounds are `0xe0000000..0xffffffff`; stride is 16.
+
+Both the complete Windows handler and compiled Linux staging/exchange helpers
+produce these FIFO words:
+
+```text
+0x00000318  # command 0x18, three payload words
+0x000c0302  # image identifier
+0x000107b4  # full input length, 67508 bytes
+0xfffe0000  # logical DMA address
+```
+
+All **21 MMIO events** match under the immediate-ready mailbox model. With
+recorded header `0x2a006018`, both decode combined status `0x2a006`; the
+original outer Windows handler returns `0xc0000229`. With a synthetic
+zero-error header `0x18`, it returns zero. This success control does not
+represent a physical firmware success.
+
+Two allocator initializations, zero and `0xa5`, independently confirm that
+the original copy stages exactly `image[4:]` and leaves its final four bytes
+untouched. Linux explicitly zeros those four bytes. All other staged bytes
+match. The replay does not establish how Windows initializes real allocation
+contents or whether SROOT consumes those trailing bytes. Separate 128 KiB
+arenas with unmapped gaps avoid the aliasing that a real 67508-byte image
+would cause in older 64 KiB slice-test arenas. Source preservation, destination
+sentinels, original-path coverage, stack restoration and cleanup are asserted.
+
+No additional framing discrepancy is exposed by this full-chain test.
+Firmware status 6/detail 42 still has no verified semantic mapping. Physical
+cache visibility, IOMMU translation, image consumption, trusted-key/variant
+acceptance and firmware execution are outside this emulator. The original
+Windows free operation is **not** evidence that releasing the retained Linux
+DMA buffer is safe. No hardware retry follows from this result.
+
+```sh
+venv/bin/python scripts/test_sroot_full_upload.py
+```
+
+## Initial Linux target observations
+
+The observations below predate the test-kernel bring-up. The current
+[physical upload result](linux-backend.md#first-physical-sroot-upload-reply)
+is a nonzero firmware reply, not a successful NPU boot.
 
 Live read-only sysfs exposes `NVDA8600:00` at `\_SB_.ROT0` and `NVDA8200:00`;
 neither had a platform driver link during inspection. Candidate archived ACPI

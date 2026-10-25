@@ -73,6 +73,7 @@ test-vendor: test
 	venv/bin/python scripts/test_sroot_receive.py
 	venv/bin/python scripts/test_sroot_prepare.py
 	venv/bin/python scripts/test_sroot_exchange.py
+	venv/bin/python scripts/test_sroot_full_upload.py
 	venv/bin/python scripts/test_sroot_upload_phase.py
 	venv/bin/python scripts/test_sroot_reinit.py
 	venv/bin/python scripts/emulate_method2_start.py

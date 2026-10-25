@@ -98,6 +98,13 @@ Original Windows upload cleanup also returns `0xc0000229` for the resulting
 nonzero status word `0x2a006`. The meanings of status 6 and detail 42 remain
 undocumented; no authentication, DMA or hardware-variant cause is asserted.
 `test_sroot_receive.py` includes this reply as an original-code regression.
+The [complete upload-handler replay](sroot-transport.md#complete-upload-handler-replay)
+also executes the original validation, DMA-allocation caller, copy, request
+builder, mailbox exchange and cleanup using the exact live image and logical
+DMA address. Its 21 modeled MMIO events match the Linux helper, and the
+original handler rejects the recorded reply with `0xc0000229`. This narrows
+the software framing question; it does not establish physical DMA visibility
+or explain the firmware error.
 The live reports are `results/npu1-first-upload.jsonl` (preflight failure) and
 `results/npu1-pm-fixed-upload.jsonl` (the actual transport attempt).
 
