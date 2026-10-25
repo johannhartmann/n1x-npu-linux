@@ -114,3 +114,11 @@ manifest are in `results/npu1-bootstrap-region5-build/`. All OS/device effects
 in these tests are synthetic. Physical firmware identity/acceptance, DMA/IRQ
 behavior, ring field semantics and production/consumption, later initialization,
 recovery and numerical inference remain open.
+
+
+## Recent-history software reader
+
+The original Windows recent-history reader is now reproduced for immutable CPU
+snapshots, including 52-byte records, a 50-record history limit and wrap copying.
+It does not consume entries, and the record fields remain opaque. This is not
+a live ring reader or completion proof. See [history evidence](region5-history.md).

@@ -1788,3 +1788,13 @@ length 0xfffd8. The complete original buffer is accepted by raw HAL-1 software
 and matches the new optional Linux initialization phase byte-for-byte at
 publication. Ring production/consumption and hardware remain unverified. See
 [region-5 evidence](region5.md) for functions, arithmetic, failures and tests.
+
+
+## Region-5 recent-history selection
+
+Original Windows `0xd465a0` selects the last at most 50 opaque 52-byte records
+and does not advance ring cursors. A bounded C snapshot reader now matches the
+nonempty outputs, with explicit empty-output and validation policy. The separate
+`0xd46450` query recognizes tag 1 and returns raw bytes 2 then 1, without proven
+semantic names. No live ring consumer or inference completion is established.
+See [history evidence](region5-history.md) for tests and source boundaries.

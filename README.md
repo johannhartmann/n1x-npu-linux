@@ -24,7 +24,9 @@ one-attempt experiment requiring retained DMA storage/reboot, and does not
 complete IRQ/configuration initialization or inference. An additional opt-in
 DMA-word ping, exact Windows-layout region-5 setup and command-22 configuration
 export are implemented but remain untested on hardware. Configuration import
-and ring consumption are not exposed. See [region-5 setup](docs/region5.md).
+and ring consumption are not exposed. A standalone recent-history reader works
+on immutable CPU snapshots; see [history evidence](docs/region5-history.md) and
+[region-5 setup](docs/region5.md).
 The auxiliary HFRP register/IRQ capture and shared Windows dispatch are now
 cross-checked against L4T; physical IRQ roles remain unverified. See
 [HFRP/IRQ evidence](docs/hfrp-irq.md).
