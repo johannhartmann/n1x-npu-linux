@@ -389,3 +389,40 @@ are modeled. The response generator behind 0x15800006, its physical result,
 and the object's construction/class binding remain unresolved. This adds a
 concrete control-method boundary to the recovered data path without executing
 that control operation on hardware.
+
+### Concrete response getter and P16-profile implication
+
+The export-table record starting at **0x108e500** contains function pointer
+**0xd3a4a0**, followed at record+0x10 by method **0x15800006** and size **8**.
+The handler obtains the global owner at 0x1512148, resolves its parent through
+0x93630, and calls the parent's **+0x58** callback with pointers to the two
+output DWORDs. Null output returns 0x1f. This table observation does not by
+itself execute generic lookup or parameter marshalling.
+
+The already recovered original profile initializer **0x194fb08**, for profiles
+3, 4 and 6, installs **0xd3fa00** at parent+0x58. That getter writes the fixed
+pair **`{0xe0000025, 4}`** and returns 0. The updated profile test executes
+the initializer and this actual getter for classified IDs 0x254, 0x256 and
+0x354, then supplies its first DWORD to the original runtime provider getter
+and resolver. Each chooses **runtime selector 3**. The original diagnostic
+append returns **2 without invoking the model parser** for that selector.
+This differs from raw firmware **HAL selector 1**, as expected for distinct
+enums; those two numbers must not be interchanged.
+
+The KMD test also couples original source-field initialization 0x19ddd20 to
+original handler 0xd3a4a0 and getter 0xd3fa00 through an explicit transport
+shim. Only owner resolution, CFG validation and boolean/status transport are
+modeled at that boundary. It verifies that the actual pair reaches
+object+0x4648/+0x464c. This supplements the five synthetic response cases.
+`inspect_windows_profiles.py` checks all three profile-to-runtime paths.
+
+**Conditional conclusion:** if this reconstructed profile/parent/query path
+is the one used by the live P16 Windows device, the runtime's built-in
+diagnostic is unavailable through the normal append call. Forcing selector 1
+would bypass its platform gate and is not a justified Linux implementation.
+The profile getter's existence and output are concrete original-code evidence;
+OS adapter-class construction, generic control transport and live Windows
+execution remain unobserved. Thus this is a strong compatibility explanation,
+not proof that every Windows diagnostic mechanism is unsupported, nor proof of
+a physical firmware ABI. The earlier zero-extended diagnostic fixture must
+remain a research input rather than a claimed runnable P16 test network.

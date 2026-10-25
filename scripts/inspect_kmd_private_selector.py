@@ -53,14 +53,19 @@ def run(pe, word, length=0xc5b8, null=False):
     return dict(source_word=word,length=length,null=null,prefix_only=endpoint!=STOP)
 
 
-def source_query(pe, first, second, success):
+def source_query(pe, first, second, success, concrete=False):
     u=Uc(UC_ARCH_ARM64,UC_MODE_ARM)
-    for page in (0x19dd000,0xd57000,0xcd000,0xdd1000,0xdf8000,0xce000):
+    for page in (0x19dd000,0xd57000,0xcd000,0xdd1000,0xdf8000,0xce000,
+                 0xd3a000,0xd3f000,0x93000,0x1512000,0xe3e000):
         u.mem_map(BASE+page,4096);u.mem_write(BASE+page,pe.get_data(page,4096))
     for address in (OBJ,QUERY,OUTPUT,STACK,STOP):u.mem_map(address,0x20000)
     u.mem_write(OBJ+0x52f8,struct.pack('<Q',QUERY))
     u.mem_write(OBJ+0x4648,struct.pack('<II',0x777,0x888))
+    u.mem_write(BASE+0x1512148,struct.pack('<Q',QUERY))
+    u.mem_write(OUTPUT+0x58,struct.pack('<Q',BASE+0xd3fa00))
+    u.mem_write(BASE+0xe3eaf0,struct.pack('<Q',STOP+0x60))
     calls=[]
+    transport_return=[]
     def hook(_,address,size,user):
         if address==BASE+0xcd148:
             assert u.reg_read(r.UC_ARM64_REG_X2)==8
@@ -70,10 +75,25 @@ def source_query(pe, first, second, success):
             assert args[0]==QUERY and args[1]==0x15800006 and args[3]==8 and args[5]==0
             assert bytes(u.mem_read(args[4],40))==struct.pack('<II',1,1)+bytes(32)
             assert bytes(u.mem_read(args[2],8))==bytes(8)
+            calls.append(args[1])
+            if concrete:
+                transport_return.append(u.reg_read(r.UC_ARM64_REG_LR))
+                u.reg_write(r.UC_ARM64_REG_X1,args[2])
+                u.reg_write(r.UC_ARM64_REG_LR,STOP+0x40)
+                u.reg_write(r.UC_ARM64_REG_PC,BASE+0xd3a4a0)
+                return
             u.mem_write(args[2],struct.pack('<II',first,second))
             u.mem_write(args[6],struct.pack('<I',0 if success else 0x65))
-            calls.append(args[1])
             u.reg_write(r.UC_ARM64_REG_X0,int(success))
+        elif address==BASE+0x93630:
+            assert concrete and u.reg_read(r.UC_ARM64_REG_X0)==QUERY
+            u.reg_write(r.UC_ARM64_REG_X0,OUTPUT)
+        elif address==STOP+0x40:
+            assert u.reg_read(r.UC_ARM64_REG_X0)==0
+            u.reg_write(r.UC_ARM64_REG_X0,1)
+            u.reg_write(r.UC_ARM64_REG_PC,transport_return.pop())
+            return
+        elif address==STOP+0x60:pass
         elif address not in (BASE+0xd57b60,BASE+0xd57b80,BASE+0xdf8f38,BASE+0xce4b0):return
         u.reg_write(r.UC_ARM64_REG_PC,u.reg_read(r.UC_ARM64_REG_LR))
     u.hook_add(UC_HOOK_CODE,hook)
@@ -87,7 +107,8 @@ def source_query(pe, first, second, success):
     assert struct.unpack('<II',u.mem_read(OBJ+0x3214,8))==(combined,0)
     assert u.mem_read(OBJ+0x321c,1)==b'\0'
     assert u.reg_read(r.UC_ARM64_REG_X0)==1
-    return dict(first=first,second=second,modeled_success=success,combined=combined)
+    return dict(first=first,second=second,modeled_success=success,combined=combined,
+                concrete_handler_and_pair_getter=concrete)
 
 
 def main():
@@ -96,12 +117,15 @@ def main():
     pe=pefile.PE(str(path),fast_load=True)
     assert 0x19d9ad4+4*struct.unpack('<i',pe.get_data(0x19d9cc4,4))[0]==0x19d9a8c
     assert pe.get_data(0x19d9a94,4)==bytes.fromhex('b1180094')
+    assert struct.unpack('<Q',pe.get_data(0x108e500,8))[0]==BASE+0xd3a4a0
+    assert struct.unpack('<II',pe.get_data(0x108e510,8))==(0x15800006,8)
     cases=[run(pe,w) for w in (0,0x23,0x25,0x26,0xabcd0023,0xffffffff)]
     cases += [run(pe,0x23,length=n) for n in (0,0xc5b7,0xc5b9)]
     cases.append(run(pe,0x23,null=True))
     source_cases=[source_query(pe,a,b,s) for a,b,s in
                   [(0x23,0,True),(0x25,1,True),(0x26,0xf,True),
                    (0xffffffff,0xffffffff,True),(0x23,0,False)]]
+    source_cases.append(source_query(pe,0xe0000025,4,True,concrete=True))
     routes=[]
     for kind, subtype in [(k,s) for k in (0,1,4,5,6) for s in (0,1,2,3)]+[(None,None)]:
         u=Uc(UC_ARCH_ARM64,UC_MODE_ARM)
@@ -125,7 +149,8 @@ def main():
                          source_query_cases=source_cases,
                          limitations=['Success executes only through 0x19dfe04; remaining producer code is not executed',
                                       'Other private-field builder and memset are modeled',
-                                      'Control method 0x15800006 response is modeled; its producer remains unresolved',
+                                      'Five control responses are modeled; one uses original handler/getter through a transport shim',
+                                      'Full generic method lookup/marshalling and live Windows invocation are not executed',
                                       'Kind/subtype meaning, actual N1X object value and OS callback binding remain unresolved']),indent=2))
 
 

@@ -12,6 +12,8 @@ import pefile
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM
 from unicorn import arm64_const as regs
 from extract_firmware import KMD_SHA256
+from inspect_runtime_selector_setter import run as runtime_selector
+from inspect_diagnostic_contract import append, RUNTIME_HASH
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 0x140000000
@@ -23,6 +25,9 @@ def main():
     with path.open('rb') as stream:
         assert hashlib.file_digest(stream, 'sha256').hexdigest() == KMD_SHA256
     pe = pefile.PE(str(path), fast_load=True)
+    runtime_path=ROOT/'sources/nvidia/Display.Driver/nvdla_runtime.dll'
+    assert hashlib.sha256(runtime_path.read_bytes()).hexdigest()==RUNTIME_HASH
+    runtime_pe=pefile.PE(str(runtime_path),fast_load=True)
     uc = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     for addr, size in ((BASE+0x194f000, 0x2000), (BASE+0xd3c000, 0x1000),
                        (BASE+0xd3f000, 0x1000), (BASE+0xd42000, 0x1000),
@@ -55,6 +60,16 @@ def main():
         call(BASE+0xd3c0e8, (CTX+0x14e, chip_id))
         assert struct.unpack('<H', uc.mem_read(CTX+0x14e, 2))[0] == profile
         call(BASE+0x194fb08, (CTX,))
+        pair_getter=struct.unpack('<Q',uc.mem_read(CTX+0x58,8))[0]
+        assert pair_getter==BASE+0xd3fa00
+        uc.mem_write(OUT,b'\xa5'*8)
+        assert call(pair_getter,(CTX,OUT,OUT+4))==0
+        pair=struct.unpack('<II',uc.mem_read(OUT,8))
+        assert pair==(0xe0000025,4)
+        selector_result=runtime_selector(runtime_pe,0,provider_word=pair[0])
+        assert selector_result['status']==0 and selector_result['selector']==3
+        diagnostic=append(runtime_pe,selector_result['selector'])
+        assert diagnostic['status']==2 and 'append-model' not in diagnostic['events']
         getter = struct.unpack('<Q', uc.mem_read(CTX+0x140, 8))[0]
         assert call(getter) == chip_id
         resource_init = struct.unpack('<Q', uc.mem_read(CTX+0x128, 8))[0]
@@ -82,6 +97,8 @@ def main():
                      'getter_rva': hex(getter-BASE), 'provider_rva': hex(provider-BASE),
                      'resource_list_rva': hex(pointer-BASE), 'resources': resources,
                      'dla_constructor_input': hex(observed), 'dla_hal_selector': dla_selector})
+        rows[-1].update(pair_getter_rva=hex(pair_getter-BASE),pair=[hex(x) for x in pair],
+                        runtime_selector=selector_result['selector'],diagnostic_append_status=diagnostic['status'])
     assert rows[2]['resources'] == [
         {'id': 0, 'physical': '0x19340000', 'bytes': '0x40000'},
         {'id': 1, 'physical': '0x3a340000', 'bytes': '0x40000'},
@@ -89,6 +106,7 @@ def main():
     print(json.dumps({'scope': 'Original ARM64 classifiers, HAL initializer, getters and branch slice in RAM',
                       'profiles': rows, 'limitations': [
                           'Separate original hardware-ID classifier maps REV_0034 to 0x254; live Windows invocation remains unobserved',
+                          'Pair getter and runtime resolver execute original code, but transport between them is supplied by the harness',
                           'The 0x354 resource list differs from the historical P16 DSDT',
                           'These are candidate physical addresses, not authorization or proof for MMIO access']}, indent=2))
 
