@@ -278,9 +278,11 @@ alone does not establish model validity. A complete original memory-initializati
 probe now resolves the five named execution blobs through the original content
 map/getter, passes the original version gates and copies all 2,798,720 bytes
 unchanged. Missing names and short destinations are rejected, but a later
-failure leaves earlier copies in place; Linux must validate before writing.
-This still uses synthetic allocator descriptors, not device allocations.
-Native C address resolution now checks
+failure leaves earlier copies in place. The native C content initializer now
+checks all selected names and logical destination bounds before any write,
+then copies in the original order. Its buffers feed the firmware test directly.
+These are still private RAM allocations, not device allocations.
+Native C address resolution checks
 selected model references, preserves logical versus mapped extents, and feeds
 the C wire-list serializer used by the firmware test. The unmodified HAL-1 firmware processes its real instruction
 and address buffers and completes the original fence/IRQ path when given a

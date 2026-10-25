@@ -823,7 +823,7 @@ make test-relu
 ```
 
 This target requires the generated source/oracle and serialized artifact from
-the preceding workflows. It runs the artifact verifier and the seven offline
+the preceding workflows. It runs the artifact verifier and the eight offline
 runtime/firmware probes. It neither loads a module nor accesses hardware.
 
 `inspect_loadable_version_gate.py --relu` enters the original Windows
@@ -1034,6 +1034,56 @@ with the old statistics consumer. No original allocator, complete model load,
 device submission, physical firmware execution or numerical inference is
 claimed. Vendor files and the serialized input remain unchanged.
 
+### Native named-content initialization
+
+`n1x_dla_initialize_contents()` in `driver/n1x_dla_model.c` prepares private CPU
+buffers from the recovered named-content/offset contract. It accepts allocator
+views of the memory table, bounded catalog entries, and a flattened list of
+selected initialization references. The caller must check dense memory IDs,
+name/offset vector lengths and select only memory entries whose initialization
+flag is set. Names remain length-delimited bytes throughout the C lookup.
+
+Before any write, the helper checks all catalog name views and every selected
+reference: the memory index must exist, the name must match exactly one catalog
+entry, a nonempty payload must have a source pointer, logical memory must fit
+its backing allocation, and the copy must fit the logical extent. The extent
+test uses `bytes <= logical_bytes - offset` after checking the offset, avoiding
+overflow and preventing allocator padding from enlarging model content. A
+missing or ambiguous selected name, invalid index, pointer or extent returns
+`-EINVAL` without changing any destination, including earlier memories.
+
+Only after the entire list passes does it copy contents in input order.
+Overlapping destination ranges retain the Windows loader's ordered-overwrite
+behavior. Zero-byte contents are permitted, including at the logical end.
+Uninitialized regions and padding retain their previous contents. The caller
+must keep all metadata, names and source bytes immutable and separate from
+destinations during the call, and supply actual accessible allocations. The
+helper cannot validate arbitrary pointers or provide atomicity against a CPU
+fault/concurrent writer. It allocates nothing and performs no device access.
+
+`test_model_contents.py` checks bounded name matching (including embedded NUL
+bytes), missing/duplicate selected names, multiple memories, repeated contents,
+ordered overlaps, exact-end copies, zero-byte contents, logical overrun despite
+available padding, large offsets/sizes, invalid indices and null inputs. Late
+errors must preserve every poisoned destination, with prefix/suffix guards,
+padding and all source views checked unchanged. The ReLU projection supplies
+all eight catalog blobs and five initializers to the native helper; its whole
+RAM image matches the independent Python fixture byte for byte.
+
+`test_relu_scheduler.py` now passes the **C-initialized** image to the original
+HAL-1 firmware in all eight IRQ/status cases. Python still projects the pinned
+FlatBuffers model and supplies trusted allocation extents, but no longer
+performs the content copying for the submitted emulated image. The existing
+Python-generated image is used only as a comparison. Input samples, poisoned
+output and task/fence headers are installed afterward as before.
+
+`make kernel-check` also builds this helper against the installed kernel headers.
+It is not linked into the observation or experimental bootstrap modules, and
+is not a general model loader: content versions, instruction semantics, device
+allocation, DMA synchronization, buffer lifetime and hardware submission remain
+separate work. Successful memory preparation does not resolve the statistics
+consumer mismatch or prove physical NPU compatibility.
+
 ### Native model-address resolution
 
 `n1x_dla_resolve_task_buffers()` in `driver/n1x_dla_task.c` resolves the
@@ -1075,8 +1125,9 @@ caller still supplies the pinned model projection and trusted RAM allocations.
 
 ### Unmodified HAL-1 firmware processes the real ReLU task
 
-`test_relu_scheduler.py` uses the generated artifact and the existing Linux C
-fenced-task serializer and checked address resolver from `driver/n1x_dla_task.c`. It builds eight task-local
+`test_relu_scheduler.py` uses the generated artifact, the native content
+initializer from `driver/n1x_dla_model.c`, and the Linux C fenced-task serializer
+and checked address resolver from `driver/n1x_dla_task.c`. It builds eight task-local
 addresses in order `[3,1,2,4,5,6,7,8]`, preserving the distinction between
 task-local positions and global address IDs. The input contains the checked
 3136-byte CHW16 FP16 source; output starts as 3136 bytes of 0xa5. No expected

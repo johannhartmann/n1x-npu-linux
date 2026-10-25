@@ -20,6 +20,7 @@ from diagnostic_fixture import build_relu
 from emulate_profile1_commands import run,ROOT,HOST,MMIO,ACK,PROFILE1_HASH
 from test_task_descriptor import Args
 from test_model_addresses import resolve_relu
+from test_model_contents import initialize_relu
 from verify_relu_loadable import LOADABLE_HASH
 
 
@@ -38,7 +39,8 @@ def main():
         library=Path(tmp)/'task.so'
         subprocess.run(shlex.split(os.environ.get('CC','cc'))+[
             '-shared','-fPIC','-O2','-Wall','-Wextra','-Werror','-I'+str(ROOT/'include'),
-            str(ROOT/'driver/n1x_dla_task.c'),'-o',str(library)],check=True)
+            str(ROOT/'driver/n1x_dla_task.c'),str(ROOT/'driver/n1x_dla_model.c'),
+            '-o',str(library)],check=True)
         lib=ctypes.CDLL(str(library))
     fenced=lib.n1x_dla_build_fenced_task_v2
     fenced.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.POINTER(Args),ctypes.c_uint64,ctypes.c_uint32]
@@ -47,7 +49,9 @@ def main():
     cases=[]
     for irq in (0x400,0x800):
         for engine_status in (0,1,4,5):
-            payload,addresses,layout=build_relu(data,HOST)
+            reference,addresses,layout=build_relu(data,HOST)
+            payload=initialize_relu(lib,data,layout)
+            assert payload==reference
             assert len(addresses)==8 and addresses[0]==layout[3]['address']
             resolved=resolve_relu(lib,data,layout)
             assert [b.address for b in resolved]==addresses
@@ -123,7 +127,8 @@ def main():
                 firmware_code_unmodified=True,status_reads=status_reads))
     print(json.dumps(dict(passed=True,hardware_access=False,loadable_sha256=LOADABLE_HASH,
         firmware_sha256=PROFILE1_HASH,input_sha256=hashlib.sha256(input_data).hexdigest(),
-        task_local_address_ids=[3,1,2,4,5,6,7,8],native_address_resolution_and_serialization=True,cases=cases,
+        task_local_address_ids=[3,1,2,4,5,6,7,8],native_content_initialization=True,
+        native_address_resolution_and_serialization=True,cases=cases,
         limitations=['Synchronous RAM DMA, modeled engine status and injected firmware IRQs',
                      'No engine arithmetic is emulated; the poisoned output remains unchanged',
                      'Control completion is not numerical inference or physical NPU execution',
