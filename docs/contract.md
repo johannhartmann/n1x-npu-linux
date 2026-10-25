@@ -1433,3 +1433,41 @@ in this additional test; the smaller INIT-only tests remain separate negative
 and prefix checks. Equivalence to Windows runtime allocation/binding semantics,
 actual accelerator completion and correctness, DMA coherency, physical boot and
 IRQ routing remain unverified. No hardware device was accessed.
+
+## Native Linux response-field decoder versus the Windows parser
+
+The Linux C response component now exposes `n1x_dla_decode_response()` alongside
+capture/clear/ACK. It extracts message, command and status from bits 7:0, 15:8
+and 23:16 of the captured word, and preserves the upper byte and mailbox1 data
+verbatim. Decoding performs no I/O and does not make a completion/reclamation
+decision. Return zero means the bytes were decoded, not that firmware work
+succeeded. Unknown field values are retained for the caller to interpret.
+
+`test_response_decode.py` executes the complete original Windows HAL-1 parser
+at RVA **0xd48910**, its original HAL initializer, mailbox0 forwarding thunk,
+mailbox0/1 accessors and stack-cookie helpers. The generic register-read boundary
+and indirect-call guard are synthetic; logging is disabled or stubbed. No device
+or Windows OS code is invoked.
+
+**1,028 distinct response words** cover all 256 byte values independently in
+each position plus actual observed frames. The Windows parser's three output
+fields agree with the Linux C decoder for every case. It ignores the upper byte
+for these outputs; preserving that byte in Linux does not establish its meaning.
+Two original-reader error cases prove the Windows parser leaves output fields
+unchanged when either mailbox read fails. Linux C argument-error checks preserve
+its output on invalid input; capture-I/O failures remain covered separately.
+
+The scheduler-failure integration test also runs its actual captured firmware
+frames through the new native decoder:
+
+| Observed frame | Message | Command | Status | Upper byte |
+| --- | --- | --- | --- | --- |
+| Submission 0x702 | 2 | 7 | 0 | 0 |
+| Execution error 0x8003070a | 10 | 7 | 3 | 128 |
+
+Both retain the descriptor-address data word. These observations let a future
+Linux backend distinguish the two events without losing the original bits.
+They do not define every message type, task-success signal, flag or error code.
+Outstanding-task association, deadlines, recovery and DMA quiescence still need
+implementation and hardware validation; neither frame parsing nor a zero status
+alone authorizes freeing an active task's buffers.

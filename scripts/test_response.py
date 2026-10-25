@@ -24,6 +24,11 @@ class Response(ctypes.Structure):
     _fields_ = [('word', ctypes.c_uint32), ('data', ctypes.c_uint32)]
 
 
+class ResponseFields(ctypes.Structure):
+    _fields_ = [('message', ctypes.c_uint8), ('command', ctypes.c_uint8),
+                ('status', ctypes.c_uint8), ('upper', ctypes.c_uint8), ('data', ctypes.c_uint32)]
+
+
 def main():
     blob = (ROOT/'sources/dla-t35x-verified.bin').read_bytes()
     assert hashlib.sha256(blob).hexdigest() == BLOB_HASH
@@ -36,6 +41,8 @@ def main():
         lib = ctypes.CDLL(str(library))
     take = lib.n1x_dla_take_response
     take.argtypes = [ctypes.POINTER(IO), ctypes.POINTER(Response)]
+    decode = lib.n1x_dla_decode_response
+    decode.argtypes = [ctypes.POINTER(Response), ctypes.POINTER(ResponseFields)]
     send = lib.n1x_dla_send_method
     send.argtypes = [ctypes.POINTER(IO)]+[ctypes.c_uint32]*4
     build_task = lib.n1x_dla_build_task_v2
@@ -274,6 +281,12 @@ def main():
     assert len(submissions) == 1 and len(captured) == 2
     assert all(row[0:2] == (0, expected) for row in captured)
     assert [row[2] for row in captured] == [(0x702, HOST >> 8), (0x8003070a, HOST >> 8)]
+    decoded_frames = []
+    for word, data in failed_task['interrupts']:
+        response, fields = Response(word, data), ResponseFields()
+        assert decode(ctypes.byref(response), ctypes.byref(fields)) == 0
+        decoded_frames.append((fields.message, fields.command, fields.status, fields.upper, fields.data))
+    assert decoded_frames == [(2, 7, 0, 0, HOST >> 8), (10, 7, 3, 128, HOST >> 8)]
     assert failed_task['task_events'] == ['0x104766', '0x1014f6', '0x103d56', '0x103f9c']
     assert failed_task['scheduler_handshakes'] == 2
     assert struct.unpack_from('<I', bytes.fromhex(failed_task['queue0']), 20)[0] == 0

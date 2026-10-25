@@ -6,6 +6,8 @@ current driver components validate the firmware, translate register offsets,
 upload firmware words, select/start the RISC-V core, wait for idle without a
 start write, and send methods through
 caller-provided callbacks. A basic queue-0 task serializer and response capture/ACK helper are also present.
+A native C response-field decoder is checked against the original Windows parser;
+it preserves unknown bits and does not infer task completion.
 No hardware backend is supplied;
 the tests neither bind the ACPI device nor write hardware registers.
 

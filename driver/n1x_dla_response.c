@@ -43,3 +43,19 @@ int n1x_dla_take_response(const struct n1x_dla_io *io,
     *response = captured;
     return 0;
 }
+
+int n1x_dla_decode_response(const struct n1x_dla_response *response,
+                           struct n1x_dla_response_fields *fields)
+{
+    struct n1x_dla_response_fields decoded;
+
+    if (!response || !fields)
+        return -EINVAL;
+    decoded.message = response->word & 0xff;
+    decoded.command = (response->word >> 8) & 0xff;
+    decoded.status = (response->word >> 16) & 0xff;
+    decoded.upper = response->word >> 24;
+    decoded.data = response->data;
+    *fields = decoded;
+    return 0;
+}
