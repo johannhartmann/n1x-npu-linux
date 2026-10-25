@@ -112,6 +112,54 @@ int n1x_dla_build_address_list(__u8 *out, size_t out_size,
     return 0;
 }
 
+int n1x_dla_resolve_task_buffers(struct n1x_dla_task_buffer *out,
+                                 size_t out_count,
+                                 const struct n1x_dla_memory_view *memories,
+                                 __u16 num_memories,
+                                 const struct n1x_dla_model_address *addresses,
+                                 __u16 num_addresses,
+                                 const __u16 *task_indices,
+                                 __u16 num_task_addresses)
+{
+    unsigned int i;
+
+    if (!out || !memories || !addresses || !task_indices ||
+        !num_memories || !num_addresses || !num_task_addresses ||
+        num_task_addresses > 512 || out_count < num_task_addresses)
+        return -EINVAL;
+    /* Validate the complete selected set before changing any output. In
+     * particular, do not inherit the firmware lookup's index==count behavior.
+     */
+    for (i = 0; i < num_task_addresses; i++) {
+        const struct n1x_dla_model_address *entry;
+        const struct n1x_dla_memory_view *memory;
+
+        if (task_indices[i] >= num_addresses)
+            return -EINVAL;
+        entry = &addresses[task_indices[i]];
+        if (entry->memory_index >= num_memories)
+            return -EINVAL;
+        memory = &memories[entry->memory_index];
+        if (!memory->mapping.address || !memory->logical_bytes ||
+            memory->logical_bytes > memory->mapping.bytes ||
+            memory->mapping.address > ~(__u64)0 - memory->mapping.bytes ||
+            !entry->bytes || entry->offset > memory->logical_bytes ||
+            entry->bytes > memory->logical_bytes - entry->offset)
+            return -EINVAL;
+    }
+    for (i = 0; i < num_task_addresses; i++) {
+        const struct n1x_dla_model_address *entry =
+            &addresses[task_indices[i]];
+        const struct n1x_dla_memory_view *memory =
+            &memories[entry->memory_index];
+
+        out[i].address = memory->mapping.address + entry->offset;
+        out[i].logical_bytes = entry->bytes;
+        out[i].mapped_bytes = memory->mapping.bytes - entry->offset;
+    }
+    return 0;
+}
+
 int n1x_dla_validate_il_slice(struct n1x_dla_il_range *out,
                               const __u8 *slice, size_t slice_size,
                               const struct n1x_dla_buffer_range *buffers,

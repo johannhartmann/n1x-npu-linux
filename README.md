@@ -274,7 +274,9 @@ mutation makes the old runtime index 3,392 of 28,736 bytes, so it is not a
 compatibility fix. A [Linux statistics-layout parser](docs/statistics-v2.md)
 now checks the newer header and record bounds against the original compiler
 builder; metadata fields and hardware counters remain opaque. Malformed-reference tests also show that deserialization
-alone does not establish model validity. The unmodified HAL-1 firmware processes its real instruction
+alone does not establish model validity. Native C address resolution now checks
+selected model references, preserves logical versus mapped extents, and feeds
+the C wire-list serializer used by the firmware test. The unmodified HAL-1 firmware processes its real instruction
 and address buffers and completes the original fence/IRQ path when given a
 modeled engine-completion status. Output remains poisoned because arithmetic
 is not emulated. Complete runtime initialization, physical firmware execution

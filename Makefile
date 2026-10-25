@@ -13,6 +13,7 @@ test-relu:
 	venv/bin/python scripts/inspect_content_materialization.py --relu
 	venv/bin/python scripts/inspect_full_deserialization.py
 	venv/bin/python scripts/test_statistics_v2.py
+	venv/bin/python scripts/test_model_addresses.py
 	venv/bin/python scripts/test_relu_scheduler.py
 tests/test_firmware: tests/test_firmware.c driver/n1x_dla_firmware.c include/n1x_dla_firmware.h
 	$(CC) $(CFLAGS) -Iinclude tests/test_firmware.c driver/n1x_dla_firmware.c -o $@

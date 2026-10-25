@@ -19,6 +19,7 @@ from unicorn import riscv_const as regs
 from diagnostic_fixture import build_relu
 from emulate_profile1_commands import run,ROOT,HOST,MMIO,ACK,PROFILE1_HASH
 from test_task_descriptor import Args
+from test_model_addresses import resolve_relu
 from verify_relu_loadable import LOADABLE_HASH
 
 
@@ -41,17 +42,25 @@ def main():
         lib=ctypes.CDLL(str(library))
     fenced=lib.n1x_dla_build_fenced_task_v2
     fenced.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.POINTER(Args),ctypes.c_uint64,ctypes.c_uint32]
+    address_list=lib.n1x_dla_build_address_list
+    address_list.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.POINTER(ctypes.c_uint64),ctypes.c_uint16]
     cases=[]
     for irq in (0x400,0x800):
         for engine_status in (0,1,4,5):
             payload,addresses,layout=build_relu(data,HOST)
             assert len(addresses)==8 and addresses[0]==layout[3]['address']
+            resolved=resolve_relu(lib,data,layout)
+            assert [b.address for b in resolved]==addresses
+            native_addresses=(ctypes.c_uint64*len(resolved))(*[b.address for b in resolved])
+            wire=ctypes.create_string_buffer(256)
+            assert address_list(wire,256,native_addresses,len(resolved))==0
+            assert wire.raw==struct.pack('<8Q',*addresses)+bytes(192)
             for memory,value in ((1,input_data),(2,b'\xa5'*3136)):
                 start=layout[memory]['offset'];payload[start:start+3136]=value
             task=ctypes.create_string_buffer(256);args=Args(0,HOST+256,1000000,8)
             assert fenced(task,256,ctypes.byref(args),HOST+768,0x12345678)==0
             payload[:256]=task.raw
-            struct.pack_into('<8Q',payload,256,*addresses)
+            payload[256:512]=wire.raw
             struct.pack_into('<I',payload,768,0xdeadbeef)
             live=[]
             def response(u):
@@ -114,7 +123,7 @@ def main():
                 firmware_code_unmodified=True,status_reads=status_reads))
     print(json.dumps(dict(passed=True,hardware_access=False,loadable_sha256=LOADABLE_HASH,
         firmware_sha256=PROFILE1_HASH,input_sha256=hashlib.sha256(input_data).hexdigest(),
-        task_local_address_ids=[3,1,2,4,5,6,7,8],cases=cases,
+        task_local_address_ids=[3,1,2,4,5,6,7,8],native_address_resolution_and_serialization=True,cases=cases,
         limitations=['Synchronous RAM DMA, modeled engine status and injected firmware IRQs',
                      'No engine arithmetic is emulated; the poisoned output remains unchanged',
                      'Control completion is not numerical inference or physical NPU execution',

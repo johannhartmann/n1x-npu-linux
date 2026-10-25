@@ -61,6 +61,35 @@ struct n1x_dla_buffer_range {
     __u64 address;
     __u64 bytes;
 };
+struct n1x_dla_memory_view {
+    struct n1x_dla_buffer_range mapping;
+    __u64 logical_bytes;
+};
+struct n1x_dla_model_address {
+    __u64 offset, bytes;
+    __u16 memory_index;
+};
+struct n1x_dla_task_buffer {
+    __u64 address, logical_bytes, mapped_bytes;
+};
+/* Resolve dense model-address indices into task-local order. The memory and
+ * address arrays must already be indexed by their validated model IDs.
+ * Mapping extents are supplied by the trusted allocator, not by the model.
+ * Preserve logical subrange lengths separately from available mapping bytes:
+ * cache reads may need padding, which does not extend logical model content.
+ * Inputs must be immutable for the call and must not overlap output.
+ * Validates selected references/arithmetic only, not all other model records,
+ * DMA ownership, hardware address width, alignment or instruction semantics.
+ * Output is unchanged on failure; no allocation, DMA or device operations.
+ */
+int n1x_dla_resolve_task_buffers(struct n1x_dla_task_buffer *out,
+                                 size_t out_count,
+                                 const struct n1x_dla_memory_view *memories,
+                                 __u16 num_memories,
+                                 const struct n1x_dla_model_address *addresses,
+                                 __u16 num_addresses,
+                                 const __u16 *task_indices,
+                                 __u16 num_task_addresses);
 struct n1x_dla_il_range {
     __u64 address;
     __u32 dma_bytes;

@@ -823,7 +823,7 @@ make test-relu
 ```
 
 This target requires the generated source/oracle and serialized artifact from
-the preceding workflows. It runs the artifact verifier and the five offline
+the preceding workflows. It runs the artifact verifier and the six offline
 runtime/firmware probes. It neither loads a module nor accesses hardware.
 
 `inspect_loadable_version_gate.py --relu` enters the original Windows
@@ -971,10 +971,49 @@ mutated files are never passed to its firmware task runner or any device.
 No general model loader, full runtime initialization or physical compatibility
 is established by this probe.
 
+### Native model-address resolution
+
+`n1x_dla_resolve_task_buffers()` in `driver/n1x_dla_task.c` resolves the
+model's global address IDs into the task's local order. Its caller supplies
+dense, already ID-checked memory/address tables and allocator-owned mapping
+extents. The helper checks every selected reference before writing any output:
+task indices must be strictly below the address count, memory indices must
+exist, logical memory must fit the mapping, address subranges must fit logical
+memory, and address arithmetic must not wrap. Empty extents and lists outside
+the qualified cached-path range of 1..512 entries are rejected.
+
+Each result keeps three values separate:
+
+- Device address: allocation address plus the model address offset.
+- Logical bytes: the declared model address subrange.
+- Mapped bytes: the remaining accessible allocation extent, including any
+  allocator-provided padding or following content in that same allocation.
+
+Mapped bytes do not enlarge logical model content. Cache-read validation can
+use the mapping extent, while instruction/content bounds still need the
+logical extent. This helper does not validate embedded instruction indices,
+register accesses, hardware address width, buffer-specific alignment, all
+unselected model entries or actual DMA ownership/lifetime. Inputs must remain
+immutable for the call and must not overlap output. It performs no allocation
+or device operations and preserves output on rejection.
+
+`test_model_addresses.py` checks padded subranges, reordered/repeated
+references, 512 entries, invalid/equal-to-count indices, zero extents, logical
+overrun despite sufficient backing, arithmetic overflow, short output and
+null arguments. The pinned ReLU model's results are compared with its
+independent RAM layout. `test_relu_scheduler.py` then uses the C resolver's
+addresses and `n1x_dla_build_address_list()` output directly in all eight
+original-firmware scheduler/IRQ cases. The wire list matches the independently
+expected eight little-endian addresses and 192 padding bytes.
+
+This connects native address validation to the existing firmware test. It is
+not a general FlatBuffers loader or a physical submission path: the Python
+caller still supplies the pinned model projection and trusted RAM allocations.
+
 ### Unmodified HAL-1 firmware processes the real ReLU task
 
 `test_relu_scheduler.py` uses the generated artifact and the existing Linux C
-fenced-task serializer from `driver/n1x_dla_task.c`. It builds eight task-local
+fenced-task serializer and checked address resolver from `driver/n1x_dla_task.c`. It builds eight task-local
 addresses in order `[3,1,2,4,5,6,7,8]`, preserving the distinction between
 task-local positions and global address IDs. The input contains the checked
 3136-byte CHW16 FP16 source; output starts as 3136 bytes of 0xa5. No expected
