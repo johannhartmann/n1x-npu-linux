@@ -667,11 +667,22 @@ Linux coherency, translated DMA domains using the IOMMU DMA backend, the observe
 stream IDs (SROOT 1, DLA 0x2b), and a dedicated IOMMU group for each endpoint.
 It never changes groups or global IOMMU policy itself.
 
-Only `nvidia/n1x/p16-sroot-v0.bin` is requested, without userspace firmware
-fallback. Before allocation/publication the module checks length 67,508 and
-SHA-256 **0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4**.
-This pins the exact recovered opaque variant; it does not decode/authenticate
-its internal format or prove equivalence to the separately emulated raw image.
+The immutable load option `firmware_variant` selects exactly one pinned
+67508-byte remapper-1 image, requested without userspace firmware fallback:
+
+| Option | Firmware path under /usr/lib/firmware | Required SHA-256 |
+| --- | --- | --- |
+| `firmware_variant=0` (default) | nvidia/n1x/p16-sroot-v0.bin | 0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4 |
+| `firmware_variant=1` | nvidia/n1x/p16-sroot-v1.bin | 6b1e8192fc1e61944e9b2a84251b7d18f305025ffb2cfa1de8677f8f98b59ad4 |
+
+Other values fail module initialization. Before allocation/publication, size
+and the selected image's exact SHA-256 must match. The other valid variant is
+also rejected when it does not match the selection. No automatic fallback,
+mutable filename, relaxed hash check or userspace signature policy is added.
+The [offline fallback audit](sroot-envelope.md#windows-fallback-contains-the-complete-raw-hal-1-firmware)
+proves that variant 1 contains the raw HAL-1 image; hardware acceptance is
+unverified for both variants. The new module is built but **not loaded** into
+the boot that retains the failed variant-0 allocation.
 The SROOT-owned coherent allocation must be 256-byte aligned, entirely in
 `0xe0000000..0xffffffff`, and fit the 32-bit DMA mask. Rejected unpublished
 allocations are freed. No CPU physical-address substitution, alternate device,
@@ -744,14 +755,15 @@ again before using it. Missing headers fail the build rather than falling back.
 The bootstrap still refuses any kernel other than the exact audited npu1
 release. Changing the Make target does not relax its runtime guard.
 
-#### Hardware qualification sequence — still pending
+#### Original hardware qualification sequence
 
 First manually boot **N1X NPU test**, verify graphics/input and confirm the exact
 uname above. Complete the earlier SROOT CCA/domain and allocation-only procedure
 before considering an upload. Both observer bindings must be unloaded before
 bootstrap can bind, and the per-device domain-selection script requires unbound
-devices. Keep the working boot entry available. These commands are a pending
-manual experiment, **not a record of execution**:
+devices. Keep the working boot entry available. The sequence below describes
+the original variant-0 experiment; its actual result is recorded at the top
+of this document. It must not be rerun in the boot retaining its DMA buffer:
 
 ```sh
 # Only after test-kernel boot and allocation-only qualification:
@@ -772,10 +784,46 @@ sudo journalctl -k -b --no-pager
 
 Do not loop/retry the trigger or free the retained buffer after a failed or
 successful phase. Capture the actual reply, idle/error, IOMMU/kernel logs and
-system stability before deciding the next bring-up step. The current machine
-still runs the original kernel; no bootstrap module has been installed/loaded,
-no firmware file copied to the system firmware path, and no NPU register written
-by this work. The installed test UKI/menu/defaults remain unchanged.
+system stability before deciding the next bring-up step. The test kernel has
+booted and variant 0 returned `0x2a006018`; the live module retains its DMA
+buffer. The installed test UKI/menu/defaults remain unchanged.
+
+#### Prepared variant-1 qualification — not executed
+
+After a fresh boot of **N1X NPU test**, verify kernel
+`7.2.8-23-omarchy-p16-asus-npu1`, graphics/input and a changed boot ID. Neither
+observer nor bootstrap may already be loaded; do not force-unload the retained
+bootstrap to satisfy this condition. The existing allocation-only qualification
+established the DMA prerequisites; reselect the dedicated translated domains
+after reboot. Then the explicit variant-1 experiment is:
+
+```sh
+# Run from the repository. Extraction refuses to overwrite an existing file.
+venv/bin/python scripts/extract_profile1_firmware.py \
+  sources/nvidia/Display.Driver/nvlddmkm.sys sources/dla-p16-sroot-v1.bin \
+  --sroot-variant 1 --remapper 1
+# Confirm the exact image SHA-256 from the table above before installation.
+sha256sum sources/dla-p16-sroot-v1.bin
+sudo python3 scripts/select_npu_dma_domains.py --apply
+sudo install -Dm644 sources/dla-p16-sroot-v1.bin \
+  /usr/lib/firmware/nvidia/n1x/p16-sroot-v1.bin
+# Build/check the current module and its exact npu1 vermagic as above.
+sudo insmod driver/n1x_npu_bootstrap.ko enable_upload=1 firmware_variant=1
+sudo cat /sys/module/n1x_npu_bootstrap/parameters/firmware_variant
+sudo cat /sys/bus/platform/devices/NVDA200A:00/status
+sudo python3 scripts/npu_trigger.py upload
+sudo cat /sys/bus/platform/devices/NVDA200A:00/status
+sudo journalctl -k -b --no-pager
+```
+
+Extraction and the local build are already complete; installation, loading
+and the upload remain unexecuted. All later phases stay disabled in this
+sequence. The same retention rule applies to variant 1 on every outcome.
+The compiled lifecycle harness passes 30 cases per selected variant, including
+cross-image rejection, invalid selections, failure cleanup and retained
+allocations. The full original Windows-handler comparison covers both actual
+images, each with recorded error/synthetic success and zero/poison allocator
+contents (eight offline cases). None establishes physical success.
 
 ### Opt-in DMA-word ping phase (built, not yet run)
 

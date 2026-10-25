@@ -27,6 +27,7 @@
 
 #define N1X_BOOT_KERNEL "7.2.8-23-omarchy-p16-asus-npu1"
 #define N1X_BOOT_FIRMWARE "nvidia/n1x/p16-sroot-v0.bin"
+#define N1X_BOOT_FALLBACK_FIRMWARE "nvidia/n1x/p16-sroot-v1.bin"
 #define N1X_BOOT_BYTES 67508
 #define N1X_REGION5_ALLOC (1U << 20)
 #define N1X_REGION5_OFFSET 16U
@@ -37,6 +38,10 @@
 static bool enable_upload;
 module_param(enable_upload, bool, 0400);
 MODULE_PARM_DESC(enable_upload, "Permit root's explicit one-attempt upload trigger (default false)");
+
+static unsigned int firmware_variant;
+module_param(firmware_variant, uint, 0400);
+MODULE_PARM_DESC(firmware_variant, "Pinned remapper-1 image: 0=initial, 1=Windows fallback; no automatic retry (default 0)");
 
 static bool enable_ping;
 module_param(enable_ping, bool, 0400);
@@ -219,18 +224,25 @@ static void n1x_boot_delay(void *context, u32 interval_us)
 
 static int n1x_boot_validate_firmware(const struct firmware *firmware)
 {
-	static const u8 expected[SHA256_DIGEST_SIZE] = {
+	static const u8 expected[2][SHA256_DIGEST_SIZE] = {{
 		0x0f, 0x16, 0x91, 0x1c, 0xce, 0xd7, 0xbb, 0x95,
 		0x77, 0x3d, 0xa5, 0xaf, 0xf9, 0xd9, 0xa4, 0x4d,
 		0xfd, 0x1b, 0x1a, 0x11, 0xf3, 0xc5, 0x60, 0xee,
 		0x69, 0x8a, 0x5c, 0x99, 0x31, 0x0f, 0xf2, 0xc4,
-	};
+	}, {
+		0x6b, 0x1e, 0x81, 0x92, 0xfc, 0x1e, 0x61, 0x94,
+		0x4e, 0x9b, 0x2a, 0x84, 0x25, 0x1b, 0x7d, 0x18,
+		0xf3, 0x05, 0x02, 0x5f, 0xfb, 0x2c, 0xfa, 0x1d,
+		0xe8, 0x67, 0x7f, 0x8f, 0x98, 0xb5, 0x9a, 0xd4,
+	}};
 	u8 digest[SHA256_DIGEST_SIZE];
 
+	if (firmware_variant > 1)
+		return -EINVAL;
 	if (!firmware || !firmware->data || firmware->size != N1X_BOOT_BYTES)
 		return -EBADMSG;
 	sha256(firmware->data, firmware->size, digest);
-	return memcmp(digest, expected, sizeof(digest)) ? -EBADMSG : 0;
+	return memcmp(digest, expected[firmware_variant], sizeof(digest)) ? -EBADMSG : 0;
 }
 
 /* Caller holds boot_lock. This function is the only upload entry point. */
@@ -247,12 +259,16 @@ static int n1x_boot_upload(void)
 		return -ENODEV;
 	if (boot_attempted)
 		return -EALREADY;
+	if (firmware_variant > 1)
+		return -EINVAL;
 	err = n1x_boot_dma_gate(boot_sroot);
 	if (!err)
 		err = n1x_boot_dma_gate(boot_dla);
 	if (err)
 		return err;
-	err = request_firmware_direct(&firmware, N1X_BOOT_FIRMWARE, boot_sroot->dev);
+	err = request_firmware_direct(&firmware, firmware_variant ?
+				      N1X_BOOT_FALLBACK_FIRMWARE : N1X_BOOT_FIRMWARE,
+				      boot_sroot->dev);
 	if (err)
 		return err;
 	err = n1x_boot_validate_firmware(firmware);
@@ -300,8 +316,8 @@ static int n1x_boot_upload(void)
 	boot_attempted = true;
 	err = n1x_dla_sroot_upload(&sroot_io, &dla_io, 16, words, 5001, 1000, &boot_result);
 	dev_info(boot_dla->dev,
-		 "upload phase returned %d: reply_valid=%u raw=%#x idle=%u; DMA %pad retained until reboot\n",
-		 err, boot_result.reply_valid, boot_result.reply.header,
+		 "upload variant %u phase returned %d: reply_valid=%u raw=%#x idle=%u; DMA %pad retained until reboot\n",
+		 firmware_variant, err, boot_result.reply_valid, boot_result.reply.header,
 		 boot_result.idle_observed, &boot_dma);
 	/* The original firmware file is independent of its staged DMA copy. */
 	release_firmware(firmware);
@@ -989,6 +1005,8 @@ static struct platform_driver n1x_boot_driver = {
 
 static int __init n1x_boot_init(void)
 {
+	if (firmware_variant > 1)
+		return -EINVAL;
 	if (!n1x_boot_machine())
 		return -ENODEV;
 	return platform_driver_register(&n1x_boot_driver);
@@ -1002,3 +1020,4 @@ module_exit(n1x_boot_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Explicit one-attempt P16 SROOT upload qualification; reboot required after attempt");
 MODULE_FIRMWARE(N1X_BOOT_FIRMWARE);
+MODULE_FIRMWARE(N1X_BOOT_FALLBACK_FIRMWARE);

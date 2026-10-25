@@ -81,6 +81,59 @@ The identity of code actually executed after SROOT loading remains unproved.
 Physical boot plus ABI qualification remains essential before applying the raw
 firmware emulation findings to this exact hardware image.
 
+## Windows fallback contains the complete raw HAL-1 firmware
+
+The statement above concerns **variant 0**. Comparing all four vendor-signed
+uploads establishes a stronger result for the Windows fallback, **remapper 1,
+variant 1**: its bytes `[692:67508]` equal the complete 66816-byte raw HAL-1
+image, SHA-256 `2754b289e39b8d9ae9383d952f738bd1c5027fdd2573a564f664f9f66ac2f997`.
+This is a whole-image byte comparison, including the raw header, code, data
+and padding. The vendor input is unmodified; no decryption, re-signing or
+authentication bypass is involved.
+
+The fallback's whole-image SHA-256 is
+`6b1e8192fc1e61944e9b2a84251b7d18f305025ffb2cfa1de8677f8f98b59ad4`, at KMD
+RVA `0x13f5040`. Its layout is the same 404-byte prefix, 80-byte first body
+component and 208-byte wrapper preceding the raw image. The wrapper's LE u32
+at relative offset 4 is 208; its bytes at relative offset 16 contain `DLA\0`.
+These observations locate the raw image without inferring undocumented flags.
+
+`inspect_sroot_variants.py` verifies all four signatures against their embedded
+public keys and both body digests for every image. Variant 0 and variant 1
+use different P-384 keys despite both key IDs being ASCII `08`:
+
+| Variant | Public-key SPKI SHA-256 |
+| --- | --- |
+| 0 | dd3164c1183db88e20bd69a5695a2b336584b53981d6e8d3175b4388f36a96a3 |
+| 1 | c2bca727f9be28f280b173fd4de63d58ad27264963169918810997f89d874a9f |
+
+Each key is reused across the two remapper groups. Four cross-key verification
+controls fail as expected. Eight body-mutation controls detect changed data.
+Within either remapper group, the first 80-byte component is identical between
+variants, while the second component differs. Wrapper words at relative
+offsets 48/52 are `(1, 3)` for variant 0 and `(0, 0)` for variant 1. No
+production/debug classification, cipher or rollback meaning is assigned to
+these fields or the changed vendor claims.
+
+Original KMD selector `0xd45cb0`, exercised by `emulate_boot_variants.py`, tries
+variant 1 after an initial variant-0 request fails and no previous success is
+recorded. That is a general request-failure fallback, not a special decoder
+for status 6/detail 42. After a previous success it does not switch variants
+on failure. The Linux experiment deliberately retains one-attempt semantics;
+it requires a fresh boot and explicit variant selection instead of replaying
+Windows' DMA-free/retry sequence.
+
+This proves that a vendor-signed, Windows-selectable upload contains the raw
+firmware used by our scheduler tests. It does **not** prove that this machine
+trusts its embedded key, accepts it, executes it, or performs inference.
+Variant 0's transformation and the first physical upload error remain unknown.
+
+```sh
+venv/bin/python scripts/inspect_sroot_variants.py
+venv/bin/python scripts/emulate_boot_variants.py
+venv/bin/python scripts/test_sroot_full_upload.py
+```
+
 ```sh
 venv/bin/python scripts/inspect_sroot_envelope.py
 ```

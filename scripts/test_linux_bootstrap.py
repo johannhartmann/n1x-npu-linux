@@ -9,6 +9,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
+from extract_profile1_firmware import extract_boot_variant
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,6 +38,7 @@ typedef uint32_t u32;
 typedef uint64_t dma_addr_t;
 #define N1X_BOOT_BYTES 67508
 #define N1X_BOOT_FIRMWARE "nvidia/n1x/p16-sroot-v0.bin"
+#define N1X_BOOT_FALLBACK_FIRMWARE "nvidia/n1x/p16-sroot-v1.bin"
 #define SHA256_DIGEST_SIZE 32
 #define DMA_BIT_MASK(n) ((1ULL << (n))-1)
 #define GFP_KERNEL 0
@@ -59,6 +61,7 @@ static struct device root_dev={0},dla_dev={1};
 static struct n1x_boot_endpoint root_ep={&root_dev},dla_ep={&dla_dev};
 static struct n1x_boot_endpoint *boot_sroot,*boot_dla;
 static bool enable_upload,machine_ok,boot_attempted;
+static unsigned int firmware_variant,selected_variant;
 static struct n1x_dla_sroot_load_result boot_result;
 static void *boot_buffer;
 static dma_addr_t boot_dma,allocation_address;
@@ -71,7 +74,8 @@ static bool allocate_fail,module_get_fail;
 static bool n1x_boot_machine(void) {return machine_ok;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *ep) {return gate_error[ep->dev->id];}
 static int request_firmware_direct(const struct firmware **out,const char *name,struct device *dev)
-{assert(dev==&root_dev && !strcmp(name,N1X_BOOT_FIRMWARE));
+{assert(dev==&root_dev && !strcmp(name,selected_variant?
+ N1X_BOOT_FALLBACK_FIRMWARE:N1X_BOOT_FIRMWARE));
  if(request_error)return request_error;*out=&firmware;return 0;}
 static void release_firmware(const struct firmware *fw) {assert(fw==&firmware);releases++;}
 static void sha256(const u8 *data,size_t bytes,u8 digest[32])
@@ -114,6 +118,7 @@ int n1x_dla_sroot_upload(const struct n1x_dla_io *root,const struct n1x_dla_io *
     harness += r'''
 static void reset(void)
 {boot_sroot=&root_ep;boot_dla=&dla_ep;enable_upload=machine_ok=true;boot_attempted=false;
+ firmware_variant=selected_variant;
  boot_error=boot_lock=0;privileged=true;
  memset(&boot_result,0,sizeof(boot_result));boot_buffer=NULL;boot_dma=0;
  allocation_address=0xe0010000ULL;gate_error[0]=gate_error[1]=0;
@@ -127,14 +132,24 @@ static void check(int expected,int allocs,int free_count,int release_count,bool 
  assert(uploads==(int)attempted && barriers==(int)attempted);
  assert(!!boot_buffer==(attempted && !allocate_fail));cases++;}
 int main(int argc,char **argv)
-{assert(argc==2);FILE *file=fopen(argv[1],"rb");assert(file);
+{assert(argc==3);selected_variant=(unsigned int)strtoul(argv[2],NULL,10);assert(selected_variant<=1);
+ FILE *file=fopen(argv[1],"rb");assert(file);
  assert(fread(image,1,sizeof(image),file)==sizeof(image));assert(fgetc(file)==EOF);fclose(file);
  reset();assert(n1x_boot_validate_firmware(&firmware)==0);
+ firmware_variant=1-selected_variant;assert(n1x_boot_validate_firmware(&firmware)==-EBADMSG);
+ firmware_variant=2;assert(n1x_boot_validate_firmware(&firmware)==-EINVAL);
+ firmware_variant=~0U;assert(n1x_boot_validate_firmware(&firmware)==-EINVAL);
+ firmware_variant=selected_variant;
  image[123]^=1;assert(n1x_boot_validate_firmware(&firmware)==-EBADMSG);image[123]^=1;
  firmware.size--;assert(n1x_boot_validate_firmware(&firmware)==-EBADMSG);
  assert(n1x_boot_validate_firmware(NULL)==-EBADMSG);
  reset();enable_upload=false;check(-EPERM,0,0,0,false);
  reset();machine_ok=false;check(-EPERM,0,0,0,false);
+ reset();firmware_variant=2;check(-EINVAL,0,0,0,false);
+ reset();firmware_variant=~0U;check(-EINVAL,0,0,0,false);
+ reset();firmware_variant=1-selected_variant;assert(n1x_boot_validate_firmware(&firmware)==-EBADMSG);
+ /* Simulate the wrong image returned for the requested filename. */
+ selected_variant=firmware_variant;check(-EBADMSG,0,0,1,false);selected_variant=1-selected_variant;
  reset();boot_sroot=NULL;check(-ENODEV,0,0,0,false);
  reset();boot_dla=NULL;check(-ENODEV,0,0,0,false);
  reset();gate_error[0]=-EOPNOTSUPP;check(-EOPNOTSUPP,0,0,0,false);
@@ -173,7 +188,7 @@ int main(int argc,char **argv)
  resume_error[0]=0;
  assert(upload_store(&dla_dev,NULL,"upload\n",7)==7);
  assert(boot_attempted && uploads==1 && boot_error==0);cases++;
- printf("%d upload lifecycle cases; real vendor SHA-256 and corruption/size controls passed; no hardware access\n",cases);
+ printf("variant %u: %d upload lifecycle cases; real vendor SHA-256, cross-image and corruption/size controls passed; no hardware access\n",selected_variant,cases);
  return 0;}
 '''
     with tempfile.TemporaryDirectory(prefix='n1x-linux-bootstrap-') as tmp:
@@ -183,7 +198,10 @@ int main(int argc,char **argv)
             '-O2', '-Wall', '-Wextra', '-Werror', '-Wno-misleading-indentation', '-Wno-unused-parameter',
             '-I'+str(ROOT/'include'), str(code), str(ROOT/'driver/n1x_sroot.c'),
             '-lcrypto', '-o', str(executable)], check=True)
-        subprocess.run([str(executable), str(ROOT/'sources/dla-p16-sroot-v0.bin')], check=True)
+        for variant in (0, 1):
+            image = Path(tmp)/f'v{variant}.bin'
+            extract_boot_variant(ROOT/'sources/nvidia/Display.Driver/nvlddmkm.sys', image, 1, variant)
+            subprocess.run([str(executable), str(image), str(variant)], check=True)
 
 
 if __name__ == '__main__':

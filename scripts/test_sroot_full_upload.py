@@ -2,6 +2,7 @@
 """Replay the complete Windows upload handler against the first live reply, offline."""
 import ctypes
 import hashlib
+from itertools import product
 import json
 import os
 from pathlib import Path
@@ -193,8 +194,11 @@ def main():
     pe = pefile.PE(str(path), fast_load=True)
     kmd = ROOT/'sources/nvidia/Display.Driver/nvlddmkm.sys'
     assert hashlib.sha256(kmd.read_bytes()).hexdigest() == KMD_SHA256
-    blob = pefile.PE(str(kmd), fast_load=True).get_data(0x1405800, 67508)
-    assert len(blob) == 67508 and hashlib.sha256(blob).hexdigest() == IMAGE_HASH
+    kmd_pe = pefile.PE(str(kmd), fast_load=True)
+    images = [kmd_pe.get_data(rva, 67508) for rva in (0x1405800, 0x13f5040)]
+    hashes = [IMAGE_HASH, '6b1e8192fc1e61944e9b2a84251b7d18f305025ffb2cfa1de8677f8f98b59ad4']
+    assert all(len(blob) == 67508 and hashlib.sha256(blob).hexdigest() == digest
+               for blob, digest in zip(images, hashes))
     with tempfile.TemporaryDirectory(prefix='n1x-full-upload-') as tmp:
         library = Path(tmp)/'sroot.so'
         subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
@@ -208,8 +212,8 @@ def main():
         ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint8, ctypes.POINTER(Reply),
         ctypes.c_uint32, ctypes.c_uint32]
     rows = []
-    for header in (LIVE_REPLY, 0x18):
-        for fill in (0, 0xa5):
+    for variant, blob in enumerate(images):
+        for header, fill in product((LIVE_REPLY, 0x18), (0, 0xa5)):
             original, candidate = Bus(16, header, []), Bus(16, header, [])
             observed = windows(pe, blob, original, fill)
             staged, words, reply = linux(lib, blob, candidate)
@@ -221,14 +225,15 @@ def main():
             assert observed['return'] == (0xc0000229 if header == LIVE_REPLY else 0)
             assert original.tx == candidate.tx == [0x318, *words]
             assert original.trace == [item for item in candidate.trace if item[0] != 'd']
-            rows.append({'reply': hex(header), 'allocation_fill': hex(fill),
+            rows.append({'variant': variant, 'image_sha256': hashes[variant],
+                'reply': hex(header), 'allocation_fill': hex(fill),
                 'windows_return': hex(observed['return']), 'decoded_status': hex(observed['status']),
                 'transmitted_words': [hex(word) for word in original.tx],
                 'matching_mmio_events': len(original.trace),
                 'windows_tail': observed['staged'][-4:].hex(), 'linux_tail': staged[-4:].hex(),
                 'original_rvas': observed['original_rvas']})
     print(json.dumps({'passed': True, 'hardware_access': False,
-        'driver_sha256': HASH, 'image_sha256': IMAGE_HASH, 'image_bytes': len(blob),
+        'driver_sha256': HASH, 'image_bytes': len(blob),
         'dma_address': hex(DMA), 'cases': rows,
         'limitations': ['OS/KMDF, DMA allocator, CFG check and mailbox replies are modeled',
             'Original handler, validation, allocation caller, memcpy, request, exchange and cleanup execute',

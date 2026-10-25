@@ -72,6 +72,11 @@ extracted from the pinned KMD. The logical DMA address is `0xfffe0000`,
 matching the first physical attempt. A deliberately different synthetic CPU
 physical address checks that this value is not substituted into the request.
 The reconstructed INF bounds are `0xe0000000..0xffffffff`; stride is 16.
+The same replay also checks the 67508-byte remapper-1 fallback, SHA-256
+`6b1e8192fc1e61944e9b2a84251b7d18f305025ffb2cfa1de8677f8f98b59ad4`, for
+eight cases total (two images, two replies, two allocation fills). Only the
+default image has a recorded physical attempt; replaying that error header
+against the fallback is an offline control.
 
 Both the complete Windows handler and compiled Linux staging/exchange helpers
 produce these FIFO words:

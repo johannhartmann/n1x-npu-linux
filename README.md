@@ -307,6 +307,13 @@ its embedded-key signature and both complete body digests verify. Chip trust,
 physical loading and equivalence to the separately emulated raw HAL-1 code
 remain unproved; the bootstrap's exact whole-image hash policy is unchanged.
 
+The [Windows fallback image](docs/sroot-envelope.md#windows-fallback-contains-the-complete-raw-hal-1-firmware)
+now provides a direct link to that raw code: remapper-1 variant 1 contains the
+complete unmodified HAL-1 image at offset 692. All four vendor upload signatures
+and body digests verify offline. A rebuilt bootstrap can explicitly select
+this separately hash-pinned image with `firmware_variant=1`; it still permits
+only one upload per boot. The fallback has **not** been tried on hardware.
+
 
 The diagnostic scheduler audit exposes an unresolved [network-extension
 contract](docs/diagnostic-contract.md#scheduler-record-order-and-zero-extension-boundary):
