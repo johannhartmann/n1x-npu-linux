@@ -19,6 +19,8 @@ def main():
                        source.index('/* Caller holds boot_lock.')]
     upload = source[source.index('static int n1x_boot_upload('):
                     source.index('/* Caller holds boot_lock. The upload already')]
+    store = source[source.index('static ssize_t upload_store('):
+                   source.index('static DEVICE_ATTR_WO(upload);')]
     harness = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -27,6 +29,7 @@ def main():
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/types.h>
 #include <openssl/sha.h>
 #include "n1x_dla_boot.h"
 typedef uint8_t u8;
@@ -39,7 +42,17 @@ typedef uint64_t dma_addr_t;
 #define GFP_KERNEL 0
 #define THIS_MODULE ((void *)0x1234)
 #define dev_info(...) ((void)0)
+#define dev_err(...) ((void)0)
 struct device {int id;};
+struct device_attribute {int unused;};
+#define CAP_SYS_RAWIO 1
+static bool privileged=true;
+static int boot_lock,boot_error;
+static bool capable(int cap) {assert(cap==1);return privileged;}
+static bool sysfs_streq(const char *a,const char *b)
+{return !strcmp(a,b)||(!strcmp(a,"upload\n")&&!strcmp(b,"upload"));}
+static void mutex_lock(int *lock) {assert(!*lock);*lock=1;}
+static void mutex_unlock(int *lock) {assert(*lock);*lock=0;}
 struct firmware {size_t size;const u8 *data;};
 struct n1x_boot_endpoint {struct device *dev;};
 static struct device root_dev={0},dla_dev={1};
@@ -97,10 +110,11 @@ int n1x_dla_sroot_upload(const struct n1x_dla_io *root,const struct n1x_dla_io *
  uploads++;result->upload_attempted=1;result->reply_valid=upload_error==0;
  result->idle_observed=upload_error==0;return upload_error;}
 '''
-    harness += validator + upload
+    harness += validator + upload + store
     harness += r'''
 static void reset(void)
 {boot_sroot=&root_ep;boot_dla=&dla_ep;enable_upload=machine_ok=true;boot_attempted=false;
+ boot_error=boot_lock=0;privileged=true;
  memset(&boot_result,0,sizeof(boot_result));boot_buffer=NULL;boot_dma=0;
  allocation_address=0xe0010000ULL;gate_error[0]=gate_error[1]=0;
  request_error=mask_error=resume_error[0]=resume_error[1]=0;
@@ -131,6 +145,8 @@ int main(int argc,char **argv)
  reset();mask_error=-EIO;check(-EIO,0,0,1,false);
  reset();resume_error[0]=-EIO;check(-EIO,0,0,1,false);
  reset();resume_error[1]=-EIO;check(-EIO,0,0,1,false);
+ reset();resume_error[0]=-EACCES;check(-EACCES,0,0,1,false);
+ reset();resume_error[1]=-EACCES;check(-EACCES,0,0,1,false);
  reset();allocate_fail=true;check(-ENOMEM,1,0,1,false);
  reset();allocation_address=0xe0010001ULL;check(-ERANGE,1,1,1,false);
  reset();allocation_address=0x1000;check(-EINVAL,1,1,1,false);
@@ -142,6 +158,21 @@ int main(int argc,char **argv)
  assert(n1x_boot_upload()==-EALREADY);assert(allocations==1 && uploads==1 && module_refs==1);
  reset();upload_error=-EREMOTEIO;check(-EREMOTEIO,1,0,1,true);
  reset();upload_error=-EIO;check(-EIO,1,0,1,true);
+ for(int i=0;i<3;i++){
+  int errors[]={0,-EREMOTEIO,-ETIMEDOUT};reset();upload_error=errors[i];
+  assert(upload_store(&dla_dev,NULL,"upload\n",7)==(errors[i]?errors[i]:7));
+  assert(boot_error==errors[i] && boot_attempted && uploads==1);
+  assert(upload_store(&dla_dev,NULL,"upload\n",7)==-EALREADY);
+  assert(boot_error==errors[i] && uploads==1 && allocations==1 && !frees);
+  assert(upload_store(&root_dev,NULL,"upload\n",7)==-ENODEV);
+  assert(boot_error==errors[i]);cases++;
+ }
+ reset();resume_error[0]=-EACCES;
+ assert(upload_store(&dla_dev,NULL,"upload\n",7)==-EACCES);
+ assert(!boot_attempted && !allocations && boot_error==-EACCES);
+ resume_error[0]=0;
+ assert(upload_store(&dla_dev,NULL,"upload\n",7)==7);
+ assert(boot_attempted && uploads==1 && boot_error==0);cases++;
  printf("%d upload lifecycle cases; real vendor SHA-256 and corruption/size controls passed; no hardware access\n",cases);
  return 0;}
 '''
@@ -149,7 +180,7 @@ int main(int argc,char **argv)
         code, executable = Path(tmp)/'test.c', Path(tmp)/'test'
         code.write_text(harness)
         subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
-            '-O2', '-Wall', '-Wextra', '-Werror', '-Wno-misleading-indentation',
+            '-O2', '-Wall', '-Wextra', '-Werror', '-Wno-misleading-indentation', '-Wno-unused-parameter',
             '-I'+str(ROOT/'include'), str(code), str(ROOT/'driver/n1x_sroot.c'),
             '-lcrypto', '-o', str(executable)], check=True)
         subprocess.run([str(executable), str(ROOT/'sources/dla-p16-sroot-v0.bin')], check=True)

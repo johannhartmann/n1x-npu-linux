@@ -130,6 +130,11 @@ def main():
                 trace, decoded = windows(pe, stride, header, words)
                 assert linux(stride, header, words) == (0, trace, decoded)
                 cases += 1
+    # Actual first P16 SROOT reply; original decoder confirms fields only,
+    # not the undocumented meanings of status 6 / detail 0x2a.
+    live_trace, live_decoded = windows(pe, 16, 0x2a006018, [])
+    assert live_decoded == (0x18, 6, 0x2a, 0, [])
+    assert linux(16, 0x2a006018, []) == (0, live_trace, live_decoded)
     header, words = 0x12300318, [0, 0xffffffff, 0x80000000]
     trace, _ = windows(pe, 4, header, words)
     for i in range(len(trace)):
@@ -144,6 +149,7 @@ def main():
     print(json.dumps({'passed': True, 'hardware_access': False, 'original_rva': '0x5328',
                       'decoder_rva': '0x4f70', 'matching_reply_traces': cases,
                       'callback_failure_positions': len(trace),
+                      'first_live_reply': {'header': '0x2a006018', 'decoded': live_decoded},
                       'limitations': ['Synthetic reply data and register spacing',
                                       'Status meaning and request correlation remain caller responsibilities',
                                       'No DMA ownership, bus preparation or hardware firmware boot']}, indent=2))

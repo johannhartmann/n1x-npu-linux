@@ -25,8 +25,12 @@ see the [live qualification record](docs/linux-backend.md#live-test-kernel-and-a
 The initial method-2 upload phase connects SROOT exchange, firmware status
 checking and the write-free DLA idle wait. A separate, manual bootstrap module
 now connects that phase to guarded Linux MMIO and SROOT DMA storage. It builds
-for the isolated test kernel but has not been installed or run. It is a
-one-attempt experiment requiring retained DMA storage/reboot, and does not
+for the isolated test kernel. Its first physical upload received SROOT reply
+`0x2a006018`: command `0x18`, status `6`, additional byte `0x2a`, no payload.
+The original Windows decoder confirms those fields; their error meanings
+remain unresolved. The DMA buffer is retained, with no automatic retry.
+The initial host runtime-PM preflight defect was corrected before that attempt.
+This remains a one-attempt experiment requiring retained DMA storage/reboot, and does not
 complete IRQ/configuration initialization or inference. An additional opt-in
 DMA-word ping, exact Windows-layout region-5 setup, command-22 export and
 Windows-default command-21 import are implemented but remain untested on hardware.

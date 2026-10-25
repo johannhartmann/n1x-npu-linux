@@ -41,6 +41,86 @@ execution record and kernel messages are saved locally in ignored
 The build/install sections below retain intermediate historical observations;
 their earlier pending-boot/allocation statements are superseded by this record.
 
+### First upload preflight and runtime-PM correction
+
+After explicit approval for a single firmware upload, the pinned opaque image
+was installed at `/usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin`, and the
+bootstrap module replaced the observation module. Both endpoints bound.
+The first sysfs upload call failed with `-EACCES` (`-13`) while
+`attempted=0`, `dma_retained=0`, `reply_valid=0` and `idle_observed=0`.
+The kernel emitted no upload-phase message. This was a host preflight failure,
+not a firmware rejection or a completed mailbox transaction.
+
+Both devices reported `power/runtime_status=unsupported`. The driver had
+called `pm_runtime_resume_and_get()` without enabling runtime PM in probe.
+The inspected Linux 7.2.8 `drivers/base/power/runtime.c` returns `-EACCES`
+for that disabled state before dispatching resume. See the upstream
+[runtime-PM lifecycle documentation](https://docs.kernel.org/power/runtime_pm.html).
+
+Probe now calls `devm_pm_runtime_enable()` after mapping the audited resource
+and before publishing the endpoint. It preserves normal subsystem resume
+callbacks; it neither forces an ACTIVE state nor skips PM callbacks. Managed
+cleanup disables runtime PM on failed probe/removal. Runtime suspend returns
+`-EBUSY`, since the experiment has no established device-quiescence/power-down
+protocol. Actual per-device resume failures are logged before releasing the
+firmware and any earlier runtime reference.
+
+The corrected module builds for the test kernel; the upload lifecycle suite
+includes both devices returning `-EACCES` and verifies no allocation,
+publication or retained reference on those failures. The prepared reload
+requires the exact old `attempted=0`, `error=-13` state and no outstanding
+operation/storage before unloading. It must never be used after a published
+upload. The corrected module was then loaded in the same boot. Both devices
+changed from `unsupported` to `suspended` before the trigger and to `active`
+after it; the upload passed this previously failing preflight.
+
+### First physical SROOT upload reply
+
+At **17:58:30** the corrected module performed the first actual mailbox upload.
+The kernel logged `upload phase returned -121`, `reply_valid=1`,
+`raw=0x2a006018`, `idle=0`, with SROOT DMA `0xfffe0000` retained until reboot.
+`-121` is `-EREMOTEIO`: the transport returned a reply, but its decoded
+status/detail was nonzero. The helper therefore did not run the DLA idle wait.
+This is not a successful firmware boot and does not prove that SROOT read the
+staged image or that any engine is ready.
+
+Replaying the **actual reply header** through original Windows receive/decoder
+code (`0x5328` / `0x4f70`) and the Linux receive helper produces the same tuple:
+
+| Field | Observed value |
+| --- | --- |
+| Command | `0x18`, matching the upload request |
+| Status | `6` |
+| Additional/detail byte | `0x2a` (42) |
+| Payload words | `0` |
+
+Original Windows upload cleanup also returns `0xc0000229` for the resulting
+nonzero status word `0x2a006`. The meanings of status 6 and detail 42 remain
+undocumented; no authentication, DMA or hardware-variant cause is asserted.
+`test_sroot_receive.py` includes this reply as an original-code regression.
+The live reports are `results/npu1-first-upload.jsonl` (preflight failure) and
+`results/npu1-pm-fixed-upload.jsonl` (the actual transport attempt).
+
+The Python trigger initially used `Path.write_text()`. On a sysfs write error,
+buffered close/flush issued a second write; a RAM-only `RawIOBase` reproduction
+observed two writes and the same overwritten error. The kernel's one-attempt
+guard rejected the second call before hardware access, but the old sysfs
+handler replaced its recorded `-EREMOTEIO` with `-EALREADY` (`-114`). The kernel
+journal preserves the first result, and the reply header remains unchanged.
+There was one mailbox upload, not a second hardware attempt.
+
+Future triggers use `scripts/npu_trigger.py`, which opens the attribute and
+calls unbuffered `os.write()` without a short-write loop or an explicit retry;
+closing the descriptor cannot flush buffered data. Kernel operation guards
+remain authoritative, including for interrupted calls. The updated upload
+handler also preserves the original published operation's error when a later
+call is rejected. Seven userspace trigger cases and the compiled sysfs handler
+tests cover failure, short-write handling and first-result preservation.
+
+The first-result-preservation change is built and tested but **not loaded**:
+the live module and firmware buffer remain pinned after the real attempt.
+No ping, config import, bypass task, retry, unload, reset or reboot followed it.
+
 ## Scope and operation
 
 `driver/n1x_npu_linux.c` matches NVDA200A and NVDA8600 and refuses a probe unless
@@ -678,7 +758,7 @@ sudo insmod driver/n1x_npu_bootstrap.ko \
   enable_config_apply=1 enable_lpwr_config=1 enable_bypass_task=1
 sudo cat /sys/bus/platform/devices/NVDA200A:00/status
 # This is the one write trigger; it requires retention/reboot afterward:
-printf 'upload\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/upload
+sudo python3 scripts/npu_trigger.py upload
 sudo cat /sys/bus/platform/devices/NVDA200A:00/status
 sudo journalctl -k -b --no-pager
 ```

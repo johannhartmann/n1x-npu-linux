@@ -262,11 +262,15 @@ static int n1x_boot_upload(void)
 	if (err)
 		goto release;
 	err = pm_runtime_resume_and_get(boot_sroot->dev);
-	if (err < 0)
+	if (err < 0) {
+		dev_err(boot_sroot->dev, "runtime resume before upload failed: %d\n", err);
 		goto release;
+	}
 	err = pm_runtime_resume_and_get(boot_dla->dev);
-	if (err < 0)
+	if (err < 0) {
+		dev_err(boot_dla->dev, "runtime resume before upload failed: %d\n", err);
 		goto put_sroot;
+	}
 	boot_buffer = dma_alloc_coherent(boot_sroot->dev, N1X_BOOT_BYTES,
 					 &boot_dma, GFP_KERNEL);
 	if (!boot_buffer) {
@@ -832,11 +836,14 @@ static ssize_t upload_store(struct device *dev, struct device_attribute *attr,
 	mutex_lock(&boot_lock);
 	if (!boot_dla || boot_dla->dev != dev)
 		err = -ENODEV;
-	else
+	else if (boot_attempted)
+		err = -EALREADY; /* Preserve the first published operation's result. */
+	else {
 		err = n1x_boot_upload();
-	boot_error = err;
+		boot_error = err;
+	}
 	mutex_unlock(&boot_lock);
-	return err ? err : count;
+	return err ? err : (ssize_t)count;
 }
 static DEVICE_ATTR_WO(upload);
 
@@ -915,6 +922,13 @@ static int n1x_boot_probe(struct platform_device *pdev)
 	endpoint->base = devm_ioremap_resource(dev, &registers);
 	if (IS_ERR(endpoint->base))
 		return PTR_ERR(endpoint->base);
+	/* Platform devices start with runtime PM disabled. Keep the normal
+	 * subsystem resume path; do not force ACTIVE or skip its callbacks.
+	 * Devres disables PM on failed probe or removal before any upload.
+	 */
+	err = devm_pm_runtime_enable(dev);
+	if (err)
+		return err;
 	mutex_lock(&boot_lock);
 	if (sroot ? !!boot_sroot : !!boot_dla) {
 		err = -EBUSY;
@@ -948,7 +962,14 @@ static int n1x_boot_suspend(struct device *dev)
 	mutex_unlock(&boot_lock);
 	return err;
 }
+static int n1x_boot_runtime_suspend(struct device *dev)
+{
+	/* No device quiescence/power-down protocol has been established. */
+	return -EBUSY;
+}
+
 static const struct dev_pm_ops n1x_boot_pm = {
+	.runtime_suspend = n1x_boot_runtime_suspend,
 	.suspend = n1x_boot_suspend,
 	.freeze = n1x_boot_suspend,
 	.poweroff = n1x_boot_suspend,
