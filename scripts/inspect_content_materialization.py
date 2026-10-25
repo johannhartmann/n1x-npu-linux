@@ -3,6 +3,7 @@
 import hashlib
 import json
 import struct
+import re
 import pefile
 from unicorn import Uc,UC_ARCH_ARM64,UC_MODE_ARM,UC_HOOK_CODE
 from unicorn import arm64_const as r
@@ -28,6 +29,10 @@ def main():
     cursor=HEAP
     nodes={}
     copies=[]
+    comparisons=[]
+    callbacks=[]
+    pattern=pe.get_data(0x98478,128).split(b'\0')[0].decode('ascii')
+    assert pattern==r'^task-?(\d+)-stat(s|_list)$'
     def reg(i):return u.reg_read(getattr(r,f'UC_ARM64_REG_X{i}'))
     def ret(value=None):
         if value is not None:u.reg_write(r.UC_ARM64_REG_X0,value)
@@ -68,9 +73,13 @@ def main():
         elif address==BASE+0x16418:
             assign(reg(0),bytes(u.mem_read(reg(1),reg(2))));ret(reg(0))
         elif address==BASE+0x7d970:
-            # Global special-symbol string initialization has not been recovered.
             assert reg(1)==BASE+0x6a5b10
-            ret(0)
+            name=string(reg(0)).decode('ascii')
+            match=re.search(pattern,name,flags=re.ASCII) is not None
+            comparisons.append(dict(name=name,match=match));ret(int(match))
+        elif address==BASE+0x1b280:
+            # Observe entry but execute the actual two-instruction callback.
+            callbacks.append(True)
         elif address==BASE+0x904b0:ret(alloc(reg(0)))
         elif address==BASE+0x1820:
             u.mem_write(reg(0),bytes([reg(1)&255])*reg(2));ret(reg(0))
@@ -85,6 +94,7 @@ def main():
     u.reg_write(r.UC_ARM64_REG_SP,STACK+0xf000);u.reg_write(r.UC_ARM64_REG_LR,STOP)
     u.emu_start(BASE+0x88160,STOP,count=100000)
     assert u.reg_read(r.UC_ARM64_REG_PC)==STOP and reg(0)==0
+    assert len(copies)==7
     view=Buffer(data);rows=[]
     for table in view.tables(root,5):
         name=view.string(table,0);node=nodes[name]
@@ -108,14 +118,42 @@ def main():
         assert bytes(u.mem_read(CTX+0x2028,8))==bytes(u.mem_read(node+0x60,8))
         assert bytes(u.mem_read(CTX+0x2030,6))==bytes(u.mem_read(node+0x68,6))
         assert struct.unpack('<Q',u.mem_read(CTX+0x3000,8))[0]==pointer
+        # Original normal-loader copy and actual 0x1b280 callback, starting
+        # after prior compatibility checks. Exercise bounds before copying.
+        destination=alloc(size+32)
+        u.mem_write(destination,b'\xa5'*(size+32))
+        u.mem_write(CTX+0x5000+0x50,bytes(u.mem_read(CTX+0x2000,0x36)))
+        u.mem_write(CTX+0x5010,struct.pack('<Q',pointer))
+        u.mem_write(CTX+0x4000,struct.pack('<Q',CTX))
+        u.mem_write(CTX+0x4060,struct.pack('<Q',destination))
+        for allocation_size in (size-1,size):
+            u.mem_write(CTX+0x4018,struct.pack('<Q',allocation_size))
+            u.reg_write(r.UC_ARM64_REG_X21,CTX+0x4000)
+            u.reg_write(r.UC_ARM64_REG_X23,CTX+0x6000)
+            u.reg_write(r.UC_ARM64_REG_X26,CTX+0x5000)
+            u.reg_write(r.UC_ARM64_REG_SP,STACK+0xf000)
+            endpoint=BASE+(0x21018 if allocation_size<size else 0x20f5c)
+            before=len(copies)
+            u.emu_start(BASE+0x20f18,endpoint,count=1000)
+            assert u.reg_read(r.UC_ARM64_REG_PC)==endpoint
+            if allocation_size<size:
+                assert len(copies)==before and bytes(u.mem_read(destination,size+32))==b'\xa5'*(size+32)
+            else:
+                assert len(copies)==before+1 and u.reg_read(r.UC_ARM64_REG_W19)==0
+                assert bytes(u.mem_read(destination,size))==expected
+                assert bytes(u.mem_read(destination+size,32))==b'\xa5'*32
         rows.append(dict(name=name,bytes=size,version=list(u.mem_read(node+0x68,3)),
                          interface=struct.unpack('<I',u.mem_read(node+0x60,4))[0],original_content_getter_verified=True,
+                         original_loader_copy_and_bounds_verified=True,
                          sha256=hashlib.sha256(expected).hexdigest()))
-    assert len(rows)==len(nodes)==7 and len(copies)==7
+    assert len(rows)==len(nodes)==7 and len(copies)==14 and len(callbacks)==7
+    assert len(comparisons)==7 and not any(row['match'] for row in comparisons)
     assert next(row for row in rows if row['name']=='task0-addr0')['bytes']==128
     print(json.dumps(dict(passed=True,hardware_access=False,original_function='0x88160',contents=rows,
+                         special_symbol_pattern=pattern,special_symbol_comparisons=comparisons,
                          limitations=['C++ map/string/allocation/copy helpers are modeled; original field extraction and control flow execute',
-                                      'Special-symbol comparison is modeled as no match; its global string initialization remains unresolved',
+                                      'Recovered regex is matched by Python over ASCII names; original MSVC regex compiler/executor is not run',
+                                      'Normal-loader copy slice begins after compatibility checks and stops before cleanup/next blob',
                                       'This is content-vector materialization only, not full deserialization, load or device execution',
                                       'Later runtime transforms or a different model/firmware ABI remain possible']),indent=2))
 

@@ -469,8 +469,8 @@ constructor and deserializer are not executed by this particular test.
 0x88160 over the exact pinned diagnostic's root vector 5. It models C++
 map/string helpers, allocation, zeroing and copying; original FlatBuffer field
 reads, sizes, version extraction, loop and assignment instructions execute.
-The global special-symbol comparison is explicitly modeled as **no match**;
-the initializer for that global string at 0x6a5b10 remains unresolved.
+The global special-symbol predicate is a regex at 0x6a5b10. Its recovered
+literal is matched by a modeled ASCII regex helper, as detailed below.
 
 All seven contents allocate and copy exactly their declared blob size, with
 byte-for-byte verification and hashes. The network content **task0-addr0
@@ -478,7 +478,7 @@ remains 128 bytes**; this stage does not synthesize its missing 128-byte suffix.
 The parser stores interface at map-node+0x60, raw slot 3 at +0x64, content
 version at +0x68, an additional version triple at +0x6b, size at +0x70 and the
 new content pointer at +0x78. The special-symbol branch can override slot 3
-to 8; its effect is excluded by the stated modeled comparison.
+to 8; none of these seven names matches the recovered predicate.
 
 For each parsed blob, the test next executes original getter **0x8b350**,
 with lookup and lock helpers modeled. It verifies the returned name, size,
@@ -491,5 +491,33 @@ instructions. This is stronger evidence than a guessed v1 schema projection.
 
 It is still only the content-vector stage plus its getter, not completed
 model loading or device execution. Other deserializer stages, later runtime
-transforms, the special-symbol path and a different opaque/raw firmware ABI
+transforms and a different opaque/raw firmware ABI
 remain open. No hardware address, model version or firmware code is changed.
+
+### Symbol predicate and the subsequent loader copy
+
+The initializer at **0x3498** sets up the predicate object at 0x6a5b10 and
+passes the literal at RVA **0x98478**, `^task-?(\d+)-stat(s|_list)$`, to its
+construction path. Helper 0x7d970 consumes this object as a regex rather than
+as a plain string. The materialization test now uses that exact pinned literal
+with Python's ASCII regex matcher and records all seven comparisons. None
+matches, including **task0_stats** (underscore rather than the required
+hyphen before `stat`). The original MSVC regex compiler/executor is not run;
+the regular expression remains an explicit modeled library boundary.
+
+For every content, the test also executes original normal-loader slice
+**0x20f18..0x20f58**, starting after the preceding compatibility checks. It
+populates the slice's metadata from the actual content getter output, then
+verifies the original size bound, complete copy and callback invocation.
+Original callback **0x1b280** executes its two instructions (`mov w0,0; ret`)
+without a hook replacing it; it does not alter or extend the data. Each of
+seven sufficiently sized destination buffers receives exactly the original
+blob, with 32 poisoned trailing bytes unchanged. Seven separate undersized
+destinations branch to 0x21018 before the copy and remain fully poisoned.
+
+Together these stages establish an unchanged 128-byte network content through
+materialization, retrieval and this loader copy. They do not prove that no
+later stage patches it, that prior compatibility checks have passed, that
+cleanup/next-blob handling succeeds, or that the resulting network is valid
+for the firmware. The missing 256-byte network contract is therefore narrowed
+further, not solved by appending guessed data.
