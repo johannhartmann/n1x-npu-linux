@@ -1819,3 +1819,16 @@ comparisons; original raw HAL-1 22/21/22 in one instance confirms the two-byte
 change through export/import/re-export. The native phase reuses retained export
 backing and checks command-21 acceptance, without physical persistence or full
 initialization claims. See [default-config evidence](default-config.md).
+
+
+## Native Windows-fallback LPWR import
+
+The experimental Linux backend now connects the previously recovered
+constructor/provider fallback and command-23 builder to the checked control
+transaction, after default config import. Its 28 lifecycle cases compare all
+4096 allocation bytes against the original Windows ARM64 builder; an original
+raw HAL-1 same-instance 23/24 roundtrip independently checks the exact fallback
+payload after erasing host memory. See [native phase and qualification
+limits](linux-backend.md#optional-windows-fallback-lpwr-configuration-import-built-not-yet-run).
+No physical units, live Windows provider value, native readback, working IRQ
+path, full initialization or numerical inference is established by this step.

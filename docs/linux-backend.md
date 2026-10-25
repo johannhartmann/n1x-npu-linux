@@ -71,7 +71,8 @@ does not force direct DMA, mark the device coherent, choose a foreign domain,
 or alter an IORT mapping. It enables the normal kernel route to configure the
 firmware-declared requester and perform architecture cache handling.
 
-The patch is **not applied to the running kernel or installed boot artifacts**.
+The patch is **not active in the running kernel**. It is included in the
+separately installed `npu1` test kernel/UKI; its physical boot is still pending.
 It applies without fuzz to the inspected Linux 7.2.8 source. The patched
 `drivers/acpi/scan.c` compiles against the running kernel's headers/configuration.
 The actual patched coherency function also passes 13 mocked policy/precedence
@@ -129,7 +130,8 @@ backend's distinct reservation:
 ```
 
 This verifies the resource fix on hardware. SROOT DMA remains unconfigured;
-the missing-CCA kernel patch is not installed. No firmware boot, DMA transfer,
+the missing-CCA kernel patch was not installed at that observation time. It is
+now installed only in the unbooted test kernel. No firmware boot, DMA transfer,
 IRQ handling or inference has been attempted. The observation module remains
 loaded for inspection, with no persistent autoload configuration.
 
@@ -597,9 +599,9 @@ sudo rmmod n1x_npu_observe
 sudo install -Dm644 sources/dla-p16-sroot-v0.bin \
   /usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin
 # Use the module built for npu1, not the current-kernel build in driver/:
-sudo insmod results/npu1-bootstrap-config-apply-build/driver/n1x_npu_bootstrap.ko \
+sudo insmod results/npu1-bootstrap-lpwr-build/driver/n1x_npu_bootstrap.ko \
   enable_upload=1 enable_ping=1 enable_region5=1 enable_config_snapshot=1 \
-  enable_config_apply=1
+  enable_config_apply=1 enable_lpwr_config=1
 sudo cat /sys/bus/platform/devices/NVDA200A:00/status
 # This is the one write trigger; it requires retention/reboot afterward:
 printf 'upload\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/upload
@@ -792,8 +794,54 @@ lifecycle cases.
 The updated pending manual sequence is upload → DMA-word ping → region 5 →
 config export → default config apply. Select all needed options before upload.
 The module-load example above now uses
-`results/npu1-bootstrap-config-apply-build/`; earlier region/control-only builds
+`results/npu1-bootstrap-lpwr-build/`; earlier region/control-only builds
 remain historical artifacts. Both kernel builds and affected regressions pass.
 No bootstrap has been loaded, firmware installed or physical import performed.
-Low-power/IRQ initialization, recovery, a usable task interface and numerical
-inference still require implementation/qualification.
+The optional low-power configuration import is described below. IRQ
+initialization, recovery, a usable task interface and numerical inference
+still require implementation/qualification.
+
+
+### Optional Windows-fallback LPWR configuration import (built, not yet run)
+
+`enable_lpwr_config=1` permits root/CAP_SYS_RAWIO to write `apply` to
+`apply_lpwr`, once, after a verified DMA ping, registered region 5 and accepted
+command-21 default config import. No automatic submission occurs at probe.
+The payload uses the original Windows constructor inputs `+47d=1`, `+490=1`
+and the **zero-provider fallback** `+f4=4`: byte 0=1, byte 1=1, LE u32 at
+byte 2=8000, remaining bytes zero. This is an explicit fallback experiment,
+not evidence that a live Windows session on this P16 would use that value.
+No physical time unit is assigned. No arbitrary user tuning is exposed.
+
+The phase rechecks the DLA DMA gate, obtains a new coherent 4096-byte allocation,
+checks its entire nonzero/256-aligned extent against the 36-bit mask and clears
+all backing. The recovered C builder fills 40 bytes, followed by dma_wmb and
+checked command 23. Before any control transaction the attempt flag is set;
+all later outcomes retain backing under the existing upload/module/runtime
+references. Only pre-publication preparation failures free the new buffer.
+`status` records enabled/attempted/error/accepted, raw reply validity/header
+and retention. Acceptance does not mean full initialization, a working IRQ
+path, measured power control or inference. No native command-24 readback is
+performed by this phase.
+
+```sh
+# Only after the preceding phases succeeded in the pending hardware experiment:
+printf 'apply\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/apply_lpwr
+sudo cat /sys/bus/platform/devices/NVDA200A:00/status
+```
+
+`scripts/test_linux_lpwr_config.py` compiles the exact native phase with the
+real C builder/control/send/ACK functions. It covers 28 lifecycle cases:
+prerequisite failures, DMA gate/mask/allocation failures, whole-extent checks,
+all ten transaction I/O failure positions, stale replies, firmware errors,
+response mismatch, success and repeated attempts. The whole submitted 4096
+bytes match the original Windows ARM64 builder with fallback inputs, including
+its cleared tail. A separate same-instance original raw HAL-1 23/24 roundtrip
+clears host memory between commands, executes 20 original modeled DMA words
+and returns through both original traps, without firmware code patches/stubs.
+This is emulation with synthetic reset/DMA/IRQ effects, not physical validation
+or proof that the opaque SROOT image executes identical code.
+
+Both kernel module builds pass; the npu1 artifact and source manifest are in
+`results/npu1-bootstrap-lpwr-build/`. No module or firmware has been installed
+by this addition, and no LPWR command has been sent to hardware.

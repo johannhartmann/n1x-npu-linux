@@ -53,6 +53,10 @@ static bool enable_config_apply;
 module_param(enable_config_apply, bool, 0400);
 MODULE_PARM_DESC(enable_config_apply, "Permit one explicit default config import after export/region-5 qualification (default false)");
 
+static bool enable_lpwr_config;
+module_param(enable_lpwr_config, bool, 0400);
+MODULE_PARM_DESC(enable_lpwr_config, "Permit one explicit command-23 Windows fallback config import (default false)");
+
 struct n1x_boot_endpoint {
 	struct device *dev;
 	void __iomem *base;
@@ -95,6 +99,14 @@ static struct {
 	bool attempted, accepted;
 	int error;
 } boot_config_apply;
+
+static struct {
+	void *buffer;
+	dma_addr_t dma;
+	struct n1x_dla_control_result transaction;
+	bool attempted, accepted;
+	int error;
+} boot_lpwr;
 
 static bool n1x_boot_machine(void)
 {
@@ -559,6 +571,78 @@ static ssize_t apply_config_store(struct device *dev, struct device_attribute *a
 }
 static DEVICE_ATTR_WO(apply_config);
 
+/* Windows setup uses provider +0xf4=4 only when the original field is zero.
+ * This explicit experiment imports that recovered fallback, not a measured
+ * live Windows policy. Do not interpret the field as a physical time unit.
+ */
+static int n1x_boot_apply_lpwr_once(void)
+{
+	struct n1x_dla_io io;
+	u64 maximum = DMA_BIT_MASK(36);
+	int err;
+
+	if (!enable_lpwr_config || !n1x_boot_machine())
+		return -EPERM;
+	if (!boot_sroot || !boot_dla || !boot_ping.verified ||
+	    !boot_region5.registered || !boot_config_apply.accepted)
+		return -ENODEV;
+	if (boot_lpwr.attempted)
+		return -EALREADY;
+	err = n1x_boot_dma_gate(boot_dla);
+	if (err)
+		return err;
+	err = dma_set_mask_and_coherent(boot_dla->dev, maximum);
+	if (err)
+		return err;
+	boot_lpwr.buffer = dma_alloc_coherent(boot_dla->dev, 4096,
+					    &boot_lpwr.dma, GFP_KERNEL);
+	if (!boot_lpwr.buffer)
+		return -ENOMEM;
+	if (!boot_lpwr.dma || (boot_lpwr.dma & 255) || boot_lpwr.dma > maximum ||
+	    4095 > maximum - boot_lpwr.dma) {
+		err = -ERANGE;
+		goto free;
+	}
+	memset(boot_lpwr.buffer, 0, 4096);
+	err = n1x_dla_build_command23(boot_lpwr.buffer, 4096, 1, 1, 4);
+	if (err)
+		goto free;
+	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+	dma_wmb();
+	/* Upload already holds runtime/module references. A reply or ACK cannot
+	 * establish quiescence: retain this backing on every attempted command.
+	 */
+	boot_lpwr.attempted = true;
+	err = n1x_dla_control_command(&io, 23, boot_lpwr.dma, 5001, 1000,
+				       &boot_lpwr.transaction);
+	if (!err)
+		boot_lpwr.accepted = true;
+	return err;
+free:
+	dma_free_coherent(boot_dla->dev, 4096, boot_lpwr.buffer, boot_lpwr.dma);
+	boot_lpwr.buffer = NULL;
+	boot_lpwr.dma = 0;
+	return err;
+}
+
+static ssize_t apply_lpwr_store(struct device *dev, struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	int err;
+
+	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "apply"))
+		return -EPERM;
+	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev)
+		err = -ENODEV;
+	else
+		err = n1x_boot_apply_lpwr_once();
+	boot_lpwr.error = err;
+	mutex_unlock(&boot_lock);
+	return err ? err : count;
+}
+static DEVICE_ATTR_WO(apply_lpwr);
+
 static ssize_t config_snapshot_show(struct device *dev, struct device_attribute *attr,
 				    char *buf)
 {
@@ -621,7 +705,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 
 	mutex_lock(&boot_lock);
 	size = sysfs_emit(buf,
-		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x\n",
+		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x lpwr_enabled=%u lpwr_attempted=%u lpwr_error=%d lpwr_accepted=%u lpwr_reply_valid=%u lpwr_reply=%#x lpwr_retained=%u\n",
 		!!boot_dla, !!boot_sroot, enable_upload, boot_attempted, boot_error,
 		boot_result.reply_valid, boot_result.reply.header,
 		boot_result.idle_observed, !!boot_buffer, enable_ping, boot_ping.attempted,
@@ -631,14 +715,16 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 		!!boot_config.buffer, enable_region5, boot_region5.attempted, boot_region5.error,
 		boot_region5.registered, !!boot_region5.buffer, enable_config_apply,
 		boot_config_apply.attempted, boot_config_apply.error, boot_config_apply.accepted,
-		boot_config_apply.transaction.response_valid, boot_config_apply.transaction.response.word);
+		boot_config_apply.transaction.response_valid, boot_config_apply.transaction.response.word,
+		enable_lpwr_config, boot_lpwr.attempted, boot_lpwr.error, boot_lpwr.accepted,
+		boot_lpwr.transaction.response_valid, boot_lpwr.transaction.response.word, !!boot_lpwr.buffer);
 	mutex_unlock(&boot_lock);
 	return size;
 }
 static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_show, NULL);
 static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
 	&dev_attr_config_snapshot.attr, &dev_attr_init_region5.attr,
-	&dev_attr_apply_config.attr, &dev_attr_status.attr, NULL};
+	&dev_attr_apply_config.attr, &dev_attr_apply_lpwr.attr, &dev_attr_status.attr, NULL};
 ATTRIBUTE_GROUPS(boot);
 
 static int n1x_boot_probe(struct platform_device *pdev)

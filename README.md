@@ -221,3 +221,11 @@ After the audit, independently establish the P16 power/reset and RISC-V boot
 sequence, bounded DMA addressing, interrupts, firmware ping and version reply.
 Only then implement allocation/import, task submission, fences and a numerical
 inference test. A build or successful firmware parser test is not device support.
+
+
+The explicit Linux bootstrap also offers a one-attempt [Windows-fallback
+LPWR configuration import](docs/linux-backend.md#optional-windows-fallback-lpwr-configuration-import-built-not-yet-run)
+after default config import. Its payload matches the original Windows builder
+and roundtrips through unmodified raw HAL-1 code under modeled DMA/IRQ effects.
+It remains off by default and physically untested; this is not a working
+inference or power-management driver.
