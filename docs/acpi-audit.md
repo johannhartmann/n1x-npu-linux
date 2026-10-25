@@ -163,3 +163,64 @@ not sufficient grounds to request/map unadvertised physical addresses.
 
 The already-running read-only pkexec copy awaits system authentication. It has
 not produced a live dump. No NPU driver was bound and no NPU MMIO was issued.
+
+## Reproducible live collection and standard IORT decoding
+
+`scripts/collect_acpi.py` now provides the needed read-only collection as a
+reusable command. It requires DSDT and IORT, includes static and dynamic SSDTs,
+keeps same-named static/dynamic tables separate, checks signature/length/checksum,
+and writes per-table SHA-256 metadata into a **new** directory. It rejects an
+inventory change observed during reading; this is not an atomic firmware
+snapshot guarantee. No AML is evaluated, device bound or register accessed.
+When invoked with sudo, it reads the table bytes first and drops to the invoking
+user before creating analysis files. Existing snapshot directories are refused.
+
+After the outstanding authentication interaction has been resolved, the complete
+collection command from the repository is:
+
+```sh
+sudo python3 scripts/collect_acpi.py sources/acpi-live
+```
+
+The older pending copy request remains unchanged and covers only DSDT/SSDT;
+it is not sufficient for the IORT audit. No second authentication dialog was
+started. A direct unprivileged trial of the new command currently fails reading
+`/sys/firmware/acpi/tables/DSDT` with PermissionError and creates no snapshot.
+
+Use the installed ACPICA disassembler instead of introducing a custom IORT
+parser:
+
+```sh
+for table in sources/acpi-live/*.aml; do
+    iasl -d "$table"
+done
+```
+
+IORT is a data table, despite the collection's `.aml` filename extension; iasl
+recognizes its signature and does not execute AML. Inspect its named-component
+paths, ID mappings/output references, SMMU nodes and memory properties against
+DLA0/ROT0, then compare the AML namespace and parent power paths with this audit.
+Do not replace ROT0's missing `_CCA`, select a DMA requester or declare coherency
+merely from a similarly named IORT node or one coherency field.
+
+**An iasl exit code of zero is insufficient evidence of a complete decode.**
+The installed 20251212 build can output an unsupported-revision warning and raw
+table only, and a zero-length-padding case can stop subtable decoding with an
+`Invalid zero length subtable` diagnostic. Review both the log and generated
+`.dsl`; partial output is not a completed IORT audit. If the real table triggers
+one of these cases, inspect its raw bounds using the actual kernel/ACPICA table
+structures rather than modifying the live table to suit the tool.
+
+Local format references are the running kernel's Linux 7.2.8
+`include/acpi/actbl2.h` (common node, named component, SMMUv3 and ID-map layouts)
+and `drivers/acpi/arm64/iort.c`. The latter treats `id_count` as number of IDs
+**minus one**, and handles single-map nodes separately. An eventual route audit
+must preserve those distinctions and must not equate `_CCA` policy with IORT
+cache fields.
+
+`test_acpi_collection.py` checks static/dynamic collisions, unchanged existing
+snapshots, malformed headers/lengths/checksums and missing IORT. It additionally
+passes a wholly synthetic revision-6 named-component/SMMUv3 fixture through the
+installed iasl and verifies decoded fields without warnings. This tests the
+collection/tool workflow; none of its paths, mappings or addresses are evidence
+about the P16. Live identity and DMA routing remain unverified.

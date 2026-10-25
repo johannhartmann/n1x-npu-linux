@@ -88,6 +88,9 @@ addresses, proven facts, and remaining bring-up requirements.
 
 ## Offline checks
 
+The complete vendor-backed suite also requires ACPICA `iasl` for the read-only
+ACPI snapshot workflow checks. See [the live-table procedure](docs/acpi-audit.md).
+
 ```sh
 make test
 python3 -m venv venv
