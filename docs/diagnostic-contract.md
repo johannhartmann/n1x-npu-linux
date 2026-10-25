@@ -219,7 +219,33 @@ The getter preserves the five poisoned bytes after its three-byte output. The
 append test models the final model-parser boundary, as described above; status
 0 does not establish device execution. No enum, version or hardware meaning is
 assigned to these byte values. In particular, this selector is not established
-as the KMD classifier or HAL profile number. The setter, the physical Windows
-device's selected value and its connection to firmware compatibility remain
-unresolved. The seven cases use original ARM64 instructions without hardware
+as the KMD classifier or HAL profile number. The seven cases use original ARM64 instructions without hardware
 access and cannot establish a successful diagnostic or numerical inference.
+
+### Selector write path recovered
+
+The original `init2` implementation at 0x1c150 passes `context+0x98` to
+0x756f8 at 0x1c2a8..0x1c2b0, after its device open/setup calls. The resolver
+first checks a process-global cache-valid byte at 0x6a5950. If valid, it copies
+the DWORD at 0x6a1c30 into the caller's field without validating its range.
+
+On the uncached path, lookup helpers 0x2bb00 and 0x2bfb0 lead to a virtual
+provider lookup at slot +0x18, followed by a query at slot +0xb8. The query
+receives a pointer to an initially zeroed four-byte local. The resolver reads
+only its first byte: **0x23 maps to selector 1; 0x25 and 0x26 map to selector
+3**. Every other byte returns status 15 without updating the selector or
+marking the cache valid. Success writes both the global cache and the caller's
+field, sets cache-valid to 1 and returns 0. Lookup failures return 6 (first
+lookup) or 11 (second/provider lookup). The query's returned status is not
+checked before interpreting its output byte.
+
+`scripts/inspect_runtime_selector_setter.py` executes the original resolver for
+all 256 byte values, six cached values, three lookup failures and one query
+error that still supplies byte 0x23: **266 cases**. The helpers, provider and
+CFG validation are explicit modeled boundaries; the mapping and cache logic
+execute original ARM64 instructions. An exact instruction check ties the
+`init2` selector-address argument to this resolver. No model parser or hardware
+is invoked. These observations recover the setter but do not identify the
+physical provider's byte, its semantic name, or a correspondence with the KMD
+classifier/HAL profile. That provider implementation is the next unresolved
+link; successful physical diagnostic execution remains unproven.
