@@ -10,8 +10,11 @@ A native C response-field decoder is checked against the original Windows parser
 it preserves unknown bits and does not infer task completion. The original
 Windows IRQ callback is also exercised for error-report ordering and SWGEN0
 counter handling; report/recovery boundaries remain synthetic.
-No hardware backend is supplied;
-the tests neither bind the ACPI device nor write hardware registers.
+An explicit-load Linux observation module now validates the audited P16
+resources and exposes DMA/IOMMU state. It has no write path; optional status
+reads require a load-time flag. Firmware boot and inference are still absent.
+See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
+device nor write hardware registers.
 
 ## Target selection correction
 
@@ -24,8 +27,8 @@ The extractor and Linux parser support that image; actual boot is untested.
 **The detailed T35x firmware emulations below concern HAL 2, not this HAL-1
 image.** They remain reference research and do not validate the P16 firmware's
 commands, task ABI, engine registers or instruction opcodes. Those must now be
-rechecked against HAL 1. Opaque firmware/boot variants and the live ACPI audit
-remain unresolved; no hardware backend is enabled. Basic HAL-1 ping and
+rechecked against HAL 1. Opaque firmware/boot variants and physical boot remain unresolved. The live
+ACPI audit is complete; the observation module has no write backend. Basic HAL-1 ping and
 mailbox/ACK handling have now been independently revalidated in an RV32 emulator,
 including round trips through the Linux C response handler. Four consecutive
 commands now use both Linux C method submission and response ACK in one
@@ -76,7 +79,7 @@ authentication semantics have not been established.
 - ACPI `NVDA200A`, compatible ID `NVDA2042`, hardware revision `0x34`, `DLA0`.
 - P16 BIOS H7607BA.300; device present/enabled and unbound on Linux.
 - Historical DSDT resources: MMIO `0x19000000/0x40000`,
-  `0x31380000/0x10000`, GSIs 463/800. Live full-table audit is pending.
+  `0x31380000/0x10000`, GSIs 463/800. The live full-table audit confirms these resources.
 - Official NVIDIA 617.42 Windows ARM64 package; ASUS INF explicitly maps the
   exact ACPI revision to “NVIDIA NPU”, using the `nvlddmkm` service.
 - `nvcudla.dll`: dynamic D3DKMT transport, concrete DeviceKMI interface.

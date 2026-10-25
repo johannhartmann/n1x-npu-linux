@@ -1,0 +1,52 @@
+Subject: [PATCH] ACPI: use noncoherent SROOT DMA on the audited P16 BIOS
+
+ASUS ProArt P16 H7607BA BIOS .300 omits ROT0._CCA. Its live IORT
+nevertheless routes the NVDA8600 revision-1 device through SMMUv3
+0x14900000, Stream ID 1, with noncoherent memory properties. The
+Windows nvsrootmbx provider explicitly requests MmNonCached memory
+for its bounded DMA common buffer.
+
+Treat only this missing-attribute case as noncoherent before normal
+platform DMA configuration. Preserve explicit/inherited attributes,
+other revisions and other machines. Do not borrow DLA0's coherent
+DMA device or bypass the firmware-declared IOMMU route.
+
+Experimental: patch application, policy cases and compilation have
+been checked. Physical DMA and boot verification remain pending.
+This patch is not installed in the running kernel.
+
+---
+diff --git a/drivers/acpi/scan.c b/drivers/acpi/scan.c
+--- a/drivers/acpi/scan.c
++++ b/drivers/acpi/scan.c
+@@ -1707,7 +1707,29 @@
+ 					       NULL, &cca);
+ 		if (ACPI_SUCCESS(status))
+ 			adev->flags.cca_seen = 1;
+-		else if (!IS_ENABLED(CONFIG_ACPI_CCA_REQUIRED))
++		else if (IS_ENABLED(CONFIG_ACPI_CCA_REQUIRED) &&
++			 status == AE_NOT_FOUND &&
++			 dmi_match(DMI_SYS_VENDOR, "ASUS") &&
++			 dmi_match(DMI_PRODUCT_NAME, "ProArt P16 H7607BA") &&
++			 dmi_match(DMI_BIOS_VERSION, "H7607BA.300") &&
++			 !strcmp(acpi_device_hid(adev), "NVDA8600")) {
++			unsigned long long revision;
++
++			/* This BIOS omits ROT0._CCA despite its IORT DMA mapping.
++			 * IORT declares noncoherent memory, Stream ID 1 through
++			 * SMMUv3 0x14900000. The Windows SROOT provider requests
++			 * an explicitly noncached common buffer. Keep the normal
++			 * ACPI/IORT DMA path and architecture cache maintenance;
++			 * do not borrow DLA0's coherent DMA device/domain.
++			 */
++			if (ACPI_SUCCESS(acpi_evaluate_integer(adev->handle,
++						 "_HRV", NULL, &revision)) &&
++			    revision == 1) {
++				adev->flags.cca_seen = 1;
++				acpi_handle_info(adev->handle,
++					"P16 BIOS .300 SROOT: using noncoherent DMA\n");
++			}
++		} else if (!IS_ENABLED(CONFIG_ACPI_CCA_REQUIRED))
+ 			/*
+ 			 * If architecture does not specify that _CCA is
+ 			 * required for DMA-able devices (e.g. x86),

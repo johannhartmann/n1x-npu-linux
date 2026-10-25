@@ -27,6 +27,8 @@ def run(pe, logical=0x40010000, lower=0x40000000, upper=0x4fffffff, allocated=Tr
         u.mem_write(address, struct.pack('<Q', value))
     u.mem_write(CTX+0x28, struct.pack('<II', lower, upper))
     u.mem_write(CTX+0x70, struct.pack('<I', 0x1234))
+    # Poison stack so cache-policy evidence cannot come from zero-filled RAM.
+    u.mem_write(STACK, b'\xa5'*0x10000)
     calls = []
 
     def reg(i):
@@ -54,8 +56,12 @@ def run(pe, logical=0x40010000, lower=0x40000000, upper=0x4fffffff, allocated=Tr
             assert reg(0) == ADAPTER and reg(3) == 0x1234 and reg(4) == 0 and reg(6) == 0
             limits = [struct.unpack('<Q', u.mem_read(reg(i), 8))[0] for i in (1, 2)]
             assert limits == [lower, upper] and reg(7) == CTX+0x80
+            # Microsoft declares CacheType as an INPUT override, not output.
+            # Original stp wzr,wzr at RVA 0x3b80 initializes this stack slot.
+            assert reg(5) and struct.unpack('<I', u.mem_read(reg(5), 4))[0] == 0
             calls.append({'call': 'AllocateCommonBufferWithBounds', 'minimum': limits[0],
-                          'maximum': limits[1], 'length': reg(3)})
+                          'maximum': limits[1], 'length': reg(3),
+                          'cache_type_input': 0, 'cache_policy': 'MmNonCached'})
             u.mem_write(reg(7), struct.pack('<Q', logical))
             u.reg_write(regs.UC_ARM64_REG_X0, BUFFER if allocated else 0)
         elif address == STUB+0x40:
@@ -120,7 +126,7 @@ def main():
                       'cases': rows, 'allocation_failure_checked': True,
                       'dispatch_device_to_dma_chain': {'wdf_device': hex(device), 'calls': chained_calls},
                       'limitations': ['All OS and DMA allocation operations are stubs',
-                                      'Bounds origin, coherency, copy/flush and buffer release remain to be traced',
+                                      'CacheType input is MmNonCached; allocation/OS callbacks remain synthetic',
                                       'This validates logical versus CPU-physical distinction, not live IOMMU mapping']}, indent=2))
 
 

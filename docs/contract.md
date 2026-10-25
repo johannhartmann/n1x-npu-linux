@@ -29,9 +29,9 @@ remain separate unfinished work. They are not the raw image's section table.
 **All firmware command/task/IL emulation sections referring to SHA-256
 8f5b... are T35x/HAL-2 reference research. They do not prove HAL-1/P16 protocol
 compatibility.** The P16's matching static resource chain is now explained,
-but live ACPI identity, remapper selection and boot/security handling remain
-unverified. Revalidate firmware-derived Linux behavior against HAL 1 before
-using it on this machine. No NPU hardware access was performed.
+and live ACPI identity is verified. Remapper selection and boot/security
+handling remain unverified. Revalidate firmware-derived Linux behavior against
+HAL 1 before using it on this machine. No NPU hardware access was performed.
 
 ## HAL-1 RV32 ping and IRQ response revalidation
 

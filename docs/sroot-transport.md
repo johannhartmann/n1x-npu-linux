@@ -201,7 +201,23 @@ and argument signature identify this as
 (see Microsoft's [DMA_OPERATIONS](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_dma_operations)).
 The source bounds are 32-bit context fields +0x28/+0x2c, widened to 64-bit
 minimum/maximum values; length comes from +0x70, flags and preferred node are
-zero, and a cache-type output pointer is supplied. The bound origin is verified below; the returned cache type still needs tracing.
+zero. **CacheType is an input override**, not an output: the original
+`stp wzr,wzr,[x25,#4]` at RVA `0x3b80` initializes the slot at `x25+8`
+to zero; RVA `0x3c80` passes that slot in x5. The value is **MmNonCached**.
+The earlier description of this pointer as an output was incorrect.
+`emulate_sroot_dma.py` now poisons the whole stack before executing the original
+slice and checks both the pointer and its value at allocation, across success,
+address-boundary and allocation-failure cases. This rules out accidental
+zero-filled emulator memory as the source of that policy.
+
+Microsoft defines the parameter as an explicit caching override and
+[MmNonCached](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ne-wdm-_memory_caching_type)
+as uncached CPU memory. This is vendor evidence for the CPU mapping policy;
+it does not prove that cache-coherent SROOT DMA is supported. The live IORT
+independently declares ROT0 noncoherent; see [ACPI audit](acpi-audit.md).
+A Linux noncoherent device can use the coherent-allocation API to obtain a
+CPU mapping suitable for shared device access; it must not simply mark the
+hardware coherent or copy into cached memory without cache maintenance.
 
 | Context offset | Proven role |
 | --- | --- |
@@ -496,16 +512,15 @@ power/reset, post-wait configuration and full lifecycle order remain pending.
 
 ## Remaining bring-up gates
 
-Implement and verify full command completion policy, DMA lifetime,
-and the complete firmware upload request. Verify the recovered resource/stride rule against live ACPI resources before
-creating a physical backend. No mailbox MMIO,
-IRP submission, firmware loading or reset was performed. Any eventual ROT0
-binding requires live AML/power-path audit; the existing candidate DLA0 audit
-does not cover an unexamined auxiliary device or establish live-table identity.
+Implement and verify full command completion policy, DMA lifetime and the complete
+physical firmware upload request. The live AML/power-path review and resource/
+stride comparison now cover both DLA0 and ROT0. No mailbox MMIO, firmware loading
+or reset has been performed. The Linux observation module claims audited
+resources but contains no register-write path.
 
-The [ROT0 ACPI/DMA audit](acpi-audit.md) now identifies an additional prerequisite:
-ROT0 lacks `_CCA` in both archived/candidate sets. With this kernel's required-CCA
-configuration, the normal ACPI DMA path would install dma_dummy_ops if the live
-namespace matches. An ordinary platform binding plus a 32-bit mask is therefore
-not an established allocation strategy. Live IORT/coherency/requester evidence
-is required before a physical DMA backend is implemented.
+ROT0 lacks `_CCA` in the verified live namespace. With this kernel's required-CCA
+configuration, normal ACPI DMA setup installs dma_dummy_ops. Live IORT identifies
+ROT0's separate noncoherent requester; the Windows common-buffer request explicitly
+selects MmNonCached. The narrowly scoped kernel patch and observation module are
+described in [Linux backend](linux-backend.md). The patch has not been installed;
+physical DMA, firmware boot and inference remain unverified.

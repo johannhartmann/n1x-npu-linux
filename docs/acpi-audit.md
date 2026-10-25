@@ -1,8 +1,9 @@
 # P16 ACPI power-path audit
 
-Audit date: 2026-10-25. This is an **archived/candidate-table audit**, not a
-verified dump of the currently running firmware. Do not treat it as permission
-to bind an NPU driver before the live-table comparison.
+Audit date: 2026-10-25. **Live-table identity is now verified.** Read-only
+collection obtained DSDT, five SSDTs and IORT; no dynamic SSDTs were present.
+All six AML tables match the previously audited candidates byte-for-byte.
+No NPU driver was bound and no NPU MMIO was issued.
 
 ## Sources and identity
 
@@ -11,8 +12,9 @@ The original six tables are readable in
 The candidate set replaces DSDT and SSDT2 with the existing files from
 `acpi-extracted/kernel/firmware/acpi/`. Those two hashes match the pinned output
 hashes in `p16rtx_linux/acpi/acpi_builder.py`; all six ACPI checksums pass.
-Candidate lengths match the lengths observed in live sysfs, but lengths alone
-cannot establish identity. Raw tables remain in ignored `sources/`.
+Live collection verified full byte identity, lengths and checksums. Raw tables
+remain in ignored `sources/`. The live IORT is 6160 bytes, revision 6, SHA-256
+`25d88a0a0c881914c347a5cf25c97a2a5f8ed0842af60a871795604a102858bf`.
 
 | Table | Bytes | Candidate SHA-256 |
 |---|---:|---|
@@ -69,8 +71,8 @@ There is no local method, `_STA`, `_INI`, `_PS0..3`, `_PR0..3`, `_DEP`, `_PSC`,
 root or `_SB_` on its parent path in any of the six tables. The five SSDTs
 contain no ROT0 reference; no Alias declaration occurs in either reviewed set.
 No ROT0-linked PowerResource is therefore exposed by this candidate namespace.
-This result does not establish the live namespace or firmware/secure-world
-side effects of touching the mailbox.
+The live namespace indexes reproduce these declarations. This does not
+establish firmware/secure-world side effects of touching the mailbox.
 
 The namespace indexer now accepts `--target`, handles every ancestor prefix
 and includes initialization, DMA/coherency and additional power objects in the
@@ -112,18 +114,30 @@ The upstream [ACPI source](https://code.googlesource.com/linux/torvalds/linux/+/
 also documents the `_CCA` requirement/inheritance rule; the exact running-build
 assessment here uses the pinned local source above.
 
-**Inference conditional on live tables matching:** binding an ordinary ROT0
-platform driver would not automatically provide usable DMA merely by setting
-its 32-bit mask. Read-only sysfs currently shows DLA0 in IOMMU group 19 with a
-SMMU link, whereas ROT0 has neither link. Absence of a link on an unbound device
-does not prove absence of an IORT mapping, DMA requester or physical capability.
-The pending live-table audit must also include **IORT**, before choosing a
-SROOT DMA device/domain and satisfying the Windows logical window
-`0xe0000000..0xffffffff`.
+**Live-table finding:** binding an ordinary ROT0 platform driver would not
+provide usable DMA merely by setting its 32-bit mask. DLA0 currently has an
+IOMMU link; ROT0 does not. The complete live IORT nevertheless explicitly maps
+both devices, through different SMMUs:
+
+| Named component / node offset | Address bits | IORT cache / memory flags | Single-map output Stream ID | SMMUv3 node / base |
+|---|---:|---|---:|---|
+| `\_SB_.DLA0` / `0x930` | 36 | 1 / 3 | 43 (`0x2b`) | `0xa0` / `0x35000000` |
+| `\_SB_.ROT0` / `0xc50` | 32 | 0 / 0 | 1 | `0x1a8` / `0x14900000` |
+| `\_SB_.SCP0` / `0x12e0` | 32 | 1 / 3 | 96 (`0x60`) | `0x1a8` / `0x14900000` |
+
+All three mappings have SINGLE_MAPPING set and refer to table-relative node
+boundaries. ROT0's IORT memory properties describe noncoherent memory; they
+are evidence to investigate a noncoherent DMA setup, **not** a substitute for
+its missing ACPI `_CCA`. The firmware-declared requester is now identified,
+but physical DMA operation and cache maintenance remain untested. The Windows
+logical allocation window `0xe0000000..0xffffffff` still needs implementation
+through the ROT0 requester rather than through DLA0's domain.
 
 Do not add `_CCA=1`, force direct DMA or reuse DLA0's IOMMU domain on the basis
-of shared chip identity. Cache coherency and the actual SROOT DMA requester
-still need evidence. The Windows allocator's returned logical/physical address
+of shared chip identity. The firmware-declared SROOT requester is identified;
+physical DMA operation remains untested. Windows explicitly requests uncached
+common-buffer memory, supporting a noncoherent Linux configuration. A scoped
+kernel patch is available in [Linux backend](linux-backend.md), but is not installed. The Windows allocator's returned logical/physical address
 separation remains relevant; see [SROOT transport](sroot-transport.md).
 
 ## Address discrepancy requiring resolution
@@ -153,16 +167,15 @@ not sufficient grounds to request/map unadvertised physical addresses.
 
 ## Remaining live verification
 
-1. Obtain a read-only dump of current DSDT, **IORT** and **all** SSDTs, including dynamically
-   loaded tables if present, and compare hashes to this candidate manifest.
-2. Re-audit any differences on the DLA and ROT0/parent power paths before binding. ACPI can
-   perform power transitions before a driver's probe callback executes.
-3. Establish the live hardware profile/aperture and remapper mode independently.
-4. Only then attach MMIO, power/reset and bounded DMA backends, boot the firmware,
-   verify ping/version, and proceed to task submission and numerical inference.
+1. Live table collection, identity comparison and DLA/ROT0 ancestor-power
+   namespace review are complete. No changed AML or dynamic SSDT was found.
+2. The proposed noncoherent ROT0 quirk is scoped and build-tested. Integrate
+   it into a recoverable kernel build and verify normal DMA configuration.
+3. Establish live remapper/boot state and implement bounded Linux DMA/IRQ/MMIO
+   backends before firmware boot, ping/version, tasks and numerical inference.
 
-The already-running read-only pkexec copy awaits system authentication. It has
-not produced a live dump. No NPU driver was bound and no NPU MMIO was issued.
+No hardware backend has been attached; offline firmware execution is not a
+physical NPU boot or inference result.
 
 ## Reproducible live collection and standard IORT decoding
 
@@ -175,20 +188,16 @@ snapshot guarantee. No AML is evaluated, device bound or register accessed.
 When invoked with sudo, it reads the table bytes first and drops to the invoking
 user before creating analysis files. Existing snapshot directories are refused.
 
-After the outstanding authentication interaction has been resolved, the complete
-collection command from the repository is:
+For a fresh snapshot, use a new destination directory:
 
 ```sh
 sudo python3 scripts/collect_acpi.py sources/acpi-live
 ```
 
-The older pending copy request remains unchanged and covers only DSDT/SSDT;
-it is not sufficient for the IORT audit. No second authentication dialog was
-started. A direct unprivileged trial of the new command currently fails reading
-`/sys/firmware/acpi/tables/DSDT` with PermissionError and creates no snapshot.
+Authentication completed and the full collection succeeded. The earlier six-table
+copy is superseded by `sources/acpi-live` including IORT.
 
-Use the installed ACPICA disassembler instead of introducing a custom IORT
-parser:
+First use the installed ACPICA disassembler:
 
 ```sh
 for table in sources/acpi-live/*.aml; do
@@ -223,4 +232,25 @@ snapshots, malformed headers/lengths/checksums and missing IORT. It additionally
 passes a wholly synthetic revision-6 named-component/SMMUv3 fixture through the
 installed iasl and verifies decoded fields without warnings. This tests the
 collection/tool workflow; none of its paths, mappings or addresses are evidence
-about the P16. Live identity and DMA routing remain unverified.
+about the P16. Live identity and firmware-declared routing are now established;
+physical DMA behavior remains unverified.
+
+## Complete live IORT decode
+
+On this actual table, iasl 20251212 stopped after the first named component
+with `Invalid zero length subtable`, despite returning zero. The read-only
+`scripts/inspect_iort.py` therefore walks node lengths using the pinned kernel
+layouts, rather than walking padding as nodes. It checks signature, total
+length, checksum, each node and mapping bound, NUL-terminated component names,
+and every output reference against actual node boundaries. It consumes all
+6160 bytes and all **93 nodes**. The initial five SMMUv3 bases agree with the
+usable iasl prefix. Reproduce without privileges:
+
+```sh
+python3 scripts/inspect_iort.py sources/acpi-live/IORT.aml
+python3 scripts/audit_acpi_namespace.py sources/acpi-live
+python3 scripts/audit_acpi_namespace.py sources/acpi-live --target '\_SB_.ROT0'
+```
+
+This decoder reports firmware declarations; it does not resolve Linux DMA
+policy, exercise a requester, or establish physical coherency.
