@@ -1798,3 +1798,14 @@ nonempty outputs, with explicit empty-output and validation policy. The separate
 `0xd46450` query recognizes tag 1 and returns raw bytes 2 then 1, without proven
 semantic names. No live ring consumer or inference completion is established.
 See [history evidence](region5-history.md) for tests and source boundaries.
+
+
+## Raw Region-5 producer publication
+
+Original producer `0x106ab6`, invoked explicitly after reset/registration, now
+verifies record-before-header DMA ordering, both firmware-updated cursors,
+collision/wrap cases and held-completion resumption without function stubs. A
+raw-image wrap quirk writes a record excluded by Windows history and overwritten
+on the next call. It is not a demonstrated physical/SROOT-image bug. Field
+semantics, caller behavior and hardware remain open; see
+[producer evidence](region5-producer.md).

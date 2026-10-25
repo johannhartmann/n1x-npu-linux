@@ -17,8 +17,10 @@ The original cache helper receives the whole 1-MiB allocation and argument 0
 before the read. The ring itself starts at allocation +16 and contains two
 little-endian u32 byte offsets followed by 52-byte opaque records. Subtracting
 8 and dividing by 52 gives the first and second indices; `(ring_size-8)/52`
-gives the capacity. Their producer/consumer ownership and update ordering
-have not been established here, so they are not labeled read/write indices.
+gives the capacity. The separate [raw-producer test](region5-producer.md) now shows that firmware
+updates both words, with a wrap-path quirk. This reader retains neutral
+first/second names; physical publication atomicity and stable capture remain
+unproven.
 
 The observed recent-history selection is:
 
@@ -86,6 +88,6 @@ capacity wrap boundary. All addresses, cache effects and contents are synthetic.
 The component compiles against both current and isolated test-kernel headers.
 The source/object manifest for the target check is in
 `results/npu1-region5-history-build/`. No module is loaded or changed by these
-tests and no live ring is read. Firmware record production, semantic fields,
-publication/coherency on hardware, full initialization and inference remain
-unverified. See [region-5 setup](region5.md) for the separate registration phase.
+tests and no live ring is read. The isolated raw producer is now tested separately, including its wrap quirk.
+Its periodic caller, semantic fields, publication/coherency on hardware, full
+initialization and inference remain unverified. See [region-5 setup](region5.md) for the separate registration phase.

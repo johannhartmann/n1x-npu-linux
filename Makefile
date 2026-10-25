@@ -18,6 +18,7 @@ test-vendor: test
 	venv/bin/python scripts/emulate_region5_setup.py
 	venv/bin/python scripts/test_linux_region5.py
 	venv/bin/python scripts/test_region5_history.py
+	venv/bin/python scripts/test_region5_producer.py
 	venv/bin/python scripts/test_hfrp_irq.py
 	venv/bin/python scripts/emulate_windows_ping.py
 	venv/bin/python scripts/test_npu_dma_domains.py

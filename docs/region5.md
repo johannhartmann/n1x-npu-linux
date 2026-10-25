@@ -122,3 +122,13 @@ The original Windows recent-history reader is now reproduced for immutable CPU
 snapshots, including 52-byte records, a 50-record history limit and wrap copying.
 It does not consume entries, and the record fields remain opaque. This is not
 a live ring reader or completion proof. See [history evidence](region5-history.md).
+
+
+## Isolated raw producer and wrap behavior
+
+The raw HAL-1 producer is now exercised separately through original DMA code.
+It publishes record data before the header under the explicit completion model,
+but a wrap-path quirk writes a record that the Windows-matched history view does
+not expose before the next call overwrites it. This does not establish behavior
+of the opaque live image. See [producer evidence](region5-producer.md); no
+physical ring, lossless event stream or completion claim is made.
