@@ -1332,3 +1332,53 @@ execution status and fence observation: neither the acceptance response nor an
 unchanged fence can establish completed/quiescent work. Successful task execution,
 real firmware boot, hardware status transitions, DMA/IOMMU/coherency and kernel
 interrupt handling remain unverified. No NPU device was accessed.
+
+## Diagnostic INIT-IL through the initialized scheduler and register DMA
+
+The integration test now extracts the **original network and instruction blobs**
+from the hash-pinned builtin diagnostic NVDA loadable (SHA-256 51d26d...c28543,
+listed above). It uses the same bounded provisional field projection as the
+existing diagnostic inspection. The 128-byte task0-addr0 network is unchanged,
+padded to the already observed 256-byte firmware fetch extent; the complete
+124,928-byte task0-ib instruction blob is unchanged.
+
+The Linux C task and address-list serializers build a nine-entry descriptor
+layout in synthetic host RAM. Address 0 points at the network and address 1 at
+the instruction blob. The remaining seven entries are explicitly **zero and
+not provided**: this test stops before their use and does not represent the
+full diagnostic allocation layout. Host backing is 125,952 bytes, page-mapped
+without overlapping emulator stop memory. The DMA model still bounds every
+transfer to the explicit payload, not merely the rounded mapping size.
+
+The full original path executes: reset, C method send, machine trap, descriptor
+DMA, queue insertion, C ACK, mret, scheduler task pickup, descriptor reload,
+address-list fetch, network fetch, opcode table setup and diagnostic INIT-IL.
+No firmware function is stubbed and the code region remains byte-for-byte
+identical to the raw image. There are **15** programmed DMA commands: eight
+for two 60-byte descriptor fetches, two for the 72-byte address list, four for
+the 256-byte network and one 256-byte instruction-cache read at IB+122880.
+
+The test supplies value **1** at internal engine offsets **0x7008, 0x5000 and
+0x6000** immediately before scheduler resumption. Original INIT opcode-3
+handlers read those three values once each. Execution reaches the checkpoint
+at **0x101052**, immediately after the INIT slice returns, with **status 0**.
+The final cache fetch programs command 0x2600, source HOST+1024+122880,
+destination DMEM 0x184400 and length 256. All transfers are reads; the original
+host payload, including the untouched fence, is checked byte-for-byte.
+
+Only the submission response 0x702 has arrived at this checkpoint. Queue count
+is still one, task state still three, and no execution completion or fence is
+claimed. The checkpoint is an explicit observer stop in original code, not a
+firmware return or completion event.
+
+With the supplied engine-ready values omitted, original code remains polling
+0x7008 through the observation budget, never reaches 0x5000 or the checkpoint,
+and retains the queued/running task. This revalidates readiness dependence in
+the complete scheduler context rather than only the earlier isolated handler.
+It is still a synthetic hardware input, not measured readiness or a timeout.
+
+Further network processing, the missing diagnostic allocations, accelerator
+programming, numerical output and complete task success remain unverified.
+This is a complete software path **to INIT-IL**, not a completed diagnostic or
+physical inference. ACPI/IORT, real DMA and IRQ routing, and opaque SROOT boot
+acceptance remain separate hardware-backend prerequisites.

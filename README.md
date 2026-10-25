@@ -38,7 +38,10 @@ The Linux C task descriptor also reaches the original firmware queue through
 this path; an invalid version is rejected without enqueue. Acceptance does not
 establish successful execution. A deliberately invalid network now also runs
 through the original scheduler: it produces a separate execution-error response,
-skips its fence and is dequeued. Physical boot, DMA and IRQ delivery remain untested. The HAL-1 word uploader
+skips its fence and is dequeued. The original diagnostic network/instruction
+blobs reach INIT-IL through this same path, under explicit synthetic readiness
+values; the test stops before further model processing. Physical boot, DMA and
+IRQ delivery remain untested. The HAL-1 word uploader
 also matches Windows across 16,839 callback writes, and its shared core-selection
 routine and 78 accessor cases are verified. Physical boot remains unverified. Auxiliary-driver selection is traced below.
 HAL-1 common task headers and UMD version strides are now revalidated;

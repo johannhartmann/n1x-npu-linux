@@ -14,6 +14,7 @@ from emulate_firmware_commands import run as firmware, BLOB_HASH, MMIO, HOST, AC
 from emulate_profile1_commands import run as firmware_profile1, PROFILE1_HASH
 from test_core_control import IO, WRITE, READ, DELAY
 from test_task_descriptor import Args as TaskArgs
+from inspect_loadable import Buffer
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -291,6 +292,56 @@ def main():
     assert struct.unpack_from('<I', bytes.fromhex(stalled_task['queue0']), 20)[0] == 1
     assert struct.unpack_from('<I', bytes.fromhex(stalled_task['first_task_slot']), 124)[0] == 3
     assert struct.unpack_from('<I', bytes.fromhex(stalled_task['host_payload_final']), 768)[0] == 0xdeadbeef
+    diagnostic_data = (ROOT/'sources/diagnostic-verified.nvda').read_bytes()
+    assert hashlib.sha256(diagnostic_data).hexdigest() == '51d26d83317807984d6a4b29be68e6e370175a0a0bd30fad2179a057e3c28543'
+    view = Buffer(diagnostic_data)
+    diagnostic_blobs = {}
+    for table in view.tables(view.u('<I', 0), 5):
+        extent = view.vector(table, 5, 1)
+        diagnostic_blobs[view.string(table, 0)] = diagnostic_data[extent.start:extent.stop]
+    network, ib = diagnostic_blobs['task0-addr0'], diagnostic_blobs['task0-ib']
+    assert len(network) == 128 and len(ib) == 124928
+    diagnostic_args = TaskArgs(0, HOST+256, 1000000, 9)
+    assert build_fenced(task, len(task), ctypes.byref(diagnostic_args), HOST+768, 0x12345678) == 0
+    diagnostic_payload = bytearray(1024+len(ib))
+    diagnostic_payload[:256] = task.raw
+    addresses = (ctypes.c_uint64*9)(HOST+512, HOST+1024, 0, 0, 0, 0, 0, 0, 0)
+    assert build_addresses(address_bytes, len(address_bytes), addresses, 9) == 0
+    diagnostic_payload[256:512] = address_bytes.raw
+    diagnostic_payload[512:640] = network
+    struct.pack_into('<I', diagnostic_payload, 768, 0xdeadbeef)
+    diagnostic_payload[1024:] = ib
+    captured.clear()
+    initialized_diagnostic = firmware_profile1(profile1, method=active_method,
+                                               host_payload=bytes(diagnostic_payload),
+                                               host_handler=initialized_interrupt, host_submit=submit,
+                                               boot_from_reset=True, via_trap=True, dma_register_model=True,
+                                               resume_scheduler=True, scheduler_checkpoint=0x101052,
+                                               scheduler_registers={0x7008: 1, 0x5000: 1, 0x6000: 1})
+    assert initialized_diagnostic['scheduler_checkpoint_reached']
+    assert initialized_diagnostic['checkpoint_status'] == 0 and initialized_diagnostic['pc'] == '0x101052'
+    assert initialized_diagnostic['firmware_code_unmodified'] and initialized_diagnostic['function_stubs'] == []
+    assert initialized_diagnostic['scheduler_engine_reads'] == {'0x7008': 1, '0x5000': 1, '0x6000': 1}
+    assert [row[2] for row in captured] == [(0x702, HOST >> 8)]
+    assert struct.unpack_from('<I', bytes.fromhex(initialized_diagnostic['queue0']), 20)[0] == 1
+    assert struct.unpack_from('<I', bytes.fromhex(initialized_diagnostic['first_task_slot']), 124)[0] == 3
+    assert len(initialized_diagnostic['dma_commands']) == 15
+    assert all(item['direction'] == 'read' for item in initialized_diagnostic['dma_commands'])
+    assert bytes.fromhex(initialized_diagnostic['host_payload_final']) == bytes(diagnostic_payload)
+    assert initialized_diagnostic['dma_commands'][-1] == {
+        'command': 0x2600, 'source': HOST+1024+122880, 'destination': 0x184400,
+        'bytes': 256, 'direction': 'read'}
+    captured.clear()
+    unready_diagnostic = firmware_profile1(profile1, method=active_method,
+                                           host_payload=bytes(diagnostic_payload),
+                                           host_handler=initialized_interrupt, host_submit=submit,
+                                           boot_from_reset=True, via_trap=True, dma_register_model=True,
+                                           resume_scheduler=True, scheduler_checkpoint=0x101052)
+    assert not unready_diagnostic['scheduler_checkpoint_reached']
+    assert unready_diagnostic['scheduler_engine_reads']['0x7008'] > 1000
+    assert '0x5000' not in unready_diagnostic['scheduler_engine_reads']
+    assert [row[2] for row in captured] == [(0x702, HOST >> 8)]
+    assert struct.unpack_from('<I', bytes.fromhex(unready_diagnostic['queue0']), 20)[0] == 1
     print(json.dumps({'scope': 'Linux C response capture/clear/ACK with synthetic IRQSTAT and real FW mailbox code',
                       'ordered_callback_count': len(expected),
                       'persistent_hal1_commands': len(sequence),
@@ -306,6 +357,9 @@ def main():
                       'task_execution_error_distinct_from_submission_ack': True,
                       'execution_error_skips_fence_and_dequeues_task': True,
                       'unacknowledged_reset_retains_running_task': True,
+                      'diagnostic_init_il_reached_from_original_scheduler': True,
+                      'diagnostic_init_status': initialized_diagnostic['checkpoint_status'],
+                      'missing_engine_ready_blocks_diagnostic_init': True,
                       'firmware_rearms_swgen1_before_each_reply': True,
                       'persistent_commands_use_linux_method_sender': True,
                       'suppressed_mask_set_blocks_delivery': True, 'error_prefixes_checked': 6,
