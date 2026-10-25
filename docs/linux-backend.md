@@ -597,8 +597,8 @@ sudo rmmod n1x_npu_observe
 sudo install -Dm644 sources/dla-p16-sroot-v0.bin \
   /usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin
 # Use the module built for npu1, not the current-kernel build in driver/:
-sudo insmod results/npu1-bootstrap-ping-build/driver/n1x_npu_bootstrap.ko \
-  enable_upload=1 enable_ping=1
+sudo insmod results/npu1-bootstrap-control-build/driver/n1x_npu_bootstrap.ko \
+  enable_upload=1 enable_ping=1 enable_config_snapshot=1
 sudo cat /sys/bus/platform/devices/NVDA200A:00/status
 # This is the one write trigger; it requires retention/reboot afterward:
 printf 'upload\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/upload
@@ -646,8 +646,9 @@ whole-device DMA quiescence is not established.
 Only the additional logical DLA registers required by this phase are admitted:
 reads `0x68`, `0xd28`, `0xd2c`; writes `0x68`, `0x6c`, `0xd24` (plus the earlier
 read-only idle offset). They use the recovered Windows-1 remapper and bounds.
-There is still no CPUCTL/reset write, IRQ handler, mailbox ACK, full IRQ enable,
-region/configuration initialization, task submission or inference UAPI. The
+The ping phase itself sends no mailbox ACK; the optional control phase below
+adds response handling. There is still no CPUCTL/reset write, OS IRQ handler,
+full IRQ enable, region/configuration initialization, task submission or inference UAPI. The
 success path of the raw-firmware model emits no response interrupt; live
 interrupt behavior for the opaque loaded image still needs qualification.
 
@@ -663,8 +664,9 @@ sudo cat /sys/bus/platform/devices/NVDA200A:00/status
 Decide to enable the optional phase **before** the upload: after any upload
 attempt the module cannot normally be unloaded to change its load parameters.
 The earlier pending module-load example now includes both options and uses the
-current build at `results/npu1-bootstrap-ping-build/`. The old upload-only
-artifact remains a historical build, not the current ping-capable module.
+ping-capable build originally at `results/npu1-bootstrap-ping-build/`. The current
+control-capable build below supersedes that artifact. Earlier upload-only and
+ping-only artifacts are historical builds.
 
 Validation: ten complete original Windows ping/direct-wrapper cases (six
 completion boundaries and four failures), original reset/trap/DMA firmware runs
@@ -676,3 +678,62 @@ vermagic, source-copy hashes and no aliases checked. The new manifest records
 the initial failed build and corrected successful build. No module was loaded,
 no firmware installed and no physical ping/upload performed. These tests validate
 software contracts under mocks; hardware boot and inference remain open.
+
+### Optional command-22 configuration export (built, not yet run)
+
+The bootstrap module now offers a third immutable option,
+`enable_config_snapshot=1`, and root/CAP_SYS_RAWIO trigger `read_config` accepting
+`read`. It requires both endpoint bindings and this boot's **verified DMA-word
+ping**. There is no automatic export and no configuration import/write-settings
+attribute. The updated pending module-load command above enables all three
+independently triggered phases; select options before the first upload since
+module/runtime references are retained afterward.
+
+The snapshot phase validates DLA's translated/coherent DMA gate again, allocates
+its own zeroed 4096-byte coherent buffer, and checks nonzero 256-byte alignment
+and the entire 36-bit address extent. It issues command 22 through the new
+`n1x_dla_control_command` pipeline. This pipeline prechecks for an outstanding
+SWGEN1 reply, sends the response-enabled control method, polls, captures/clears/
+ACKs, and requires matching command/address and zero status/upper byte before
+accepting message 2. Unlike the original ping's word-only path, this phase
+explicitly requests a mailbox response.
+
+The SROOT upload and ping buffers are separate and remain retained. The config
+buffer is also retained after any control-transaction attempt, even stale-reply
+or pre-send failures. Only allocation/range failures before the transaction can
+free it. After a successful matched response, dma_rmb precedes copying the first
+252 raw bytes into a separate CPU snapshot. Status reports attempt, last error,
+raw reply/validity and snapshot validity. `config_snapshot` is root-readable
+hexadecimal (504 hex digits plus newline) only after success; prior reads return
+ENODATA and never fetch hardware. No field names, physical units or atomicity
+of the firmware's internal snapshot are inferred.
+
+The required additional logical DLA register accesses are status/mailbox reads
+`8/0x40/0x44` and IRQ-clear/mailbox writes `4/0x40`, alongside the existing
+restricted mask/method callbacks. No CPUCTL/reset register, OS IRQ handler or
+GSI-role assumption is added. Firmware rearming SWGEN1 and physical IRQ delivery
+for the opaque SROOT image remain unqualified. The optional manual sequence is
+therefore still a pending bring-up experiment, not production configuration:
+
+```sh
+# Only after this boot's upload and DMA-word ping status are successful:
+printf 'read\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/read_config
+sudo cat /sys/bus/platform/devices/NVDA200A:00/config_snapshot
+sudo cat /sys/bus/platform/devices/NVDA200A:00/status
+```
+
+`test_linux_config_snapshot.py` runs the exact Linux snapshot function linked
+to the actual control/sender/response C pipeline for 26 lifecycle cases. It
+checks disabled/failed-ping gating, wrong DMA extent, all ten I/O failures,
+stale/rejected/mismatched responses, prevention of repeat attempts, early-only
+freeing, and no publication of failed snapshots. The independent original
+firmware control test checks all five supported control commands through mret.
+The 21 upload, 29 ping and 2592 DMA/MMIO cases still pass. These are mocks of
+OS/device effects, not physical tests.
+
+Both kernel module builds pass. Current source/artifact hashes and target
+vermagic are checked in `results/npu1-bootstrap-control-build/source-manifest.json`.
+Earlier upload-only/ping-only build directories describe earlier sources, not
+this current module. No bootstrap has been loaded, no firmware installed and no
+upload, ping or config read has occurred on the machine. Full initialization,
+IRQ routing/recovery and inference remain incomplete.

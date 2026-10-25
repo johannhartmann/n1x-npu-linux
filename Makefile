@@ -13,6 +13,8 @@ test-vendor: test
 	venv/bin/python scripts/test_linux_bootstrap.py
 	venv/bin/python scripts/test_linux_bootstrap_guards.py
 	venv/bin/python scripts/test_linux_bootstrap_ping.py
+	venv/bin/python scripts/test_control_command.py
+	venv/bin/python scripts/test_linux_config_snapshot.py
 	venv/bin/python scripts/emulate_windows_ping.py
 	venv/bin/python scripts/test_npu_dma_domains.py
 	venv/bin/python scripts/test_sroot_uki_verifier.py
@@ -78,7 +80,7 @@ test-vendor: test
 	venv/bin/python scripts/test_il_slice.py
 	venv/bin/python scripts/emulate_init_il.py
 kernel-check:
-	$(MAKE) -C /usr/lib/modules/$(shell uname -r)/build M=$(CURDIR)/driver n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o n1x_sroot.o
+	$(MAKE) -C /usr/lib/modules/$(shell uname -r)/build M=$(CURDIR)/driver n1x_dla_control.o n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o n1x_sroot.o
 clean:
 	rm -f tests/test_firmware
 

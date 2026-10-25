@@ -22,7 +22,8 @@ now connects that phase to guarded Linux MMIO and SROOT DMA storage. It builds
 for the isolated test kernel but has not been installed or run. It is a
 one-attempt experiment requiring retained DMA storage/reboot, and does not
 complete IRQ/configuration initialization or inference. An additional opt-in
-DMA-word ping phase is implemented but also remains untested on hardware.
+DMA-word ping phase and command-22 configuration export are implemented but
+also remain untested on hardware. Configuration import is not exposed.
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
 device nor write hardware registers.
 

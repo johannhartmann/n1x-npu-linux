@@ -1736,3 +1736,35 @@ recovery or DMA quiescence. The Linux sender must propagate callback errors
 and retain potentially published storage; it does not copy those behaviors.
 The asynchronous wrapper branch, actual Windows coherency, opaque SROOT image
 identity, hardware ping and inference remain unverified.
+
+## Connected C control transactions through original HAL-1 / ACK / mret
+
+`n1x_dla_control_command` connects the C sender, response capture/clear/ACK and
+field decoder for the verified DMA control commands 11/21/22/23/24. Task command
+7 is explicitly rejected: its `0x702` response establishes only acceptance.
+The helper rejects a preexisting SWGEN1 response without consuming it, sends
+`0x300 | command` with the aligned DMA address >> 8, and requires matching
+command/data, upper byte zero, status zero and message 2. Raw responses remain
+available when interpretation fails. Invalid input has no I/O; later result
+state is progressive. An attempted command's storage cannot be freed solely
+from any return, including success or an ACK error.
+
+`test_control_command.py` executes that whole host C path against original raw
+HAL-1 reset/trap/DMA/handler code for all five commands. The modeled device yields
+**after** the IRQ-raising store commits, before the firmware's ACK wait. Stopping
+inside that store's memory hook would replay it on resume and spuriously reassert
+pending; the test uses a one-shot next-instruction hook instead. C then reads,
+clears and ACKs the actual firmware mailboxes. The test separately resumes the
+original firmware, observes mret at `0x100324`, checks restoration of all x1..x31,
+checks that SWGEN1 stays cleared, and rechecks unchanged firmware code bytes.
+There are no firmware function stubs.
+
+Observed control replies are `0xb02`, `0x1502`, `0x1602`, `0x1702`, `0x1802`,
+all preserving the descriptor address encoding. Region 5 uses three modeled DMA
+operations; config import/export each use 63; low-power import/export each use
+10. Tests compare actual imported/exported payload bytes and export-tail
+preservation. Ten host I/O fault positions, 13 invalid-input cases, stale-response
+and send/response timeouts, delayed readiness, firmware-error and mismatched
+reply cases are also checked. These are software contracts under explicit fake
+MMIO/FIFO/DMA/IRQ effects, not proof of live coherency, opaque-image identity,
+full initialization, task completion, whole-device quiescence or inference.

@@ -102,10 +102,10 @@ int main(void)
  ep=reset(true);ep.bytes=179;assert(n1x_boot_offset(&ep,192,true,&offset)==-ERANGE);
  ep=reset(false);assert(!n1x_boot_offset(&ep,0x4c,false,&offset) && offset==0x204c);
  assert(n1x_boot_offset(&ep,0x4c,true,&offset)==-EINVAL);
- assert(n1x_boot_offset(&ep,0x40,false,&offset)==-EINVAL);
+ assert(n1x_boot_offset(&ep,0xb88,false,&offset)==-EINVAL);
  for(u32 logical=0;logical<0x1000;logical+=4)for(int write=0;write<2;write++){
- bool allowed=write?(logical==0xd24||logical==0x6c||logical==0x68):
- (logical==0x4c||logical==0xd2c||logical==0xd28||logical==0x68);
+ bool allowed=write?(logical==0xd24||logical==0x6c||logical==0x68||logical==4||logical==0x40):
+ (logical==0x4c||logical==0xd2c||logical==0xd28||logical==0x68||logical==8||logical==0x40||logical==0x44);
  assert((n1x_boot_offset(&ep,logical,write,&offset)==0)==allowed);cases++;}
  ep.bytes=0x204f;assert(n1x_boot_offset(&ep,0x4c,false,&offset)==-ERANGE);
  printf("%d DMA/MMIO guard cases plus machine/kernel and resource-end checks passed; no hardware access\n",cases);

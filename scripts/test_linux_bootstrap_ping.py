@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     function = source[source.index('static int n1x_boot_ping_once('):
-                      source.index('static ssize_t ping_store(')]
+                      source.index('/* Caller holds boot_lock; snapshot export')]
     harness = r'''
 #include <assert.h>
 #include <stdbool.h>

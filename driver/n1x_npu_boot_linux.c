@@ -21,6 +21,7 @@
 #include <linux/utsname.h>
 #include "n1x_dla_boot.h"
 #include "n1x_dla_command.h"
+#include "n1x_dla_control.h"
 #include "n1x_dla_registers.h"
 
 #define N1X_BOOT_KERNEL "7.2.8-23-omarchy-p16-asus-npu1"
@@ -34,6 +35,10 @@ MODULE_PARM_DESC(enable_upload, "Permit root's explicit one-attempt upload trigg
 static bool enable_ping;
 module_param(enable_ping, bool, 0400);
 MODULE_PARM_DESC(enable_ping, "Permit one explicit DMA-word ping after successful upload phase (default false)");
+
+static bool enable_config_snapshot;
+module_param(enable_config_snapshot, bool, 0400);
+MODULE_PARM_DESC(enable_config_snapshot, "Permit one explicit command-22 snapshot after DMA ping (default false)");
 
 struct n1x_boot_endpoint {
 	struct device *dev;
@@ -57,6 +62,14 @@ static struct {
 	bool attempted, verified;
 	int error;
 } boot_ping;
+static struct {
+	void *buffer;
+	dma_addr_t dma;
+	struct n1x_dla_control_result transaction;
+	u8 data[252];
+	bool attempted, valid;
+	int error;
+} boot_config;
 
 static bool n1x_boot_machine(void)
 {
@@ -111,11 +124,13 @@ static int n1x_boot_offset(struct n1x_boot_endpoint *endpoint, u32 logical,
 			return -ERANGE;
 		return 0;
 	}
-	/* Upload has no DLA writer. The separate opt-in ping uses only the
-	 * recovered route/mask/method registers; no core-start/reset/IRQ ACK.
+	/* Upload has no DLA writer. Opt-in ping/control phases use only recovered
+	 * route/mask/method/mailbox registers; no core-start or reset.
 	 */
-	if (write ? (logical != 0xd24 && logical != 0x6c && logical != 0x68) :
-	    (logical != 0x4c && logical != 0xd2c && logical != 0xd28 && logical != 0x68))
+	if (write ? (logical != 0xd24 && logical != 0x6c && logical != 0x68 &&
+		     logical != 4 && logical != 0x40) :
+	    (logical != 0x4c && logical != 0xd2c && logical != 0xd28 && logical != 0x68 &&
+	     logical != 8 && logical != 0x40 && logical != 0x44))
 		return -EINVAL;
 	return n1x_dla_register_offset(N1X_DLA_MAP_WINDOWS_1, logical,
 				       endpoint->bytes, offset);
@@ -325,6 +340,94 @@ free:
 	return err;
 }
 
+/* Caller holds boot_lock; snapshot export is not configuration mutation. */
+static int n1x_boot_read_config_once(void)
+{
+	struct n1x_dla_io io;
+	u64 maximum = DMA_BIT_MASK(36);
+	int err;
+
+	if (!enable_config_snapshot || !n1x_boot_machine())
+		return -EPERM;
+	if (!boot_sroot || !boot_dla || !boot_ping.verified)
+		return -ENODEV;
+	if (boot_config.attempted)
+		return -EALREADY;
+	err = n1x_boot_dma_gate(boot_dla);
+	if (err)
+		return err;
+	err = dma_set_mask_and_coherent(boot_dla->dev, maximum);
+	if (err)
+		return err;
+	boot_config.buffer = dma_alloc_coherent(boot_dla->dev, 4096,
+						&boot_config.dma, GFP_KERNEL);
+	if (!boot_config.buffer)
+		return -ENOMEM;
+	if (!boot_config.dma || (boot_config.dma & 255) || boot_config.dma > maximum ||
+	    4095 > maximum - boot_config.dma) {
+		err = -ERANGE;
+		goto free;
+	}
+	memset(boot_config.buffer, 0, 4096);
+	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+	dma_wmb();
+	/* Retain conservatively even on a stale-response/pre-send error. The
+	 * preceding upload already pins module/runtime references until reboot.
+	 */
+	boot_config.attempted = true;
+	err = n1x_dla_control_command(&io, 22, boot_config.dma, 5001, 1000,
+				       &boot_config.transaction);
+	if (err)
+		return err;
+	dma_rmb();
+	memcpy(boot_config.data, boot_config.buffer, sizeof(boot_config.data));
+	boot_config.valid = true;
+	return 0;
+free:
+	dma_free_coherent(boot_dla->dev, 4096, boot_config.buffer, boot_config.dma);
+	boot_config.buffer = NULL;
+	boot_config.dma = 0;
+	return err;
+}
+
+static ssize_t read_config_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	int err;
+
+	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "read"))
+		return -EPERM;
+	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev)
+		err = -ENODEV;
+	else
+		err = n1x_boot_read_config_once();
+	boot_config.error = err;
+	mutex_unlock(&boot_lock);
+	return err ? err : count;
+}
+static DEVICE_ATTR_WO(read_config);
+
+static ssize_t config_snapshot_show(struct device *dev, struct device_attribute *attr,
+				    char *buf)
+{
+	ssize_t size = 0;
+	unsigned int i;
+
+	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev || !boot_config.valid) {
+		size = -ENODATA;
+	} else {
+		for (i = 0; i < sizeof(boot_config.data); i++)
+			size += sysfs_emit_at(buf, size, "%02x", boot_config.data[i]);
+		size += sysfs_emit_at(buf, size, "\n");
+	}
+	mutex_unlock(&boot_lock);
+	return size;
+}
+static struct device_attribute dev_attr_config_snapshot =
+	__ATTR(config_snapshot, 0400, config_snapshot_show, NULL);
+
 static ssize_t ping_store(struct device *dev, struct device_attribute *attr,
 			  const char *buf, size_t count)
 {
@@ -367,16 +470,20 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 
 	mutex_lock(&boot_lock);
 	size = sysfs_emit(buf,
-		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u\n",
+		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u\n",
 		!!boot_dla, !!boot_sroot, enable_upload, boot_attempted, boot_error,
 		boot_result.reply_valid, boot_result.reply.header,
 		boot_result.idle_observed, !!boot_buffer, enable_ping, boot_ping.attempted,
-		boot_ping.error, boot_ping.verified, boot_ping.word, !!boot_ping.buffer);
+		boot_ping.error, boot_ping.verified, boot_ping.word, !!boot_ping.buffer,
+		enable_config_snapshot, boot_config.attempted, boot_config.error, boot_config.valid,
+		boot_config.transaction.response_valid, boot_config.transaction.response.word,
+		!!boot_config.buffer);
 	mutex_unlock(&boot_lock);
 	return size;
 }
 static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_show, NULL);
-static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_status.attr, NULL};
+static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
+	&dev_attr_config_snapshot.attr, &dev_attr_status.attr, NULL};
 ATTRIBUTE_GROUPS(boot);
 
 static int n1x_boot_probe(struct platform_device *pdev)
