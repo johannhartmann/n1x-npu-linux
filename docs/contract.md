@@ -1658,3 +1658,21 @@ block matches and response is **0x1702**. This validates encoding/import only;
 synthetic provider values are test inputs, not settings to publish on the P16.
 The serializer does not allocate or submit DMA and requires the eventual
 backend to establish the actual provider input and buffer lifetime.
+
+A subsequent comparison with the pinned L4T R38 header
+`drivers/video/tegra/host/nvdla/dla_os_interface.h` (SHA-256
+`e962bcaae697269981083196eed90a495949c636925d43ea4c398337de7c6162`)
+finds an exact structural counterpart: **`struct dla_lpwr_config`**, packed and
+aligned to four bytes, size 40, with `version` at 0,
+`idle_notification_enable` at 1, `idledelay_us` at 2 and 34 reserved bytes at 6.
+The same header numbers SET/GET_LPWR_CONFIG as **23/24**. The differential test
+now compiles that actual structure and asserts its size/offsets and command IDs.
+This makes low-power configuration the evidence-backed ABI correspondence;
+it does not establish the Windows provider field's physical value or prove
+microsecond semantics in the P16 firmware.
+
+One distinction remains explicit: L4T names disable as 2. A direct call to the
+Windows builder with context byte +0x47d=0 emits zero, but the observed common
+loader **skips this callback when that byte is zero**. Thus this test is not
+proof that Windows normally submits zero as a disable protocol value. Do not
+substitute L4T enums/units or apply timing values based solely on matching layout.

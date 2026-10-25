@@ -5,6 +5,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import struct
@@ -93,6 +94,26 @@ def main():
         subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
             '-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-Werror', '-I'+str(ROOT/'include'),
             str(ROOT/'driver/n1x_dla_command.c'), '-o', str(library)], check=True)
+        # Compile the actual GPL L4T layout as an independent structure check.
+        # Matching bytes/IDs do not prove matching field units on this P16.
+        header = ROOT/'sources/linux-nv-oot-r38/drivers/video/tegra/host/nvdla/dla_os_interface.h'
+        assert hashlib.sha256(header.read_bytes()).hexdigest() == 'e962bcaae697269981083196eed90a495949c636925d43ea4c398337de7c6162'
+        text = header.read_text()
+        assert re.search(r'DLA_CMD_SET_LPWR_CONFIG\s*=\s*23U', text)
+        assert re.search(r'DLA_CMD_GET_LPWR_CONFIG\s*=\s*24U', text)
+        structure = re.search(r'struct dla_lpwr_config \{.*?\} __packed __aligned\(4\);', text, re.S)[0]
+        layout = Path(tmp)/'layout.c'
+        layout.write_text('#include <stdint.h>\n#include <stddef.h>\n'
+                          '#define __packed __attribute__((packed))\n'
+                          '#define __aligned(n) __attribute__((aligned(n)))\n'+structure+
+                          '\n_Static_assert(sizeof(struct dla_lpwr_config)==40,"size");\n'
+                          '_Static_assert(offsetof(struct dla_lpwr_config, version)==0,"version");\n'
+                          '_Static_assert(offsetof(struct dla_lpwr_config, idle_notification_enable)==1,"flag");\n'
+                          '_Static_assert(offsetof(struct dla_lpwr_config, idledelay_us)==2,"delay");\n'
+                          '_Static_assert(offsetof(struct dla_lpwr_config, reserved)==6,"tail");\n'
+                          '_Static_assert(DLA_IDLE_NOTIFICATION_DISABLE==2,"different disable encoding");\n')
+        subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+['-Wall', '-Wextra', '-Werror',
+                        '-c', str(layout), '-o', str(Path(tmp)/'layout.o')], check=True)
         lib = ctypes.CDLL(str(library))
         build = lib.n1x_dla_build_command23
         build.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint8, ctypes.c_uint32, ctypes.c_uint32]
@@ -126,6 +147,8 @@ def main():
         assert result['interrupts'] == [(0x1702, HOST >> 8)] and observed == [record]
     print(json.dumps({'passed': True, 'hardware_access': False, 'differential_cases': len(rows),
                       'cases': rows, 'windows_allocation_failure_cases': 2, 'linux_preflight_cases': 2,
+                      'l4t_lpwr_layout_and_command_ids_match': True,
+                      'zero_flag_comparison': {'windows_builder_if_called_with_zero': 0, 'l4t_disable_enum': 2},
                       'limitations': ['OS allocation/copy/cache boundaries are synthetic',
                                       'Provider values are test inputs, not measured physical clock/timer values',
                                       'Raw HAL-1 firmware import runs unchanged under modeled DMA/reset/IRQ',
