@@ -341,3 +341,25 @@ of object+0x4648, or show its physical value. Other 0xc5b8-size query producers
 exist in this driver (including 0x1a7b348), so size matching alone is not
 sufficient to assign a hardware class. No numerical architecture/chip name is
 assigned to 0x23/0x25/0x26 from this evidence.
+
+### Adapter-class router before the private producer
+
+The direct caller chain continues at **0x19b0fd8**. It passes its second
+argument (adapter object) to original predicate **0xdca010**. That predicate
+returns true only when object+0x10 is **5** and object+0x14 is **2**. The router
+then calls 0x19d9a28, forwarding the query from its original third argument.
+Otherwise it calls **0x1a768f0**, passing a valid object only for kind 1 or 4
+with subtype 1; other combinations, including null, forward a null object.
+The latter dispatch has the other large private producer at 0x1a7b348.
+
+The KMD selector script additionally executes the original router and original
+predicate for the 20 combinations of kind {0,1,4,5,6} and subtype {0,1,2,3},
+plus null. All **21 routes** verify the selected destination and forwarded
+object/query arguments. Each stops at its selected downstream dispatcher;
+there is no modeled class predicate and no downstream OS interaction.
+
+This narrows the candidate to a distinct internal adapter class, but does not
+name that class or connect it to the ACPI NPU PDO. In particular, GPU versus
+NPU attribution still requires a constructor/OS callback registration link.
+The original producer-prefix tests remain conditional on that selected class;
+they are not physical adapter-query observations.

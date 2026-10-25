@@ -62,11 +62,29 @@ def main():
     cases=[run(pe,w) for w in (0,0x23,0x25,0x26,0xabcd0023,0xffffffff)]
     cases += [run(pe,0x23,length=n) for n in (0,0xc5b7,0xc5b9)]
     cases.append(run(pe,0x23,null=True))
+    routes=[]
+    for kind, subtype in [(k,s) for k in (0,1,4,5,6) for s in (0,1,2,3)]+[(None,None)]:
+        u=Uc(UC_ARCH_ARM64,UC_MODE_ARM)
+        for page in (0x19b0000,0x19b1000,0xdca000,0x19d9000,0x1a76000):
+            u.mem_map(BASE+page,4096);u.mem_write(BASE+page,pe.get_data(page,4096))
+        for address in (OBJ,QUERY,STACK,STOP):u.mem_map(address,0x20000)
+        if kind is not None:u.mem_write(OBJ+0x10,struct.pack('<II',kind,subtype))
+        alternate=(kind,subtype)==(5,2)
+        endpoint=BASE+(0x19d9a28 if alternate else 0x1a768f0)
+        u.reg_write(r.UC_ARM64_REG_X1,0 if kind is None else OBJ)
+        u.reg_write(r.UC_ARM64_REG_X2,QUERY)
+        u.reg_write(r.UC_ARM64_REG_SP,STACK+0x1f000);u.reg_write(r.UC_ARM64_REG_LR,STOP)
+        u.emu_start(BASE+0x19b0fd8,endpoint,count=1000)
+        assert u.reg_read(r.UC_ARM64_REG_PC)==endpoint
+        selected=alternate or (kind in (1,4) and subtype==1)
+        assert u.reg_read(r.UC_ARM64_REG_X0)==(OBJ if selected else 0)
+        assert u.reg_read(r.UC_ARM64_REG_X1)==QUERY
+        routes.append(dict(kind=kind,subtype=subtype,alternate=alternate,valid_object=selected))
     print(json.dumps(dict(passed=True,hardware_access=False,producer='0x19dfd58',
-                         source='object+0x4648',destination='private+0xec',cases=cases,
+                         source='object+0x4648',destination='private+0xec',cases=cases,router_cases=routes,
                          limitations=['Success executes only through 0x19dfe04; remaining producer code is not executed',
                                       'Other private-field builder and memset are modeled',
-                                      'Actual N1X object value and physical adapter-to-dispatch binding remain unresolved']),indent=2))
+                                      'Kind/subtype meaning, actual N1X object value and OS callback binding remain unresolved']),indent=2))
 
 
 if __name__=='__main__':main()
