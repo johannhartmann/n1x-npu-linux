@@ -450,9 +450,46 @@ v1 projection. That scan finds only the known runtime diagnostic (file offset
 an exhaustive model-format recognizer: packed, compressed, external or
 schema-incompatible models would not necessarily be recognized.
 
-The provisional blob projection reports raw slot-4 bytes `02 01 00` for all
-seven diagnostic contents. Their correspondence to the loader's materialized
-metadata is not established merely by matching byte positions. Accordingly no
-version bytes are patched, and a bypassed version gate is not used to claim
-that the old diagnostic can execute on this P16. A normally compiled model
-and its complete materialization contract are still required.
+The blob projection reports raw slot-4 bytes `02 01 00` for all seven
+diagnostic contents. The original-code materialization and getter audit below
+now establishes their correspondence to the loader metadata. No version bytes
+are patched, and a bypassed version gate is not used to claim that the old
+diagnostic can execute on this P16. A suitable model and its complete runtime
+contract are still required.
+
+### Original content materialization and retrieval
+
+The loadable factory 0x8bef8 calls constructor 0x7e2d8, which installs vtable
+0x669260. Its slots +0xc8 and +0xc0 point to deserializer 0x888a0 and content
+getter **0x8b350**. The deserializer calls content-vector materializer
+**0x88160** at 0x88a50. These are observed static links; the complete factory,
+constructor and deserializer are not executed by this particular test.
+
+`scripts/inspect_content_materialization.py` executes complete original
+0x88160 over the exact pinned diagnostic's root vector 5. It models C++
+map/string helpers, allocation, zeroing and copying; original FlatBuffer field
+reads, sizes, version extraction, loop and assignment instructions execute.
+The global special-symbol comparison is explicitly modeled as **no match**;
+the initializer for that global string at 0x6a5b10 remains unresolved.
+
+All seven contents allocate and copy exactly their declared blob size, with
+byte-for-byte verification and hashes. The network content **task0-addr0
+remains 128 bytes**; this stage does not synthesize its missing 128-byte suffix.
+The parser stores interface at map-node+0x60, raw slot 3 at +0x64, content
+version at +0x68, an additional version triple at +0x6b, size at +0x70 and the
+new content pointer at +0x78. The special-symbol branch can override slot 3
+to 8; its effect is excluded by the stated modeled comparison.
+
+For each parsed blob, the test next executes original getter **0x8b350**,
+with lookup and lock helpers modeled. It verifies the returned name, size,
+interface, both version triples and content pointer. It copies node+0x68 to
+output-metadata+0x30. The normal loader passes metadata storage at its own
+temporary+0x50, placing those bytes at **temporary+0x80**, the source consumed
+by the version branch above. Thus all seven diagnostic contents carry
+**interface 1, content version 2.1.0** through the actual materializer/getter
+instructions. This is stronger evidence than a guessed v1 schema projection.
+
+It is still only the content-vector stage plus its getter, not completed
+model loading or device execution. Other deserializer stages, later runtime
+transforms, the special-symbol path and a different opaque/raw firmware ABI
+remain open. No hardware address, model version or firmware code is changed.
