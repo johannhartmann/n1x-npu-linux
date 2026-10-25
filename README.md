@@ -79,8 +79,11 @@ fields 307 → 1), but its traced producer supplies MXM data, not a demonstrated
 complete board ROM. It does not resolve acquisition of the NPU policy; see
 [GSP export evidence](docs/hfrp-vbios.md#gsp-diagnostic-export-investigation).
 The matching GPU HAL's separate ROM reader uses a `GFWI` container. Its member
-layout is replayed offline, with a bounded file extractor available; acquiring
-the actual board container remains open. See [GFWI evidence](docs/hfrp-vbios.md#gsp-rom-source-gfwi-container).
+layout is replayed offline, with a bounded file extractor available. The
+packaged init task supplies one source branch from the WPR metadata's FRTS
+region; the handoff and ROM extraction are replayed with synthetic inputs.
+Acquiring the actual board container remains open. See
+[GFWI evidence](docs/hfrp-vbios.md#gsp-rom-source-gfwi-container).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
 device nor write hardware registers.
 

@@ -467,3 +467,87 @@ No valid raw GFWI container was found in the four inspected local files:
 Windows `nvlddmkm.sys`. This literal-signature scan does not rule out compressed
 or otherwise wrapped content. Acquisition of the actual source buffer remains
 open. No GPU object, NPU register, boot configuration or firmware was changed.
+
+### FRTS supplies the GFWI startup buffer
+
+The packaged init-task ELF `embedded-8-1d1000.elf`, extracted from the same
+615.78.08 GSP payload, has SHA256
+`46b99be784a02ec8221b25d6cadaa6bf03eeadd45f5234de286eefa78213f028`.
+Its startup path explains how the RM task receives the container. Addresses
+in this subsection belong to that init ELF unless explicitly labelled RM.
+
+`0x1002514` maps a 256-byte WPR metadata structure at the platform base plus
+the offset in `0x4002508`. Before using it, the function checks magic
+`0xdc3aae21371a60b3`, revision 1 and the verified marker
+`0xa0a0a0a0a0a0a0a0` at byte `0xf8`. Its remaining region-validation calls
+have not been replayed. The mapped metadata pointer is stored at `0x40025b0`.
+
+In the startup function `0x100496c`, the block `0x10052be..0x100530e` reads
+two u64 fields from that metadata: `+0x98` and `+0xa0`. These exactly match
+`GspFwWprMeta.frtsOffset` and `.frtsSize` in the installed public
+`gsp/gsp_fw_wpr_meta.h`; a C compile with `sizeof`/`offsetof` assertions
+confirmed 256 / `0x98` / `0xa0`. The next operation, when size is nonzero, is:
+
+```text
+map(target_address_space, &startup.frts_va,
+    platform_base + metadata.frtsOffset, metadata.frtsSize, flags=4)
+```
+
+The map wrapper at `0x10024ec` calls `0x1002412`, which rounds the physical
+range to 4 KiB pages and returns the mapping plus its original page offset.
+The base selector at `0x1001106` chooses global `0x40023b0` when flag
+`0x4002548` is zero, otherwise `0x40023c0`. These are firmware-side addresses
+and mapping semantics, not a demonstrated Linux CPU physical-memory mapping.
+
+The init task's outgoing block starts at `0x40020d8` and is 656 bytes
+(`0x290`). The send call is at `0x10058cc`. Its FRTS fields are:
+
+| Block offset | Init-task global | RM-task global | Meaning |
+| --- | --- | --- | --- |
+| `0x118` | `0x40021f0` | `0x4194928` | Mapped container address |
+| `0x120` | `0x40021f8` | `0x4194930` | FRTS offset from WPR metadata |
+| `0x128` | `0x4002200` | `0x4194938` | FRTS byte count |
+
+The RM entry at `0x1afab76` receives this block into `0x4194810` using its
+fifth entry argument as the receive handle. The original wrapper at
+`0x1b9fff0` issues a LibOS illegal-instruction trap (`0x0000` at `0x1ba0012`)
+with `t0=1`, `a0=3`, `a1=handle`, `a2=destination`, `a3=656`, `a4=1` and
+`a5=-1`. This is a firmware task interface, not a Linux ioctl.
+
+The RM block at `0x1ac9518` copies the received address and byte count into
+the previously identified GPU object at `+0x3500/+0x3508` and enables its
+`+0x378` flag. The actual GB20B ROM reader `0x11bcdc4` can then extract the
+GFWI ROM member. This establishes a source chain for that branch:
+
+```text
+WPR metadata FRTS range -> init-task mapping -> 656-byte task message
+  -> RM startup globals -> GPU object -> GFWI member -> ROM bytes
+```
+
+`scripts/test_gsp_frts_handoff.py` replays the original base selector (three
+cases), FRTS setup fragment (five cases, including zero size and map failure),
+RM receive wrapper, GPU-object installation block, and actual ROM HAL reader.
+Three successful synthetic cases verify byte-exact copying through that
+chain, including an unaligned FRTS offset. Mapping and logging are stubbed;
+the receive trap is replaced with a synthetic message transfer. The test
+does **not** execute the complete init task, secure boot, the sending syscall,
+or physical memory reads, and it does not prove which source branch runs on
+this machine. No vendor binary is modified or included in Git.
+
+```sh
+venv/bin/python scripts/test_gsp_frts_handoff.py \
+  --init-elf /path/to/embedded-8-1d1000.elf \
+  --rm-elf /path/to/embedded-9-1dd000.elf
+```
+
+The installed host source also decodes `NVGMC_SC_WPR_LAYOUT_FRTS_OFFSET`
+into `GspStaticConfigInfo.fwWprLayoutOffset.frtsOffset` in
+`_kgspStaticInfoKeyHandler` (`kernel_gsp.c`). This is a concrete next place
+to investigate the running firmware's offset. It does not expose the bytes
+by itself. `kgspPopulateWprMeta_GB10B` explicitly says the secure ACR code
+fills actual offsets on this integrated-GPU family; initial host allocation
+values must not be mistaken for the final firmware layout.
+
+Still needed: the running machine's final FRTS location and contents, or
+another verified acquisition of its matching ROM, followed by validation
+of its NPU BIT `l` tables. No valid board GFWI container has been acquired.
