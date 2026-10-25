@@ -4,6 +4,43 @@ The current `n1x_npu_observe.ko` is an observation module, not a working NPU
 inference driver. It builds against the running P16 kernel. It is not installed
 or auto-loaded and has no register-write implementation. Loading is explicit.
 
+## Live test-kernel and allocation result
+
+On 2026-10-25 the machine booted **7.2.8-23-omarchy-p16-asus-npu1**,
+boot ID `7620df9d-81b4-4d49-87e7-a38fac273619`. The preboot audit checked the
+installed UKI, fallback EFI digests, unchanged menu defaults, eight installed
+modules and boot-critical UKI contents. NVIDIA 615.78.08 answers `nvidia-smi`;
+the input subsystem enumerates the ASUS keyboard and touchpad. This does not
+replace the user's functional check of the display and input devices.
+
+At 17:49:27 local time, the prepared allocation-only procedure succeeded on
+both devices. Before changing anything, the domain selector verified each
+device was unbound, in a dedicated group, and attached to the expected SMMU.
+It changed only groups 19 (DLA) and 24 (SROOT) from identity to DMA. Group
+numbers are observations of this boot, not configuration constants.
+
+| Device | ACPI CCA seen / coherent | Linux coherent | Domain / Stream ID | Allocated extent |
+| --- | --- | --- | --- | --- |
+| `NVDA200A:00` | `1 / 1` | `1` | DMA (`3`) / `0x2b` | 4,096 bytes at `0x0ffffff000` |
+| `NVDA8600:00` | `1 / 0` | `0` | DMA (`3`) / `0x1` | 67,508 bytes at `0xfffe0000` |
+
+Both probes logged successful allocation/CPU readback and freed their buffers.
+The entire SROOT extent fits the required `0xe0000000..0xffffffff` window;
+both addresses meet the 256-byte alignment requirement. This verifies the
+missing-CCA quirk and allocator prerequisites on the real test kernel without
+forcing SROOT coherent. The loaded observation module has `test_dma=1` and
+`read_mmio=0`; both devices bind to `n1x-npu-observe`.
+
+The module neither published those addresses to hardware nor requested
+firmware. There was no NPU register read/write, mailbox transaction or device
+DMA transfer. Firmware bootstrap, DMA visibility to the device, completion,
+IRQ routing and numerical inference remain unverified. The root-terminal
+execution record and kernel messages are saved locally in ignored
+`results/npu1-allocation-live.jsonl` and `results/npu1-first-live-allocation.json`.
+
+The build/install sections below retain intermediate historical observations;
+their earlier pending-boot/allocation statements are superseded by this record.
+
 ## Scope and operation
 
 `driver/n1x_npu_linux.c` matches NVDA200A and NVDA8600 and refuses a probe unless
@@ -71,8 +108,8 @@ does not force direct DMA, mark the device coherent, choose a foreign domain,
 or alter an IORT mapping. It enables the normal kernel route to configure the
 firmware-declared requester and perform architecture cache handling.
 
-The patch is **not active in the running kernel**. It is included in the
-separately installed `npu1` test kernel/UKI; its physical boot is still pending.
+The patch is now **active in the running `npu1` test kernel**. The live
+allocation result above confirms the intended noncoherent SROOT configuration.
 It applies without fuzz to the inspected Linux 7.2.8 source. The patched
 `drivers/acpi/scan.c` compiles against the running kernel's headers/configuration.
 The actual patched coherency function also passes 13 mocked policy/precedence

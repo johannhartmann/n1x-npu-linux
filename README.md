@@ -16,6 +16,12 @@ An explicit-load Linux observation module now validates the audited P16
 resources and exposes DMA/IOMMU state. It has no write path; optional status
 reads require a load-time flag. A separate bootstrap experiment is described below;
 full boot initialization and inference are not implemented.
+The isolated `7.2.8-23-omarchy-p16-asus-npu1` kernel has now booted on the
+machine. Both dedicated IOMMU groups were switched to DMA domains, and the
+observation module successfully allocated, CPU-checked and freed buffers for
+both devices. SROOT now has the intended noncoherent DMA setup. This is a
+physical allocation result, not a device transfer or firmware-start result;
+see the [live qualification record](docs/linux-backend.md#live-test-kernel-and-allocation-result).
 The initial method-2 upload phase connects SROOT exchange, firmware status
 checking and the write-free DLA idle wait. A separate, manual bootstrap module
 now connects that phase to guarded Linux MMIO and SROOT DMA storage. It builds
