@@ -33,13 +33,20 @@ class Buffer:
   p=f+self.u('<I',f);n=self.u('<I',p)
   if n>4096 or p+4+n>=len(self.b) or self.b[p+4+n]!=0:raise ValueError('bad string')
   return self.b[p+4:p+4+n].decode('utf-8')
+ def strings(self,t,i):
+  result=[]
+  for f in self.vector(t,i):
+   p=f+self.u('<I',f);n=self.u('<I',p)
+   if n>4096 or p+4+n>=len(self.b) or self.b[p+4+n]!=0:raise ValueError('bad string vector entry')
+   result.append(self.b[p+4:p+4+n].decode('utf-8'))
+  return result
  def shortvec(self,t,i):return [self.u('<H',p) for p in self.vector(t,i,2)]
 
 def inspect(data):
  b=Buffer(data);assert data[4:8]==b'NVDA';r=b.u('<I',0);f=b.field(r,0)
  result={'identifier':'NVDA','version_bytes':list(data[f:f+3]),'sha256':hashlib.sha256(data).hexdigest(),'interpretation':'NVDLA v1 schema projection; modern extensions unverified','root_vector_lengths':{str(i):len(b.vector(r,i)) for i in range(1,9)}}
  result['tasks']=[dict(id=b.scalar(t,0,'<H'),interface=b.scalar(t,1,'<I'),instance=b.scalar(t,2,'<h'),address_ids=b.shortvec(t,3),pre_actions=b.shortvec(t,4),post_actions=b.shortvec(t,5)) for t in b.tables(r,1)]
- result['memory']=[dict(id=b.scalar(t,0,'<H'),domain=b.scalar(t,1,'<B'),flags=b.scalar(t,2,'<H'),size=b.scalar(t,3,'<Q'),alignment=b.scalar(t,4,'<I'),content_count=len(b.vector(t,5))) for t in b.tables(r,2)]
+ result['memory']=[dict(id=b.scalar(t,0,'<H'),domain=b.scalar(t,1,'<B'),flags=b.scalar(t,2,'<H'),size=b.scalar(t,3,'<Q'),alignment=b.scalar(t,4,'<I'),content_count=len(b.vector(t,5)),contents=b.strings(t,5),content_offsets=[b.u('<Q',p) for p in b.vector(t,6,8)]) for t in b.tables(r,2)]
  result['addresses']=[dict(id=b.scalar(t,0,'<H'),memory_id=b.scalar(t,1,'<H'),offset=b.scalar(t,2,'<Q'),size=b.scalar(t,3,'<Q')) for t in b.tables(r,3)]
  result['blobs']=[dict(name=b.string(t,0),size=b.scalar(t,1,'<Q'),data_bytes=len(b.vector(t,5,1))) for t in b.tables(r,5)]
  result['submits']=[dict(id=b.scalar(t,0,'<H'),task_ids=b.shortvec(t,1)) for t in b.tables(r,8)]

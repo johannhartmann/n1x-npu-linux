@@ -15,6 +15,7 @@ from emulate_profile1_commands import run as firmware_profile1, PROFILE1_HASH
 from test_core_control import IO, WRITE, READ, DELAY
 from test_task_descriptor import Args as TaskArgs
 from inspect_loadable import Buffer
+from diagnostic_fixture import build as build_diagnostic_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -342,6 +343,38 @@ def main():
     assert '0x5000' not in unready_diagnostic['scheduler_engine_reads']
     assert [row[2] for row in captured] == [(0x702, HOST >> 8)]
     assert struct.unpack_from('<I', bytes.fromhex(unready_diagnostic['queue0']), 20)[0] == 1
+    full_payload, full_addresses, full_layout = build_diagnostic_fixture(diagnostic_data, HOST)
+    assert len(full_payload) == 8428800 and len(full_addresses) == 9
+    for entry in full_layout.values():
+        assert entry['address'] % entry['alignment'] == 0
+    assert build_fenced(task, len(task), ctypes.byref(diagnostic_args), HOST+768, 0x12345678) == 0
+    full_payload[:256] = task.raw
+    addresses = (ctypes.c_uint64*9)(*full_addresses)
+    assert build_addresses(address_bytes, len(address_bytes), addresses, 9) == 0
+    full_payload[256:512] = address_bytes.raw
+    struct.pack_into('<I', full_payload, 768, 0xdeadbeef)
+    captured.clear()
+    full_diagnostic = firmware_profile1(profile1, method=active_method, host_payload=bytes(full_payload),
+                                        host_handler=initialized_interrupt, host_submit=submit,
+                                        boot_from_reset=True, via_trap=True, dma_register_model=True,
+                                        resume_scheduler=True,
+                                        scheduler_registers={0x7008: 1, 0x5000: 1, 0x6000: 1})
+    assert full_diagnostic['returned'] and full_diagnostic['scheduler_wfi']
+    assert full_diagnostic['wfi_return_address'] == 0x101424
+    assert full_diagnostic['function_stubs'] == [] and full_diagnostic['firmware_code_unmodified']
+    assert [row[2] for row in captured] == [(0x702, HOST >> 8)]
+    assert struct.unpack_from('<I', bytes.fromhex(full_diagnostic['queue0']), 20)[0] == 1
+    assert struct.unpack_from('<I', bytes.fromhex(full_diagnostic['first_task_slot']), 124)[0] == 3
+    address_words = [value for offset, size, value in full_diagnostic['scheduler_mmio_writes']
+                     if offset == 0x17048]
+    assert address_words == [word for address in full_addresses[:8] for word in (address & 0xffffffff, address >> 32)]
+    assert (0x18074, 4, 1) in full_diagnostic['scheduler_mmio_writes']
+    assert len(full_diagnostic['dma_commands']) == 19
+    assert full_diagnostic['dma_commands'][-1] == {
+        'command': 0x2400, 'source': full_addresses[2], 'destination': 0x184300,
+        'bytes': 64, 'direction': 'read'}
+    assert bytes.fromhex(full_diagnostic['host_payload_final']) == bytes(full_payload)
+    assert not full_diagnostic['task_interrupts']
     print(json.dumps({'scope': 'Linux C response capture/clear/ACK with synthetic IRQSTAT and real FW mailbox code',
                       'ordered_callback_count': len(expected),
                       'persistent_hal1_commands': len(sequence),
@@ -360,6 +393,9 @@ def main():
                       'diagnostic_init_il_reached_from_original_scheduler': True,
                       'diagnostic_init_status': initialized_diagnostic['checkpoint_status'],
                       'missing_engine_ready_blocks_diagnostic_init': True,
+                      'full_diagnostic_fixture_bytes': len(full_payload),
+                      'full_diagnostic_wait_return': hex(full_diagnostic['wfi_return_address']),
+                      'full_diagnostic_remains_running': True,
                       'firmware_rearms_swgen1_before_each_reply': True,
                       'persistent_commands_use_linux_method_sender': True,
                       'suppressed_mask_set_blocks_delivery': True, 'error_prefixes_checked': 6,

@@ -14,9 +14,10 @@ CTX = 0x20010000
 
 def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=True,
         host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False, via_trap=False, trap_dma_ready=True, dma_register_model=False, host_payload=None, resume_scheduler=False, scheduler_handshake=True, scheduler_checkpoint=None, scheduler_registers=None):
+    stop = 0x40000000 if boot_from_reset else STOP
     if resume_scheduler and not (via_trap and dma_register_model):
         raise ValueError('Scheduler tests require original reset, trap and DMA paths')
-    if host_payload is not None and (not 4 <= len(host_payload) <= (STOP-HOST if boot_from_reset else 4096-(HOST & 4095))):
+    if host_payload is not None and (not 4 <= len(host_payload) <= (stop-HOST if boot_from_reset else 4096-(HOST & 4095))):
         raise ValueError('Host payload must fit the synthetic mapping without overlapping the stop page')
     host_bytes = 4 if host_payload is None else len(host_payload)
     if dma_register_model and (not boot_from_reset or dma_error is not None):
@@ -26,7 +27,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
     if boot_from_reset:
         u, boot_state = boot(blob)
         assert boot_state['scheduler_wfi']
-        for address, size in ((HOST & ~4095, ((HOST & 4095)+host_bytes+4095) & ~4095), (STOP, 0x1000)):
+        for address, size in ((HOST & ~4095, ((HOST & 4095)+host_bytes+4095) & ~4095), (stop, 0x1000)):
             u.mem_map(address, size)
         call_sp = boot_state['sp']
         stubs = () if dma_register_model else (0x104ed8, 0x105004)
@@ -35,7 +36,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
         u = Uc(UC_ARCH_RISCV, UC_MODE_RISCV32)
         for address, size in ((0x100000, 0x9000), (0x180000, 0x10000),
                               (MMIO, 0x2000), (CTX, 0x4000), (HOST & ~4095, 0x1000),
-                              (STACK, 0x10000), (STOP, 0x1000)):
+                              (STACK, 0x10000), (stop, 0x1000)):
             u.mem_map(address, size)
         u.mem_write(0x100000, blob[512:512+36864])
         u.mem_write(0x180000, blob[512+36864:])
@@ -54,12 +55,14 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
     task_events, task_interrupts = [], []
     scheduler_handshakes = 0
     scheduler_engine_reads = {}
+    scheduler_mmio_writes = []
+    wfi_return_address = None
 
     def reg(n):
         return u.reg_read(getattr(regs, f'UC_RISCV_REG_A{n}'))
 
     def hook(_, address, size, user):
-        nonlocal scheduler_waiting, checkpoint_reached
+        nonlocal scheduler_waiting, checkpoint_reached, wfi_return_address
         if scheduler_running and address in (0x104766, 0x1014f6, 0x103d56, 0x103f9c):
             task_events.append(hex(address))
         if scheduler_running and scheduler_checkpoint is not None and address == scheduler_checkpoint:
@@ -67,6 +70,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             u.emu_stop()
         if scheduler_running and address == 0x102194:
             scheduler_waiting = True
+            wfi_return_address = u.reg_read(regs.UC_RISCV_REG_RA)
             u.emu_stop()
         if via_trap and address == 0x1002dc:
             trap_entries.append(address)
@@ -92,6 +96,8 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
 
     def write(_, access, address, size, value, user):
         offset = address-MMIO
+        if scheduler_running and 0 <= offset < 0x40000:
+            scheduler_mmio_writes.append((offset, size, value))
         if offset not in (0, 4, 0x40, 0x44, 0x74, 0x10c, 0x110, 0x114, 0x118, 0x11c, 0x128, 0xd20, 0xd24):
             return
         assert size == 4
@@ -181,22 +187,22 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             u.reg_write(regs.UC_RISCV_REG_MSTATUS,
                         (status & ~0x1888) | 0x1800 | (0x80 if status & 8 else 0))
             u.reg_write(regs.UC_RISCV_REG_MCAUSE, 0x8000000b)
-            u.reg_write(regs.UC_RISCV_REG_MEPC, STOP)
+            u.reg_write(regs.UC_RISCV_REG_MEPC, stop)
             entry = u.reg_read(regs.UC_RISCV_REG_MTVEC)
         else:
             u.reg_write(regs.UC_RISCV_REG_A0, submitted_method)
             u.reg_write(regs.UC_RISCV_REG_A1, submitted_data)
             u.reg_write(regs.UC_RISCV_REG_SP, call_sp)
-            u.reg_write(regs.UC_RISCV_REG_RA, STOP)
+            u.reg_write(regs.UC_RISCV_REG_RA, stop)
             entry = 0x102232
-        u.emu_start(entry, STOP, count=200000 if boot_from_reset else 2000)
-        if via_trap and u.reg_read(regs.UC_RISCV_REG_PC) == STOP:
+        u.emu_start(entry, stop, count=200000 if boot_from_reset else 2000)
+        if via_trap and u.reg_read(regs.UC_RISCV_REG_PC) == stop:
             after = [u.reg_read(getattr(regs, f'UC_RISCV_REG_X{i}')) for i in range(1, 32)]
             assert before == after, 'Original ISR did not restore interrupted registers'
-        if u.reg_read(regs.UC_RISCV_REG_PC) != STOP:
+        if u.reg_read(regs.UC_RISCV_REG_PC) != stop:
             break
         completed.append(struct.unpack('<I', u.mem_read(HOST, 4))[0])
-    command_returned = u.reg_read(regs.UC_RISCV_REG_PC) == STOP
+    command_returned = u.reg_read(regs.UC_RISCV_REG_PC) == stop
     if resume_scheduler and command_returned:
         scheduler_running = True
         for offset, value in (scheduler_registers or {}).items():
@@ -204,7 +210,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             u.mem_write(MMIO+offset, struct.pack('<I', value))
         # Trap restored the original WFI caller's registers and stack.
         # Resume at the original WFI return instruction; no task handler is called directly.
-        u.emu_start(0x102198, STOP, count=200000)
+        u.emu_start(0x102198, stop, count=200000)
     code_unmodified = bytes(u.mem_read(0x100000, 36864)) == blob[512:512+36864]
     if dma_register_model:
         assert code_unmodified
@@ -224,6 +230,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             'scheduler_handshakes': scheduler_handshakes,
             'scheduler_checkpoint_reached': checkpoint_reached,
             'scheduler_engine_reads': scheduler_engine_reads,
+            'scheduler_mmio_writes': scheduler_mmio_writes, 'wfi_return_address': wfi_return_address,
             'checkpoint_status': reg(0) if checkpoint_reached else None,
             'queue0': bytes(u.mem_read(0x180100, 32)).hex() if boot_from_reset else None,
             'final_irq_mask': struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0],

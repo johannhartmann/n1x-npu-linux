@@ -1382,3 +1382,54 @@ programming, numerical output and complete task success remain unverified.
 This is a complete software path **to INIT-IL**, not a completed diagnostic or
 physical inference. ACPI/IORT, real DMA and IRQ routing, and opaque SROOT boot
 acceptance remain separate hardware-backend prerequisites.
+
+## All projected diagnostic allocations and first engine-wait point
+
+`inspect_loadable.py` now reports the memory-entry content names and content
+byte offsets in addition to sizes/alignment. These are read through the same
+bounded **provisional v1 field projection**, not a newly established full modern
+schema. `diagnostic_fixture.py` builds a hash-pinned RAM fixture containing all
+nine projected allocations, copies every original content blob at its declared
+offset, preserves their logical sizes, and returns the nine address entries.
+Scratch/output allocations and cache-read padding are explicitly zero-initialized.
+This is a test fixture, not a physical firmware/model installer.
+
+The resulting payload is **8,428,800 bytes**. It includes the 5,729,504-byte
+working buffer, 2,471,680-byte scratch allocation, three 27,264-byte buffers,
+network/instruction/DB blobs and the final 32-byte allocation. Each allocation
+honors its declared 256/1024/16384-byte address alignment. Explicit backing is
+rounded to 256 bytes, with at least 256 for the observed network cache read;
+this padding policy does not change the loadable's logical sizes.
+
+Reset-initialized emulation now places its synthetic stop address at 0x40000000,
+separate from the host payload range. The prior stop address would have fallen
+inside this larger contiguous host fixture. This is an emulator address-space
+change, not a hardware address or Linux DMA allocation policy. Original firmware
+code and data placement remain unchanged.
+
+The Linux C task/fence and address-list serializers populate the fixture. Original
+reset, trap, scheduler, DMA and diagnostic code then execute with the same three
+explicit ready inputs as the INIT test. No instruction or function is replaced.
+The test observes **19 original DMA commands**, including a 64-byte read from
+address entry 2 (task0-db) to DMEM 0x184300. It records all scheduler MMIO writes:
+the original firmware writes eight low/high address pairs to internal offset
+**0x17048**, matching the first eight fixture addresses, and writes **1 to
+0x18074**, alongside further engine configuration. These are observed writes;
+the complete register meanings and hardware effects are not established.
+
+Execution next reaches WFI with return address **0x101424**, inside the model's
+wait loop at 0x101420. The fixture's host bytes/fence remain unchanged; queue
+count is **1**, task state **3**, and the only mailbox reply is submission ACK
+0x702. No synthetic accelerator-complete interrupt or numerical output is
+injected. Thus the task has reached a device-wait point and remains running.
+
+The result key `scheduler_wfi` reports a WFI observation, **not idle or task
+completion**. Its `wfi_return_address`, queue and task state distinguish this
+in-flight engine wait from the earlier empty-queue scheduler wait. A Linux
+backend must not reclaim work just because firmware executes WFI.
+
+The complete projected memory layout now replaces the earlier zero placeholders
+in this additional test; the smaller INIT-only tests remain separate negative
+and prefix checks. Equivalence to Windows runtime allocation/binding semantics,
+actual accelerator completion and correctness, DMA coherency, physical boot and
+IRQ routing remain unverified. No hardware device was accessed.
