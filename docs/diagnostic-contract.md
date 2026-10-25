@@ -249,3 +249,27 @@ is invoked. These observations recover the setter but do not identify the
 physical provider's byte, its semantic name, or a correspondence with the KMD
 classifier/HAL profile. That provider implementation is the next unresolved
 link; successful physical diagnostic execution remains unproven.
+
+### Concrete provider getter
+
+The wrapper constructed at 0x2bb68 uses vtable 0x655b80. Its +0x18 slot is
+0x2bf60, which returns wrapper+0x10. The wrapper stores the object returned by
+0x77208 there. On that function's fresh allocation path, it installs vtable
+0x665bc0; its +0xb8 slot is **0x77160**. These are static instruction/table
+links; complete map lookup, object creation and device setup are not emulated.
+
+The original getter at 0x77160 takes a backing-record pointer from object+8,
+copies **0xc5e8 bytes from backing+8** into a stack buffer, then writes the
+DWORD at stack-buffer+0x11c to its caller's output. Its source field is thus
+**backing+0x124**. The selector resolver consumes only the low byte of this
+DWORD. This getter does not itself issue a kernel call. Where the backing
+record is populated remains unresolved: 0x77208 calls 0x79700 for that object;
+its fresh allocation path allocates 0xcad0 bytes and calls 0x791e0.
+
+The selector script now has **274 cases**, including eight coupled runs that
+replace the synthetic query callback with original getter 0x77160. Only its
+stack-probe and exact-length memory-copy helpers are modeled, with a synthetic
+backing record. Values 0xabcd0023 and 0xffffff25 exercise ignored high bytes;
+0x2300 confirms the byte position. This proves the record-to-selector data
+path under those inputs, not the real record contents, its semantic field
+name, a Windows kernel response, or physical firmware compatibility.

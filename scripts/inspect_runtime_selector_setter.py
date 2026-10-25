@@ -9,9 +9,9 @@ from unicorn import arm64_const as regs
 from inspect_runtime_selector import ROOT, BASE, RUNTIME_HASH, CTX, OUT, STACK, STOP, call
 
 
-def run(pe, byte, *, cached=None, provider_status=0, missing=None):
+def run(pe, byte, *, cached=None, provider_status=0, missing=None, provider_word=None):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
-    for page in (0x75000, 0x2b000, 0xa5000, 0x6a1000, 0x6a5000):
+    for page in (0x75000, 0x77000, 0x1000, 0x2b000, 0xa5000, 0x665000, 0x6a1000, 0x6a5000):
         u.mem_map(BASE+page, 4096)
         u.mem_write(BASE+page, pe.get_data(page, 4096))
     for address in (CTX, OUT, STACK, STOP):
@@ -21,6 +21,13 @@ def run(pe, byte, *, cached=None, provider_status=0, missing=None):
     u.mem_write(OUT+0x118, struct.pack('<Q', STOP+0x20))
     u.mem_write(OUT+0x1b8, struct.pack('<Q', STOP+0x40))
     u.mem_write(BASE+0xa5340, struct.pack('<Q', STOP+0x60))
+    if provider_word is not None:
+        assert struct.unpack('<Q', pe.get_data(0x665bc0+0xb8, 8))[0] == BASE+0x77160
+        u.mem_write(OUT+0x1b8, struct.pack('<Q', BASE+0x77160))
+        # Synthetic backing of the actual provider getter: object+8 points
+        # to a record; its +8 payload is copied to the stack before +0x11c.
+        u.mem_write(OUT+8, struct.pack('<Q', OUT+0x1000))
+        u.mem_write(OUT+0x1124, struct.pack('<I', provider_word))
     if cached is not None:
         u.mem_write(BASE+0x6a5950, b'\x01')
         u.mem_write(BASE+0x6a1c30, struct.pack('<I', cached))
@@ -46,13 +53,22 @@ def run(pe, byte, *, cached=None, provider_status=0, missing=None):
             ret(provider_status)
         elif address == STOP+0x60:
             u.reg_write(regs.UC_ARM64_REG_PC, u.reg_read(regs.UC_ARM64_REG_LR))
+        elif address == BASE+0x1070:
+            events.append('stack-probe')
+            u.reg_write(regs.UC_ARM64_REG_PC, u.reg_read(regs.UC_ARM64_REG_LR))
+        elif address == BASE+0x1100:
+            dest, source, length = [u.reg_read(getattr(regs, f'UC_ARM64_REG_X{i}')) for i in range(3)]
+            assert source == OUT+0x1008 and length == 0xc5e8
+            events.append('provider-record-copy')
+            u.mem_write(dest, bytes(u.mem_read(source, length)))
+            ret(dest)
 
     u.hook_add(UC_HOOK_CODE, hook)
     status = call(u, 0x756f8, CTX+0x98)
     selector = struct.unpack('<I', u.mem_read(CTX+0x98, 4))[0]
     valid = u.mem_read(BASE+0x6a5950, 1)[0]
     global_value = struct.unpack('<I', u.mem_read(BASE+0x6a1c30, 4))[0]
-    return dict(byte=byte, cached=cached, missing=missing, provider_status=provider_status,
+    return dict(byte=byte, cached=cached, missing=missing, provider_status=provider_status, provider_word=provider_word,
                 status=status, selector=selector, cache_valid=valid,
                 cache_value=global_value, events=events)
 
@@ -84,11 +100,19 @@ def main():
     row = run(pe, 0x23, provider_status=0x65)
     assert row['status'] == 0 and row['selector'] == 1
     rows.append(row)
+    for word in (0x23, 0x25, 0x26, 0, 0x24, 0xabcd0023, 0xffffff25, 0x2300):
+        row = run(pe, 0, provider_word=word)
+        expected = {0x23: 1, 0x25: 3, 0x26: 3}.get(word & 255)
+        assert row['status'] == (0 if expected is not None else 15)
+        assert row['selector'] == (expected if expected is not None else 0x7fffffff)
+        assert 'provider-record-copy' in row['events'] and 'provider-query' not in row['events']
+        rows.append(row)
     print(json.dumps(dict(passed=True, hardware_access=False, resolver='0x756f8',
                          cases=len(rows), accepted_byte_mappings={'0x23': 1, '0x25': 3, '0x26': 3},
                          observations=['Provider query return status is not checked before interpreting its byte',
                                        'Cached values are copied without range validation'],
-                         limitations=['Provider object and callback are modeled; actual physical provider byte is unknown',
+                         limitations=['Provider backing is synthetic; eight cases execute the actual provider getter',
+                                      'Actual physical provider record value and its population path are unknown',
                                       'No device boot or model execution; byte semantics and KMD connection unresolved'],
                          special_cases=rows[256:]), indent=2))
 
