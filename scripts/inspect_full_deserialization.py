@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Execute original ReLU loadable construction/deserialization without a device.
 
-C++ containers, validators, table extraction and stack guards execute original
-instructions. Allocation, byte operations, locks, CFG and one ASCII regex
-predicate are modeled. DLL-wide initialization is NOT performed: the final
-statistics index therefore fails at its uninitialized regex state. Its error
-must be reported even though the original outer deserializer ignores it.
+C++ containers, validators, table extraction, stack guards and regex code
+execute original instructions. Required CRT/regex initializers execute under
+a bounded single-thread Windows API model. Statistics-index failures are
+reported even though the original outer deserializer ignores them.
 """
 import hashlib
 import json
-import re
 import struct
 from collections import Counter
 
@@ -24,9 +22,10 @@ from verify_relu_loadable import LOADABLE_HASH
 
 STAGES = (0x8deb0, 0x895d0, 0x893e8, 0x88d10, 0x87fc0,
           0x88700, 0x88160, 0x899e8, 0x89208, 0x8c740)
+CRT_INITIALIZERS = (0x5f5a0, 0x5f650, 0x56aa0, 0x585f0, 0x4df38)
 
 
-def execute(pe, data, poison):
+def execute(pe, data, poison, initialize_regex=True):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     u.mem_map(BASE, (pe.OPTIONAL_HEADER.SizeOfImage + 4095) & ~4095)
     u.mem_write(BASE, pe.get_memory_mapped_image())
@@ -36,8 +35,17 @@ def execute(pe, data, poison):
     u.mem_write(MODEL, data)
     u.mem_write(STACK, bytes([poison])*0x100000)
     u.mem_write(BASE+0xa5340, struct.pack('<Q', STOP+64))
+    imports = {}
+    for dll in pe.DIRECTORY_ENTRY_IMPORT:
+        for entry in dll.imports:
+            target = STOP+0x100+4*len(imports)
+            assert target < STOP+4096
+            imports[target] = entry.name.decode() if entry.name else str(entry.ordinal)
+            u.mem_write(entry.address, struct.pack('<Q', target))
     cursor = HEAP
     stages, regex_calls, stats_returns, stats_missing_regex = [], [], [], []
+    stats_headers, initializer_results, optional_libraries = [], [], []
+    fls, last_error = {}, 0
     helpers = Counter()
     pattern = pe.get_data(0x98478, 128).split(b'\0')[0]
     assert pattern == rb'^task-?(\d+)-stat(s|_list)$'
@@ -58,8 +66,64 @@ def execute(pe, data, poison):
             u.reg_write(r.UC_ARM64_REG_X0, value & 0xffffffffffffffff)
         u.reg_write(r.UC_ARM64_REG_PC, reg(30))
 
-    def hook(_, pc, size, user):
+    def allocate(n, zero=False):
         nonlocal cursor
+        n = max(n, 1)
+        ptr = cursor
+        cursor = (cursor+n+15)&~15
+        assert cursor < HEAP+0x1000000
+        u.mem_write(ptr, bytes([0 if zero else poison])*n)
+        return ptr
+
+    def wide_string(address):
+        for n in range(256):
+            if scalar(address+2*n, '<H') == 0:
+                return bytes(u.mem_read(address, 2*n)).decode('utf-16-le')
+        raise AssertionError('Unterminated optional library name')
+
+    def hook(_, pc, size, user):
+        nonlocal last_error
+        if pc in imports:
+            name = imports[pc]
+            helpers[name] += 1
+            if name in ('EnterCriticalSection', 'LeaveCriticalSection'):
+                ret()
+            elif name == 'GetProcessHeap':
+                ret(1)  # Opaque modeled process-heap handle.
+            elif name == 'GetLastError':
+                ret(last_error)
+            elif name == 'SetLastError':
+                last_error = reg(0)&0xffffffff
+                ret()
+            elif name in ('EncodePointer', 'DecodePointer'):
+                ret(reg(0))
+            elif name == 'HeapAlloc':
+                assert reg(0) == 1 and reg(1) in (0, 8)
+                ret(allocate(reg(2), zero=bool(reg(1)&8)))
+            elif name == 'HeapFree':
+                assert reg(0) == 1 and reg(1) == 0
+                ret(1)  # Arena never reuses freed storage.
+            elif name == 'FlsAlloc':
+                index = len(fls)+1
+                fls[index] = 0
+                ret(index)
+            elif name in ('FlsGetValue', 'FlsSetValue'):
+                assert reg(0) in fls
+                if name == 'FlsGetValue':
+                    last_error = 0
+                    ret(fls[reg(0)])
+                else:
+                    fls[reg(0)] = reg(1)
+                    ret(1)
+            elif name == 'LoadLibraryExW':
+                library = wide_string(reg(0))
+                assert library.startswith('api-ms-win-core-') or library == 'kernel32', library
+                optional_libraries.append(library)
+                last_error = 126  # Optional API-set unavailable; original fallback executes.
+                ret(0)
+            else:
+                raise AssertionError(('Unmodeled Windows API', name))
+            return
         a = pc-BASE
         if a in STAGES:
             stages.append(a)
@@ -67,23 +131,23 @@ def execute(pe, data, poison):
             stats_missing_regex.append(scalar(BASE+0x6a5b10) == 0)
         if a == 0x88b0c:
             stats_returns.append(reg(0))
+        if a == 0x8cf44:
+            stats_headers.append(bytes(u.mem_read(reg(25), 12)).hex())
+        if a == 0x883ec and initialize_regex:
+            assert regex_calls and 'match' not in regex_calls[-1]
+            regex_calls[-1]['match'] = bool(reg(0)&255)
         # Execute the real stack guards 0x1000/0x1020: they reserve/release
         # 16 bytes, so replacing them with no-ops can corrupt nested frames.
-        if a == 0x4bb68 or pc == STOP+64:
-            helpers['free' if a == 0x4bb68 else 'cfg'] += 1
+        if a in (0x4bb68, 0x4c0b0) or pc == STOP+64:
+            helpers['free' if a == 0x4bb68 else 'atexit' if a == 0x4c0b0 else 'cfg'] += 1
             ret()
         elif a in (0x6b270, 0x6b290, 0x6b2d8):
             assert reg(0) == CTX+8
             helpers['mutex'] += 1
             ret(0)
-        elif a in (0x4bb10, 0x904b0):
-            n = max(reg(0), 1)
-            ptr = cursor
-            cursor = (cursor+n+15)&~15
-            assert cursor < HEAP+0x1000000
-            u.mem_write(ptr, bytes([poison])*n)
+        elif a in (0x4bb10, 0x904b0, 0x4c288):
             helpers['allocate'] += 1
-            ret(ptr)
+            ret(allocate(reg(0)))
         elif a in (0x1100, 0x1820):
             if reg(2):
                 value = (bytes(u.mem_read(reg(1), reg(2))) if a == 0x1100
@@ -98,9 +162,13 @@ def execute(pe, data, poison):
         elif a == 0x7d970:
             assert reg(1) == BASE+0x6a5b10
             name = string(reg(0))
-            match = re.search(pattern, name, flags=re.ASCII) is not None
-            regex_calls.append(dict(name=name.decode('ascii'), match=match))
-            ret(int(match))
+            regex_calls.append(dict(name=name.decode('ascii')))
+            if not initialize_regex:
+                # Retain the old environment as a negative control only.
+                import re
+                match = re.search(pattern, name, flags=re.ASCII) is not None
+                regex_calls[-1]['match'] = match
+                ret(int(match))
 
     u.hook_add(UC_HOOK_CODE, hook)
 
@@ -114,6 +182,13 @@ def execute(pe, data, poison):
         assert u.reg_read(r.UC_ARM64_REG_SP) == STACK+0xff000
         return reg(0)
 
+    if initialize_regex:
+        for entry in CRT_INITIALIZERS:
+            status = call(entry, [])
+            assert status == 1
+            initializer_results.append(dict(rva=hex(entry), status=status))
+        call(0x3490, [])  # Original static regex initializer (void return).
+        assert HEAP <= scalar(BASE+0x6a5b10) < cursor
     assert call(0x7e2d8, [CTX]) == CTX
     assert scalar(CTX) == BASE+0x669260
     assert scalar(BASE+0x669328) == BASE+0x888a0
@@ -150,14 +225,16 @@ def execute(pe, data, poison):
 
     report = dict(deserializer_status=status, stages=[hex(a) for a in stages],
                   stats_status=stats_returns, stats_missing_regex=stats_missing_regex,
+                  stats_headers=stats_headers, regex_initialized=initialize_regex,
+                  crt_initializers=initializer_results, optional_libraries=optional_libraries,
                   heap_poison=poison, helpers=dict(helpers), input_unchanged=True)
     if status:
         assert stages == [0x8deb0] and not stats_returns and not regex_calls
         return report
 
     assert stages == list(STAGES)
-    assert stats_returns == [8] and stats_missing_regex == [True]
-    assert not nodes(CTX+0x1b0) and scalar(CTX+0x1c0, '<I') == 0
+    stats_nodes = nodes(CTX+0x1b0)
+    assert scalar(CTX+0x1c0, '<I') == 0
     assert bytes(u.mem_read(CTX+0x1a8, 3)) == bytes([3, 0, 0])
     projected, view = inspect(data), Buffer(data)
     root = view.u('<I', 0)
@@ -196,6 +273,38 @@ def execute(pe, data, poison):
         f = view.field(t, 4)
         assert bytes(u.mem_read(n+104, 3)) == data[f:f+3]
     assert [e['name'] for e in regex_calls if e['match']] == ['task-0-stats']
+    assert len(regex_calls) == 8
+    stats_table = by_name['task-0-stats']
+    extent = view.vector(stats_table, 5, 1)
+    stats = data[extent.start:extent.stop]
+    assert stats[:4] == b'\0\3\0\0' and stats[4] in (1, 2)
+    assert len(stats) == 28736
+    header = {hex(offset): struct.unpack_from('<I', stats, offset)[0]
+              for offset in (8, 12, 16, 20, 24)}
+    assert header == {'0x8': 4, '0xc': 6144, '0x10': 28, '0x14': 1024, '0x18': 24640}
+    name_offsets = [28+6144*i for i in range(4)]
+    for i, offset in enumerate(name_offsets):
+        assert stats[offset:offset+6144].split(b'\0')[0] == (
+            f'layer-anon-0_cpipe_tile_{i}_ts_hwl_cpipe_{i}'.encode())
+    report['statistics_header_words'] = header
+    report['statistics_layer_name_offsets'] = name_offsets
+    report['actual_statistics_bytes'] = len(stats)
+    if not initialize_regex:
+        assert stats_returns == [8] and stats_missing_regex == [True] and not stats_headers and not stats_nodes
+    else:
+        assert stats_missing_regex == [False] and stats_headers == [stats[:12].hex()]
+        if stats[4] == 2:
+            assert stats_returns == [2] and not stats_nodes
+        else:
+            assert stats_returns == [0] and len(stats_nodes) == 1
+            node = stats_nodes[0]
+            assert scalar(node+32, '<H') == 0
+            count = struct.unpack_from('<I', stats, 8)[0]
+            old_extent = (count*0x340+0x4b)&~0x3f
+            assert scalar(node+112) == old_extent == 3392
+            assert bytes(u.mem_read(scalar(node+120), len(stats))) == stats
+            report['old_statistics_extent'] = old_extent
+            report['actual_statistics_bytes'] = len(stats)
     events = vector(CTX+0x128, 12)
     assert len(events) == 1 and bytes(u.mem_read(events[0], 12)) == bytes.fromhex('000000000100000001000000')
     assert not vector(CTX+0x170, 32)  # No relocation records in this fixture.
@@ -220,10 +329,11 @@ def execute(pe, data, poison):
 def main():
     path = ROOT/'sources/nvidia/Display.Driver/nvdla_runtime.dll'
     assert hashlib.sha256(path.read_bytes()).hexdigest() == RUNTIME_HASH
-    pe = pefile.PE(str(path), fast_load=True)
+    pe = pefile.PE(str(path))
     data = (ROOT/'results/native-compile-t254/relu.nvda').read_bytes()
     assert hashlib.sha256(data).hexdigest() == LOADABLE_HASH
     rows = [dict(case='original_relu', **execute(pe, data, poison)) for poison in (0, 0xa5)]
+    rows.append(dict(case='missing_regex_initialization', **execute(pe, data, 0xa5, False)))
     view = Buffer(data)
     root = view.u('<I', 0)
     memory_ref = bytearray(data)
@@ -233,20 +343,26 @@ def main():
     blob_ref = bytearray(data)
     p = next(iter(view.vector(view.tables(root, 2)[3], 5)))
     blob_ref[p+view.u('<I', p)+4] = ord('X')
+    version_only = bytearray(data)
+    stats_table = next(t for t in view.tables(root, 5) if view.string(t, 0) == 'task-0-stats')
+    version_only[view.vector(stats_table, 5, 1).start+4] = 1
     for name, candidate, status in (('invalid_memory_reference', memory_ref, 0x30007),
                                      ('invalid_task_address_reference', task_ref, 0),
-                                     ('missing_content_reference', blob_ref, 0)):
+                                     ('missing_content_reference', blob_ref, 0),
+                                     ('unsafe_statistics_version_only_mutation', version_only, 0)):
         row = execute(pe, bytes(candidate), 0xa5)
         assert row['deserializer_status'] == status
         rows.append(dict(case=name, **row))
     print(json.dumps(dict(passed=True, hardware_access=False, loadable_sha256=LOADABLE_HASH,
         constructor_rva='0x7e2d8', deserializer_rva='0x888a0', cases=rows,
         limitations=[
-            'No DLL-wide CRT initialization, device discovery, load or task submission',
-            'Final statistics index returns 8 because its compiled global regex is absent; outer return 0 ignores it',
-            'ASCII regex predicate 0x7d970 is modeled; the original regex compiler is not executed',
-            'Allocations use a bounded non-reusing arena; byte helpers, mutexes and CFG are modeled',
-            'All C++ containers, table materializers and reference validators execute original code',
+            'Only required CRT and regex initializers execute, not complete DLL attachment or device initialization',
+            'Original statistics header check rejects version byte 2 with status 2; outer return 0 ignores it',
+            'Windows APIs use a single-thread arena/FLS model and unavailable optional API-set lookups; original C-locale fallback executes',
+            'Allocations, byte helpers, mutexes, atexit registration and CFG are modeled',
+            'C++ containers, table materializers, reference validators and regex compiler/matcher execute original code',
+            'The missing-initializer control alone retains a modeled ASCII regex predicate and reports status 8',
+            'Version-only mutation makes the old runtime index 3392 of 28736 bytes; this is a diagnostic counterexample, not a fix',
             'The two accepted malformed references show deserialization success is not full model validity',
             'Only the pinned ReLU model and explicit in-memory mutations are qualified; no hardware compatibility claim'
         ]), indent=2))

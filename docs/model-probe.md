@@ -872,8 +872,9 @@ The input file is unchanged.
 
 Unlike the isolated content probe, this test executes the original C++ map,
 vector and string implementations. Allocation/free, byte copy/fill/compare,
-single-thread mutex operations, CFG dispatch and the recovered ASCII regex
-predicate at **0x7d970** remain modeled. Both zero-filled and 0xa5-filled heap
+single-thread mutex operations, CFG dispatch, atexit registration and the
+required Windows APIs remain modeled. The normal cases execute the original
+regex compiler and matcher, including predicate **0x7d970**. Both zero-filled and 0xa5-filled heap
 allocations/initial stacks produce the same checked fields. The original
 stack guards **0x1000/0x1020** must execute: they reserve/release 16 bytes, and
 replacing them with no-ops can corrupt nested frames. The older content probe
@@ -899,18 +900,58 @@ versions agree byte-for-byte. The task's local address order remains
 **`[3,1,2,4,5,6,7,8]`**, as used by the Linux C task/firmware scheduler test.
 The original runtime does not rearrange this list during deserialization.
 
-**The outer return value is not proof that every stage succeeded.** The final
-statistics-index function returns **8**, but its caller ignores that value
-at **0x88b0c** and returns 0. In this emulator the compiled global regex at
-**0x6a5b10** is absent because DLL-wide initialization is not run. The original
-branch **0x8c998 → 0x8ca68** therefore has no capture group from which to read
-the task ID and reaches **0x8d238**, which selects error 8. The statistics map
-at **+0x1b0** stays empty and its dirty flag at **+0x1c0** becomes 0. This is
-an observed initialization limitation of the probe, **not evidence of a
-statistics-format defect in the compiler output**. Static initializer
-**0x3490** constructs this regex; execution with its required CRT/locale
-environment remains to be qualified. The predicate shim used during content
-classification does not initialize the compiled regex used here.
+The probe first executes these original initialization functions; each CRT
+initializer returns 1. This is the subset required by the parser, not complete
+DLL attachment, its whole initializer array, or device initialization:
+
+| RVA | Observed initialization |
+| --- | --- |
+| `0x5f5a0` | Encoded optional-function cache using the image's security cookie |
+| `0x5f650` | Process heap handle |
+| `0x56aa0` | CRT initial-data pointer `0x6a45f8 → 0x6a1170` |
+| `0x585f0` | CRT thread data and its FLS slot |
+| `0x4df38` | C++ runtime FLS slot and initial thread record |
+| `0x3490` | Static regex, including original constructor `0x7dd70` and compiler `0x83840` |
+
+Windows API calls use explicit single-thread heap/FLS/lock models. Dynamic
+optional API lookups report unavailable modules; the original C-locale
+fallback executes using the imported base API models. No host Windows APIs,
+files, processes or devices are accessed. The compiled regex at **0x6a5b10**
+is now real original-code output, and both content classification and the
+statistics function use its original matcher/capture processing.
+
+**The outer return value is not proof that every stage succeeded.** After
+these initializers the final statistics-index function returns **2**, but its
+caller ignores that value at **0x88b0c** and returns 0. This is now a concrete
+header mismatch between TensorRT 11.4 compiler output and runtime 617.42:
+
+| Statistics bytes | Compiler output | Original runtime check at `0x8cf44–0x8cf64` |
+| --- | --- | --- |
+| `+0..+2` | `00 03 00` | Checks `+0=0`, `+1=3`; does not compare `+2` here |
+| `+3..+5` | `00 02 00` | Checks `+3=0`, **`+4=1`**; does not compare `+5` here |
+| `+8..+11` | `04 00 00 00` | Old format reads this as record count after accepting the version |
+
+The rejection follows **0x8cf64 → 0x8d164**, selecting status 2. The
+statistics map at **+0x1b0** stays empty and its dirty flag at **+0x1c0**
+becomes 0. The shared content version 3.0.0 therefore does not establish
+statistics-format compatibility. This is an old-runtime/new-compiler mismatch;
+it does not prove that the newer compiler's statistics are internally invalid.
+
+A negative control still omits the initializers and retains the modeled
+ASCII predicate used by the older probe. It reproduces status **8** through
+**0x8c998 → 0x8ca68 → 0x8d238** because no compiled regex/capture is available.
+That earlier error is separate from the now-visible statistics header check.
+
+An explicitly **unsafe version-only mutation**, performed only in emulator
+RAM, changes statistics byte `+4` from 2 to 1. The original statistics function
+then returns 0 and creates one index entry, but its recorded extent is only
+**3,392 bytes**, calculated as `(4*0x340 + 0x4b) & ~0x3f`. The actual compiler
+blob is **28,736 bytes**. Its four layer names are at offsets `0x1c`, `0x181c`,
+`0x301c`, `0x481c`, spaced by `0x1800`, rather than the old parser's `0x340`
+record stride. A version-byte rewrite is consequently **not** a conversion or
+a valid compatibility fix. The checked artifact remains unchanged. A Linux
+statistics implementation needs a properly reconstructed newer layout; no
+decoder for that layout or hardware statistics collection is claimed here.
 
 Three in-memory mutations test the extent of the original checks:
 
