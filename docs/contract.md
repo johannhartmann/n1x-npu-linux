@@ -1676,3 +1676,26 @@ Windows builder with context byte +0x47d=0 emits zero, but the observed common
 loader **skips this callback when that byte is zero**. Thus this test is not
 proof that Windows normally submits zero as a disable protocol value. Do not
 substitute L4T enums/units or apply timing values based solely on matching layout.
+
+## Command-23 provider's zero-input fallback
+
+The setup routine prefix at KMD RVA `0xd440d0..0xd4444c` loads the same global
+object `0x1512148`, then its provider pointer at `+0x78`. At `0xd44414` it reads
+provider word `+0xf4`; if zero, `0xd4441c..0xd44420` writes **4**. Existing
+nonzero values remain unchanged along this prefix. This narrows the previously
+unknown provider input: it has a demonstrable zero-input fallback, not an
+established clock-frequency interpretation.
+
+`test_command23_provider.py` executes that original prefix with the original
+stack-cookie helper. Device/OS callbacks are synthetic and registry queries
+return failure. Execution stops before the following setup helper at
+`0xd4444c`; later changes and earlier provider population are not ruled out.
+Five initial values (0, 1, 4, 19200, UINT32_MAX) then run through the original
+command-23 builder. Zero becomes 4, producing wire delay **8000** when scaling
+is enabled. Nonzero inputs remain intact and multiplication still wraps at
+32 bits. The value 19200 remains a test input, not a hardware measurement.
+
+This fallback alone does not justify hardcoding the live Linux setting: the
+actual provider's earlier population, configuration overrides, and physical
+timer units still require evidence. No register is written on the machine by
+this test, and no Windows execution or physical NPU boot is claimed.
