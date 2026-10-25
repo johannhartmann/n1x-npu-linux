@@ -1870,3 +1870,15 @@ HFRP-first priority and lower-accessor error suppression. See [entry and primary
 callback evidence](hfrp-irq.md#npu-entry-wrapper-and-original-primary-callbacks).
 This still does not connect IoConnectInterruptEx to the NPU PDO's GSI routing,
 and the final provider/OS helper calls remain modeled boundaries.
+
+
+## Exact Linux bypass phase against the original firmware instance
+
+The exact native `n1x_boot_bypass_task_once()` now runs with real C helpers
+against original raw HAL-1 reset/trap/scheduler/DMA code in one modeled CPU/RAM
+instance. Four coupled cases cover success and original descriptor, execution
+and postaction errors. C observes the actual firmware responses, returns the
+correct status and retains DMA backing while error handlers can still be in
+flight after ACK. See [coupled test and precise boundaries](bypass-task.md#exact-native-phase-coupled-to-original-firmware).
+Kernel prerequisites and hardware device effects remain synthetic; physical
+boot/DMA/IRQ and numerical inference are still unverified.

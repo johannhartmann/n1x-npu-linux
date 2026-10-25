@@ -144,3 +144,50 @@ test. No hardware task, IRQ registration or physical completion is claimed.
 The updated full bootstrap module builds for both kernels; the copied-source
 npu1 artifact is `results/npu1-bootstrap-bypass-build/`. The module is not
 installed or loaded by these builds, and the existing test UKI/menu is unchanged.
+
+
+## Exact native phase coupled to original firmware
+
+`scripts/test_linux_bypass_firmware.py` closes the separation between the
+native lifecycle harness and the raw-firmware scheduler test. It extracts and
+compiles the **exact** `n1x_boot_bypass_task_once()` function with real Linux C
+serializers, method sender, response capture/clear/ACK and decoder. Its modeled
+kernel allocator gives that phase a coherent 4096-byte CPU buffer/IOVA; the
+machine, DMA and prerequisite-phase gates are explicit successful shims.
+
+Each case starts original raw HAL-1 reset code, runs a checked ping through the
+original trap, then keeps that same firmware CPU/RAM instance for the native
+phase. When native C polls its logical MMIO, the model advances the original
+IRQ handler/scheduler, implements DMA device registers, and copies modeled
+coherent RAM at the CPU visibility boundary. Firmware code is never patched
+and no firmware function is replaced. New SWGEN1 yields are taken only after
+the asserting store commits, avoiding replay of a store after the C ACK.
+
+Four cases pass:
+
+| Modeled device payload | Native result | Accepted | Verified | Task DMA commands |
+| --- | --- | --- | --- | --- |
+| Exact native payload | 0 | yes | yes | 11 |
+| Version changed to 255 | -EREMOTEIO, `0x90701` | no | no | 4 |
+| Bypass bit cleared, zero network | -EREMOTEIO, `0x8003070a` | yes | no | 13 |
+| Postaction length changed to 13 | -EREMOTEIO, `0x8007070a` | yes | no | 11 |
+
+Faults are deliberately injected into the modeled device-visible DMA payload,
+not the native or firmware executable. The success path returns through the
+original task-submission trap, reaches scheduler WFI with an empty queue, and
+lets C observe acceptance/fence/SWGEN0 and clear SWGEN0. Error paths return to
+the native caller immediately after capture/ACK; the firmware can still be
+paused inside its original IRQ handler. The C state retains backing and refuses
+another attempt in all four cases. This directly checks the lifetime rule that
+ACK does not mean the handler returned or the device became quiescent.
+
+The postaction-failure case has a changed fence in modeled device RAM while
+the C phase correctly returns an error; its saved last CPU fence observation
+can predate that write because the error path stops before another visibility
+boundary. These are deliberately separate observations.
+
+This verifies the actual native phase against the recovered raw protocol under
+synthetic kernel/MMIO/FIFO/DMA/IRQ/coherency/handshake behavior. It still does not
+prove physical DMA, interrupt delivery, opaque-image equivalence, task execution
+on the NPU or numerical inference. No machine driver, boot artifact or firmware
+installation is changed by the test.
