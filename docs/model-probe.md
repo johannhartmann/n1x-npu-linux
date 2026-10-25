@@ -103,8 +103,8 @@ also publishes `libnvinfer-dla-compiler11_11.4.0.106-1+cuda13.4_arm64.deb`.
 It has been acquired as a native analysis counterpart. Its existence
 does not override NVIDIA's stated absence of supported Linux SBSA DLA in this
 release. Contents and exported ABI are now partly inspected below. Nothing
-from this package has been installed into the system or loaded as a native
-shared library.
+from this package has been installed into the system. Native library loading
+is restricted to the isolated graph-construction probe described below.
 
 ### Native compiler counterpart acquired
 
@@ -145,3 +145,45 @@ The version match makes this ELF a concrete candidate for studying the C API
 and generating the probe without executing Windows TensorRT. It does not
 establish target support, full ABI equivalence, successful compilation or a
 working Linux NPU driver.
+
+### Native graph-construction API exercised
+
+`scripts/probe_native_graph.py` now loads the pinned compiler library in a
+bubblewrap child with isolated namespaces, no network, a private `/dev`, no
+`/sys`, read-only source/interpreter mounts and a temporary `/tmp`. There are
+no host GPU/NPU device nodes in that child. This is native ARM64 execution,
+including library initialization and graph object allocation, unlike the leaf
+version emulation above. It does not invoke `NvDlaCompilerCompile`.
+
+```sh
+venv/bin/python scripts/probe_native_graph.py
+```
+
+Recovered C signatures used by the probe, with `H` denoting an opaque pointer:
+
+| Function | Arguments | Result |
+| --- | --- | --- |
+| NvDlaCreateNetwork | H* output | u32 status |
+| NvDlaNetworkAddInput | H network, char* name, 16-byte dimension struct by value, H* output | u32 status |
+| NvDlaTensorGetDimensions | H tensor, dimension-struct* output | u32 status |
+| NvDlaNetworkAddActivation | H network, H input, u8 activation code, H* layer | u32 status |
+| NvDlaLayerGetOutput | H layer, i32 index, H* tensor | u32 status |
+| NvDlaNetworkMarkOutput | H network, H tensor | u32 status |
+| NvDlaNetworkGetNumInputs / Outputs | H network, u32* count | u32 status |
+
+The 16-byte dimension argument occupies two ARM64 argument registers, matching
+four 32-bit fields. The probe supplies `{1,32,7,7}`, creates an activation with
+numeric code 0, retrieves its output and marks it as the network output. It
+checks all statuses, non-null handles, one input/one output, and exact input
+and output dimension roundtrips, then destroys the network. The public
+[NVDLA C type header](https://github.com/nvdla/sw/blob/master/umd/core/include/nvdla/c/NvDlaType.h)
+provides the reference definitions `RELU=0`, `HALF=2` and dimension order
+`n,c,h,w`. The probe now also checks activation-code retrieval, sets both
+tensor types to 2, and verifies their getter roundtrips. Those names come
+from this C API counterpart, rather than TensorRT's different enum. No tensor
+data is evaluated; target/profile/compile setup and numerical validation remain
+open, and matching enum values do not establish full versioned ABI equivalence.
+
+Library strings expose target names `t234`, `t254` and `t256`. These are
+investigation leads only, not proof that a named target matches the N1X or
+that this package can compile for it. No target is silently selected.
