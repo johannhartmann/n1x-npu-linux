@@ -292,9 +292,42 @@ path to `./`; this is object data, not a filesystem operation in the verifier.
 
 The vtable includes +16 → `0x624ea0` (stores two configuration pointers),
 +32 → `0x624630`, +40 → `0x624eb0`, +64 → `0x624420` and
-+80 → `0x629d80`. The +40 slot corresponds to the backend pre-translation
-call in the native wrapper; Windows method semantics and its complete input
-contract still need tracing. Strings and RTTI mention T254/T25x and a
++80 → `0x629d80`. The Windows wrapper dispatches pre-translation through +32 and translation
+through +40, as established below; the native wrapper uses a different slot
+for pre-translation. Their complete input contracts still need tracing. Strings and RTTI mention T254/T25x and a
 `hummingbird` IR/translator, but these names alone do not establish an
 instruction ABI or working compiler. The original Windows object now gives
 a concrete implementation to analyze instead of the Linux stub.
+
+### Backend descriptor getters and an internal ABI difference
+
+The Windows MTL pre-translation call at RVA `0x43d2b4` targets wrapper
+`0x4cab40`, which dispatches vtable **+32** → `0x624630`. Wrapper
+`0x4cac48` dispatches translation through **+40** → `0x624eb0`.
+The pinned native ELF pre-translation wrapper instead loads vtable +40.
+Equal semantic-version fields therefore do not justify sharing internal C++
+objects or blindly transplanting vtables between these builds.
+
+The extended Windows verifier executes these original small methods:
+
+- `0x624ea0` stores its two pointer arguments at object +8 and +16.
+- `0x624420` queries buffer size using a one-byte kind argument.
+- `0x6243a0` copies a buffer using that same kind argument.
+
+The descriptor vector begins at object +0x58 and ends at +0x60. Its records
+are 24 bytes: source pointer at +0, kind byte at +12 and u64 length at +16.
+The other record bytes are not assigned meanings. These layouts come from
+instruction reads, then synthetic descriptors test them; they are not yet
+observed compiler output. Kind names remain unknown.
+
+Size lookup returns zero for an absent kind, skips matching zero-length
+records, and returns a special constant 8 for kind 8. It writes exactly one
+u64 output. Copy rejects kinds >=8 with raw backend status 2001, returns
+`0x7fffffff` for a matching zero-length record, and returns zero without
+writing anything when no record matches. Consequently duplicate kinds with
+a zero-length first match produce a nonzero size but a failed copy: size
+and copy do not select records identically. Tests cover kinds 0, 2, 3, 7,
+8 and 9, duplicate/absent records and poisoned output tails.
+The copier receives no destination capacity; a future adapter must validate
+its own destination allocation and descriptor consistency before invoking it.
+These are raw backend statuses, not yet the wrapper's translated NvError.
