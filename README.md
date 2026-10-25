@@ -48,7 +48,11 @@ the Linux handshake and single-command channel are tested against a synthetic
 peer. Version discovery and the power-on packet now use that checked channel;
 offline comparisons cover the original Windows version/power policy. Startup
 replay also recovers mode selection, SRAM/configuration packets, VF decoding
-and tuning, with synthetic policy inputs. The physical startup configuration,
+and tuning, with synthetic policy inputs. The native configuration sequence
+now reproduces those packets and stops on failed exchanges; its reply-length
+contracts remain inferred and are tested with a simulated peer only.
+See [native policy setup](docs/hfrp-irq.md#native-policy-setup).
+The physical startup configuration,
 IRQ roles, live handshake and power-on remain unverified. See
 [HFRP/IRQ evidence](docs/hfrp-irq.md).
 A read-only P16 capture returned HFRP stamp `0x20251722` and mode 1. The

@@ -856,3 +856,52 @@ outside this replay.
 venv/bin/python scripts/test_hfrp_policy_init.py
 venv/bin/python scripts/test_hfrp_vbios.py
 ```
+
+## Native policy setup
+
+`n1x_hfrp_configure_policy()` in `driver/n1x_hfrp_setup.c` implements the
+normal HAL-1, VBIOS-enabled configuration sequence on the bounded channel:
+SRAM_HOLD (412), CONFIG (401), GET_VF_CURVE (428), tuning (408), cap query
+(407), then three statistics queries (432) for version 1.5 or later.
+Version 1.3 sends five commands; 1.5+ sends eight. Packet fields match the
+original Windows startup replay, including default delays and prepared PPS
+values. The cap query's request word is not treated as proof of a power-limit
+setter. No registry overrides or pre-silicon behavior are implemented.
+
+The caller must supply a complete policy from the matching board, establish
+ownership/power and serialize the channel after handshake/version discovery.
+This helper does not perform those steps, power-on, firmware upload or platform
+binding. It is compiled as an isolated object and is not linked into either
+live module. Gating/HAL bookkeeping outside the transmitted fields and the
+Windows software frequency selection after VF discovery remain separate work.
+
+**Reply lengths are inferred host-side contracts, not verified P16 firmware
+responses.** The helper requires SRAM 1 byte, CONFIG 14/26 bytes, tuning 36
+bytes, cap query 4 bytes and statistics 26 bytes. VF replies accept either
+`2 + 4 * count` or 34 bytes with 1–8 entries. It preserves each raw voltage
+word and multiplies the frequency word by 1000 as Windows does. Empty,
+oversized and truncated curves fail instead of selecting an invented fallback.
+Windows buffer sizes and L4T parsers motivate these bounds but do not establish
+the actual wire lengths; hardware qualification must resolve this limitation.
+
+Every command checks transport, firmware status and response shape. Failure
+stops subsequent commands and marks the channel FAILED, preventing automatic
+replay after partially applied configuration. The result records the command,
+completed prefix and last exchange. Invalid inputs preserve caller state and
+perform no I/O. `configured` only means this sequence completed under the
+inferred contracts, not that calibration or firmware boot is verified.
+
+`scripts/test_hfrp_setup.py` compares 18 outgoing packet sequences with the
+original Windows code in Unicorn, using synthetic policies and VF curves.
+It tests 35 command/response failures, 771 injected I/O failures, 16 preflight
+rejections, VF count boundaries and sequence rollover. Both normal and UBSan
+runs pass; the object builds against `7.2.8-23-omarchy-p16-asus-npu1` headers.
+The original configuration replay also passes after adding configurable
+synthetic settings. All device responses and MMIO effects are simulated.
+
+```sh
+venv/bin/python scripts/test_hfrp_setup.py
+CC='cc -fsanitize=undefined -fno-sanitize-recover=undefined' \
+  venv/bin/python scripts/test_hfrp_setup.py
+make kernel-check
+```

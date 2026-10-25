@@ -26,7 +26,7 @@ CURVE = ((700, 400), (850, 900), (800, 600))
 
 def run(pe, *, version=(1, 5), mode=None, vbios_enabled=True, sram=True,
         transport_failure=None, firmware_failure=None, entry=0xd41b50,
-        curve=CURVE, override_delays=None):
+        curve=CURVE, override_delays=None, settings=None, power_states=(1, 3, 15)):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     for page in (0xd41000, 0xd44000, 0xd45000, 0xd49000, 0xd3d000, 0xd39000,
                  0xd3b000, 0xd57000, 0xcd000, 0xce000, 0x108f000, 0x1512000,
@@ -60,9 +60,11 @@ def run(pe, *, version=(1, 5), mode=None, vbios_enabled=True, sram=True,
         put(address, value)
     u.mem_write(LINK+0xc, bytes(version))
     u.mem_write(HAL+0x474, bytes([int(sram)]))
-    for offset, value in ((0x31f, 1), (0x322, 3), (0x325, 15)):
+    for offset, value in zip((0x31f, 0x322, 0x325), power_states):
         u.mem_write(OUTER+offset, bytes([value]))
     u.mem_write(SETTINGS+0xc0, struct.pack('<9I', *TUNING))
+    for offset, value in (settings or {}).items():
+        put(SETTINGS+offset, value)
     u.mem_write(OUTER+0x328, b'\xa5'*0x180)
     events = []
 

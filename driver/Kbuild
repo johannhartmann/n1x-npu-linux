@@ -3,6 +3,7 @@
 ccflags-y += -I$(src)/../include
 obj-y += n1x_dla_model.o
 obj-y += n1x_dla_vbios.o
+obj-y += n1x_hfrp_setup.o
 obj-y += n1x_dla_ring.o n1x_hfrp.o n1x_dla_control.o n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_transfer.o n1x_dla_registers.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o n1x_dla_statistics.o n1x_sroot.o
 
 obj-m += n1x_npu_observe.o
