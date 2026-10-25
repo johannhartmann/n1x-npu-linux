@@ -246,3 +246,9 @@ maps the observed named buffers. Two original diagnostic IL blocks now prove a f
 zero/nonzero software predicates. The remaining result layout and hardware
 comparison meaning are still unresolved; neither a zero result buffer nor
 whole-buffer comparison with the blob named positive is treated as success.
+
+
+The default SROOT image now has an [offline signed-envelope audit](docs/sroot-envelope.md):
+its embedded-key signature and both complete body digests verify. Chip trust,
+physical loading and equivalence to the separately emulated raw HAL-1 code
+remain unproved; the bootstrap's exact whole-image hash policy is unchanged.

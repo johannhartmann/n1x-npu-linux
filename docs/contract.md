@@ -1908,3 +1908,15 @@ return -16 before output and restore/trailing writes, so error does not mean
 recovered state. See [precise instruction paths and limits](diagnostic-contract.md#original-result-assertions-and-output-writer).
 Hardware comparator meaning, full diagnostic scheduling and numerical
 correctness remain unverified; no physical register was accessed by the test.
+
+
+## Default SROOT image COSE envelope
+
+The pinned 67508-byte default image contains a 397-byte CBOR envelope after
+its image identifier. An embedded-key ES384 signature verifies over the exact
+COSE_Sign message; two signed SHA-384 fields cover the 80-byte body header and
+all remaining 67024 body bytes. Corrupt signature/payload/AAD and modified body
+controls fail as expected. See [structure, digest boundaries and trust
+limits](sroot-envelope.md). Embedded-key consistency does not prove a device
+trust root, transport acceptance or raw HAL-1 executable equivalence. No
+production authentication policy or kernel parser is changed.

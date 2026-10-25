@@ -51,6 +51,7 @@ test-vendor: test
 	venv/bin/python scripts/emulate_sroot_dma.py
 	venv/bin/python scripts/emulate_sroot_image.py
 	venv/bin/python scripts/test_sroot_image.py
+	venv/bin/python scripts/inspect_sroot_envelope.py
 	venv/bin/python scripts/test_sroot_send.py
 	venv/bin/python scripts/test_sroot_receive.py
 	venv/bin/python scripts/test_sroot_prepare.py

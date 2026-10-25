@@ -260,8 +260,10 @@ copies **input +4, length -4** into the common buffer. It neither copies the
 identifier nor initializes the final four allocated bytes. The original
 upload builder `0x31f18..0x31fb4` still sends command `0x18` with words:
 `[identifier, full_input_length, logical_dma_address_low32]`. The length is
-not reduced by four. No cryptographic interpretation of the identifier or
-opaque remainder is established.
+not reduced by four. The transport trace itself does not establish cryptographic semantics. The
+separate [offline COSE-envelope analysis](sroot-envelope.md) now verifies a
+signed manifest and both body digests, without establishing chip trust,
+opaque/raw executable identity or hardware authentication.
 
 `n1x_sroot_stage_image()` reproduces the framing/request words and payload
 copy, but explicitly zeros the otherwise untouched four-byte tail. This is
