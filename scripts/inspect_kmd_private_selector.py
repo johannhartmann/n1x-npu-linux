@@ -53,6 +53,43 @@ def run(pe, word, length=0xc5b8, null=False):
     return dict(source_word=word,length=length,null=null,prefix_only=endpoint!=STOP)
 
 
+def source_query(pe, first, second, success):
+    u=Uc(UC_ARCH_ARM64,UC_MODE_ARM)
+    for page in (0x19dd000,0xd57000,0xcd000,0xdd1000,0xdf8000,0xce000):
+        u.mem_map(BASE+page,4096);u.mem_write(BASE+page,pe.get_data(page,4096))
+    for address in (OBJ,QUERY,OUTPUT,STACK,STOP):u.mem_map(address,0x20000)
+    u.mem_write(OBJ+0x52f8,struct.pack('<Q',QUERY))
+    u.mem_write(OBJ+0x4648,struct.pack('<II',0x777,0x888))
+    calls=[]
+    def hook(_,address,size,user):
+        if address==BASE+0xcd148:
+            assert u.reg_read(r.UC_ARM64_REG_X2)==8
+            u.mem_write(u.reg_read(r.UC_ARM64_REG_X0),bytes(8))
+        elif address==BASE+0xdd1a30:
+            args=[u.reg_read(getattr(r,f'UC_ARM64_REG_X{i}')) for i in range(7)]
+            assert args[0]==QUERY and args[1]==0x15800006 and args[3]==8 and args[5]==0
+            assert bytes(u.mem_read(args[4],40))==struct.pack('<II',1,1)+bytes(32)
+            assert bytes(u.mem_read(args[2],8))==bytes(8)
+            u.mem_write(args[2],struct.pack('<II',first,second))
+            u.mem_write(args[6],struct.pack('<I',0 if success else 0x65))
+            calls.append(args[1])
+            u.reg_write(r.UC_ARM64_REG_X0,int(success))
+        elif address not in (BASE+0xd57b60,BASE+0xd57b80,BASE+0xdf8f38,BASE+0xce4b0):return
+        u.reg_write(r.UC_ARM64_REG_PC,u.reg_read(r.UC_ARM64_REG_LR))
+    u.hook_add(UC_HOOK_CODE,hook)
+    u.reg_write(r.UC_ARM64_REG_X0,OBJ)
+    u.reg_write(r.UC_ARM64_REG_SP,STACK+0x1f000);u.reg_write(r.UC_ARM64_REG_LR,STOP)
+    u.emu_start(BASE+0x19ddd20,STOP,count=2000)
+    assert u.reg_read(r.UC_ARM64_REG_PC)==STOP and calls==[0x15800006]
+    pair=(first,second) if success else (0x777,0x888)
+    assert bytes(u.mem_read(OBJ+0x4648,8))==struct.pack('<II',*pair)
+    combined=(pair[1]+(pair[0]<<4))&0xffffffff
+    assert struct.unpack('<II',u.mem_read(OBJ+0x3214,8))==(combined,0)
+    assert u.mem_read(OBJ+0x321c,1)==b'\0'
+    assert u.reg_read(r.UC_ARM64_REG_X0)==1
+    return dict(first=first,second=second,modeled_success=success,combined=combined)
+
+
 def main():
     path=ROOT/'sources/nvidia/Display.Driver/nvlddmkm.sys'
     assert hashlib.sha256(path.read_bytes()).hexdigest()==KMD_HASH
@@ -62,6 +99,9 @@ def main():
     cases=[run(pe,w) for w in (0,0x23,0x25,0x26,0xabcd0023,0xffffffff)]
     cases += [run(pe,0x23,length=n) for n in (0,0xc5b7,0xc5b9)]
     cases.append(run(pe,0x23,null=True))
+    source_cases=[source_query(pe,a,b,s) for a,b,s in
+                  [(0x23,0,True),(0x25,1,True),(0x26,0xf,True),
+                   (0xffffffff,0xffffffff,True),(0x23,0,False)]]
     routes=[]
     for kind, subtype in [(k,s) for k in (0,1,4,5,6) for s in (0,1,2,3)]+[(None,None)]:
         u=Uc(UC_ARCH_ARM64,UC_MODE_ARM)
@@ -82,8 +122,10 @@ def main():
         routes.append(dict(kind=kind,subtype=subtype,alternate=alternate,valid_object=selected))
     print(json.dumps(dict(passed=True,hardware_access=False,producer='0x19dfd58',
                          source='object+0x4648',destination='private+0xec',cases=cases,router_cases=routes,
+                         source_query_cases=source_cases,
                          limitations=['Success executes only through 0x19dfe04; remaining producer code is not executed',
                                       'Other private-field builder and memset are modeled',
+                                      'Control method 0x15800006 response is modeled; its producer remains unresolved',
                                       'Kind/subtype meaning, actual N1X object value and OS callback binding remain unresolved']),indent=2))
 
 

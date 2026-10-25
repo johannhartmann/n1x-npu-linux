@@ -363,3 +363,29 @@ name that class or connect it to the ACPI NPU PDO. In particular, GPU versus
 NPU attribution still requires a constructor/OS callback registration link.
 The original producer-prefix tests remain conditional on that selected class;
 they are not physical adapter-query observations.
+
+### Source-field initialization uses control method 0x15800006
+
+Original function **0x19ddd20** uses object+0x52f8 as its control object and
+calls helper **0xdd1a30** with method **0x15800006**, an eight-byte output
+buffer, and a 40-byte argument block initialized as two DWORDs `{1,1}` followed
+by 32 zero bytes. Its output buffer is zeroed before the call; a separate
+status pointer is also supplied. When the helper returns bit 0 set, the
+function copies the two output DWORDs to **object+0x4648/+0x464c**. When bit 0
+is clear, it logs the status and preserves the old object fields.
+
+Both paths then compute `(second + (first << 4)) mod 2^32` from the current
+object fields, store that DWORD at object+0x3214, zero +0x3218 and byte +0x321c,
+and **return 1 even after a failed control query**. Consequently that return
+value alone is not proof of a populated selector source. No architecture,
+revision or chip-version name is assigned to these two fields yet.
+
+The KMD selector script executes this complete original function in five
+additional cases: three ordinary pairs, a wrapping pair and a failed query
+that supplies output data but must leave the prior fields intact. It verifies
+the helper arguments, initialized buffers, resulting fields, combined value
+and final return. Stack-cookie, zeroing/logging helpers and the control response
+are modeled. The response generator behind 0x15800006, its physical result,
+and the object's construction/class binding remain unresolved. This adds a
+concrete control-method boundary to the recovered data path without executing
+that control operation on hardware.
