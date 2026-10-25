@@ -266,3 +266,35 @@ TensorRT requirement. No DLL constructors, backend factory, Windows APIs or
 compiler graph execute in this verifier. The DLL is an ignored analysis
 artifact, not installed or committed. Its backend implementation is the next
 code-analysis target; successful compilation remains unproved.
+
+### Windows has the missing backend-3 constructor
+
+`scripts/inspect_windows_mtl.py` executes the original Windows factory at RVA
+`0x4ca948` for backend values 0–4. This is the counterpart reached from the
+Windows MTL constructor at call RVA `0x43ae48`, located through its
+`Failed to initialize MTL` string reference. Backends 1/2 call legacy
+initialization at `0x4cb148`; backend 3 instead calls `0x626590`.
+That function allocates **232 bytes** and invokes constructor `0x617a70`.
+The factory retains this object at +16 of its 24-byte wrapper. Thus the
+Windows branch differs materially from the Linux factory's null path.
+
+```sh
+venv/bin/python scripts/inspect_windows_mtl.py
+```
+
+For backend 3, both the factory and object constructor execute original
+instructions. Explicit shims implement calloc, operator new and memcpy;
+legacy backend initialization is a synthetic success stub only in cases
+1/2. No Windows OS calls, graph compilation or hardware submissions execute.
+The verifier checks wrapper fields `{0x30000,3,1,7}`, original constructor
+completion and vtable RVA `0x114e988`. The constructor initializes its working
+path to `./`; this is object data, not a filesystem operation in the verifier.
+
+The vtable includes +16 → `0x624ea0` (stores two configuration pointers),
++32 → `0x624630`, +40 → `0x624eb0`, +64 → `0x624420` and
++80 → `0x629d80`. The +40 slot corresponds to the backend pre-translation
+call in the native wrapper; Windows method semantics and its complete input
+contract still need tracing. Strings and RTTI mention T254/T25x and a
+`hummingbird` IR/translator, but these names alone do not establish an
+instruction ABI or working compiler. The original Windows object now gives
+a concrete implementation to analyze instead of the Linux stub.
