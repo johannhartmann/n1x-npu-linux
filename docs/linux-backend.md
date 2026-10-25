@@ -424,3 +424,34 @@ checkpoint and actual package/filesystem state are authoritative for deployment.
 An unprivileged `pacman -Qk` can check headers/root files but cannot inspect the
 EFI mount's DTB paths because `/boot` is restricted; those permission errors
 must not be reported as proof that files are missing.
+
+### Raw HAL-1 low-power delay consumer
+
+`test_profile1_lpwr_consumer.py` executes original function `0x107318` after
+original reset initialization. Its input is the command-23 block at `0x186254`.
+The unaligned little-endian word at offset 2 is multiplied by 1000 with a full
+64-bit product. The timer helper `0x1053ba` reads the low/high timer registers
+at MMIO offsets `0x2c`/`0x30`, including its original rollover-consistency logic.
+The consumer subtracts the saved 64-bit value at `0x185ba8` modulo 2^64 and
+notifies only when elapsed is **strictly greater** than the product.
+
+Byte 1 equal to 2 suppresses notification. Values 0, 1 and 255 all pass this
+particular check; that does not establish their validity throughout the ABI.
+An already-notified byte at `0x18627d` or nonzero activity word at `0x186250`
+also suppresses notification. On the notification path the firmware calls
+`0x10044c` with arguments 12, 0 and a pointer to twelve zero bytes, then sets
+the already-notified byte to 1. The test intercepts that outbound transport
+boundary, not the timer or arithmetic functions. Optional diagnostic DMA is
+disabled by an explicit synthetic context flag.
+
+396 cases cover flag values, delay zero/one/19200/UINT32_MAX, threshold
+boundaries, suppression gates and saved timestamps around 32/64-bit rollover.
+The firmware code bytes remain unchanged. These are synthetic, stable timer
+registers: the test does not exercise a timer changing between individual reads.
+Neither physical tick duration nor the Windows provider field's units are
+established. The L4T `idledelay_us` correspondence remains useful evidence,
+not a measured P16 calibration. No live firmware boot or inference is implied.
+
+```sh
+venv/bin/python scripts/test_profile1_lpwr_consumer.py
+```
