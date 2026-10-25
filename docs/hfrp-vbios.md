@@ -189,3 +189,53 @@ reviewed read-only path to an existing firmware copy. The actual table values,
 override policy and remaining cold-start ordering are still required before
 integrating this policy with the physical HFRP/SROOT startup. Synthetic test
 values and another machine's firmware must not become board defaults.
+
+## Native gating-policy preparation
+
+`n1x_dla_prepare_gating()` now derives the normal HAL-1 gating policy from a
+fully decoded VBIOS policy. It produces the request-permission mask, the nine
+outer policy bytes consumed by CONFIG/power handling, the SLCG override flag
+and the four HAL feature bytes at offsets 0x47d/0x47e/0x484/0x485. It implements
+zero PPS substitutions and the original low-to-high feature update order,
+including bit 20's effect on both power and rail gating. It does not mutate
+its input or perform I/O. Partial three-table decoder results and feature bit
+0 (rejected by the Windows global initializer) are rejected with unchanged
+output. Reserved feature bits have no effect, matching the pinned updater.
+
+This API represents **normal defaults without registry overrides**. It does
+not implement pre-silicon owner mode, allocations, remapper installation,
+CONFIG exchange, or firmware loading. A nonzero request mask is permission to
+request an operation, not a measurement of physical power state. The caller
+still needs matching board provenance and the remaining startup sequence.
+
+`test_hfrp_policy_init.py` compares every output with execution of the complete
+Windows policy initializer and mask producer in **130 cases**: individual
+feature bits, conflicting low/high bits, random combined masks, zero/nonzero
+source flags and boundary PPS bytes. Five rejected-input cases preserve output
+and input. Normal and UBSan runs pass; the component builds against the running
+kernel. It remains outside the live module lists.
+
+## Additional acquisition checks
+
+The ASUS support page's `CheckModelExists` result identifies product ID
+**32883**; its BIOS request had instead used placeholder ID 99999. Requests to
+[GetPDBIOS with ID 32883](https://www.asus.com/support/webapi/ProductV2/GetPDBIOS?website=global&model=H7607BA&pdhashedid=&pdid=32883&cpu=&siteID=www&sitelang=)
+on 2026-10-25 still returned `FAIL`/null for global uppercase/lowercase model
+names and Japanese uppercase. No BIOS artifact was obtained. Raw responses
+are retained under ignored `results/asus-bios-32883-*.json`.
+
+The installed NVIDIA 615.78.08 source's `ctrl2080bios.h` GET_INFO/GET_INFO_V2
+interfaces expose revision/OEM revision, not the raw ROM. The Linux procfs
+information file prints a cached version string. Its public
+`kgspExtractVbiosFromRom` dispatch chooses the direct-ROM reader only for the
+listed Turing/Ampere/Ada families, not a demonstrated N1X path. These checks
+do not prove that all possible GPU APIs lack a dump mechanism.
+
+A Capstone scan of executable sections in the pinned Windows KMD and the
+extracted nvpep/nvSCP/nvsrootmbx drivers found no second confirmed reader of
+`0x1182bc80`. The inspected partial-constant matches were logging IDs,
+unrelated offsets or allocation flags. Ghidra exports are in ignored
+`results/kmd-ghidra-vbios-locator-neighbors.txt`. This does not identify the
+register or establish access safety; no physical locator read or arbitrary
+ROM mapping was attempted. The known address remains a reverse-engineering
+lead rather than an implemented Linux acquisition path.

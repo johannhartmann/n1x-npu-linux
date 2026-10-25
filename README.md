@@ -59,6 +59,8 @@ chain through power-on and the loader is now replayed offline; see
 The power-policy source is now traced to VBIOS BIT token `l`. A bounded Linux
 table locator and decoder match the original Windows parser on synthetic images;
 the full parser includes general feature and allocation tables used at startup.
+Native gating-policy preparation now matches the complete Windows initializer
+on synthetic inputs, including feature ordering and PPS substitutions.
 The complete registry/policy initializer is replayed with synthetic inputs,
 including feature precedence and the final remapper selection;
 the actual machine's policy values still require a matching VBIOS capture.

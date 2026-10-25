@@ -56,6 +56,65 @@ static int fits(size_t offset, size_t length, size_t size)
     return offset <= size && length <= size - offset;
 }
 
+int n1x_dla_prepare_gating(const struct n1x_dla_vbios_policy *policy,
+                            struct n1x_dla_gating_policy *out)
+{
+    struct n1x_dla_gating_policy result = {
+        .request_mask = 7,
+        .hal_flags = {1, 1, 0, 0},
+    };
+    unsigned int bit;
+
+    if (!policy || !out || policy->boot_tables_valid != 1)
+        return -EINVAL;
+    if (policy->feature_mask & 1U)
+        return -EOPNOTSUPP;
+    result.policy_bytes[0] = !policy->frequency_flags[0];
+    result.policy_bytes[1] = 1;
+    result.policy_bytes[2] = policy->gating_bytes[1] ? policy->gating_bytes[1] : 1;
+    result.policy_bytes[3] = !policy->gating_flags;
+    result.policy_bytes[4] = 1;
+    result.policy_bytes[5] = policy->gating_bytes[2] ? policy->gating_bytes[2] : 3;
+    result.policy_bytes[6] = !policy->gating_flags;
+    result.policy_bytes[7] = 1;
+    result.policy_bytes[8] = 15;
+    for (bit = 1; bit < 32; bit++) {
+        if (!(policy->feature_mask & (1U << bit)))
+            continue;
+        switch (bit) {
+        case 1: result.policy_bytes[0] = 1; break;
+        case 2: result.slcg_override = 1; break;
+        case 3:
+            result.policy_bytes[3] = 1;
+            result.policy_bytes[6] = 1;
+            break;
+        case 4: result.policy_bytes[6] = 1; break;
+        case 5: case 6: case 7: case 8:
+            result.hal_flags[bit - 5] = 0;
+            break;
+        case 17: result.policy_bytes[0] = 0; break;
+        case 18: result.slcg_override = 0; break;
+        case 19: result.policy_bytes[3] = 0; break;
+        case 20:
+            result.policy_bytes[6] = 0;
+            result.policy_bytes[3] = 0;
+            break;
+        case 21: case 22: case 23: case 24:
+            result.hal_flags[bit - 21] = 1;
+            break;
+        default: break;
+        }
+    }
+    if (!result.policy_bytes[0])
+        result.request_mask |= 0x110;
+    if (!result.policy_bytes[3])
+        result.request_mask |= 0x220;
+    if (!result.policy_bytes[6])
+        result.request_mask |= 0x440;
+    *out = result;
+    return 0;
+}
+
 int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
                                 struct n1x_dla_vbios_policy *out,
                                 struct n1x_dla_vbios_location *location)

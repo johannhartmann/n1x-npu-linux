@@ -53,4 +53,24 @@ struct n1x_dla_vbios_location {
 int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
                                 struct n1x_dla_vbios_policy *out,
                                 struct n1x_dla_vbios_location *location);
+
+struct n1x_dla_gating_policy {
+    __u32 request_mask;
+    /* Windows outer bytes 0x31d..0x325, retained without invented enum names. */
+    __u8 policy_bytes[9];
+    __u8 slcg_override;
+    /* Windows HAL bytes 0x47d, 0x47e, 0x484, 0x485. */
+    __u8 hal_flags[4];
+};
+
+/* Derive normal HAL-1 defaults from a fully decoded board policy. Implements
+ * the observed low-to-high feature-bit order, PPS zero substitutions and
+ * request-mask calculation. No registry overrides or pre-silicon owner mode.
+ * Rejects a partial decoder result and feature bit 0 (global init rejection).
+ * Unknown feature bits have no effect, as in the pinned Windows updater.
+ * Output unchanged on failure. No hardware access or physical power claim;
+ * caller still establishes provenance and implements all required setup.
+ */
+int n1x_dla_prepare_gating(const struct n1x_dla_vbios_policy *policy,
+                            struct n1x_dla_gating_policy *out);
 #endif

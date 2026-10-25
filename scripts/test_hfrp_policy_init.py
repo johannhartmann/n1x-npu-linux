@@ -3,6 +3,14 @@
 import hashlib
 import json
 import struct
+import ctypes
+import errno
+import os
+from pathlib import Path
+import random
+import shlex
+import subprocess
+import tempfile
 
 import pefile
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE
@@ -10,12 +18,69 @@ from unicorn import arm64_const as regs
 from arm64_stack_cookie import install as install_cookie
 from extract_firmware import KMD_SHA256
 from emulate_firmware_commands import ROOT
-from test_hfrp_vbios import fixture, run as parse_windows
+from test_hfrp_vbios import Policy, fixture, run as parse_windows
 
 BASE = 0x140000000
 OUTER, HAL, GLOBAL, OWNER, SETTINGS, STACK, STUB = (
     0x3c000000+i*0x10000 for i in range(7))
 STOP = STUB+0xff0
+
+
+class Gating(ctypes.Structure):
+    _fields_ = [('request_mask', ctypes.c_uint32), ('policy_bytes', ctypes.c_uint8*9),
+                ('slcg_override', ctypes.c_uint8), ('hal_flags', ctypes.c_uint8*4)]
+
+
+def compare_native(pe, fields):
+    with tempfile.TemporaryDirectory(prefix='n1x-gating-') as tmp:
+        library = Path(tmp)/'gating.so'
+        subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
+            '-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-Werror', '-I'+str(ROOT/'include'),
+            str(ROOT/'driver/n1x_dla_vbios.c'), '-o', str(library)], check=True)
+        lib = ctypes.CDLL(str(library))
+    lib.n1x_dla_prepare_gating.argtypes = [ctypes.POINTER(Policy), ctypes.POINTER(Gating)]
+    lib.n1x_dla_prepare_gating.restype = ctypes.c_int
+    rng = random.Random(0x200a)
+    cases = 0
+    # Every individual feature except rejected bit 0, opposing bits together,
+    # zero/max byte values and arbitrary combinations exercise update ordering.
+    masks = [0, 0xfffffffe]+[1 << bit for bit in range(1, 32)]+[rng.getrandbits(32) & ~1 for _ in range(32)]
+    for enabled in (0, 255):
+        for mask in masks:
+            policy, result = Policy(), Gating()
+            policy.boot_tables_valid = 1
+            policy.feature_mask = mask
+            policy.frequency_flags[0] = enabled
+            policy.gating_flags = enabled
+            policy.gating_bytes[:] = [0, rng.choice((0, 1, 255)), rng.choice((0, 3, 255))]
+            original = run(pe, dict(fields, **{
+                '0x80': mask, '0xa0': enabled, '0xec': enabled,
+                '0xf4': policy.gating_bytes[0], '0xf8': policy.gating_bytes[1],
+                '0xfc': policy.gating_bytes[2]}))
+            before = bytes(policy)
+            assert lib.n1x_dla_prepare_gating(ctypes.byref(policy), ctypes.byref(result)) == 0
+            assert bytes(policy) == before
+            assert result.request_mask == original['mask']
+            assert list(result.policy_bytes) == original['gating_bytes']
+            assert result.slcg_override == original['slcg_override']
+            assert list(result.hal_flags) == list(original['hal_flags'].values())
+            cases += 1
+    failures = 0
+    for invalid, expected in (('input', -errno.EINVAL), ('output', -errno.EINVAL),
+                              ('partial', -errno.EINVAL), ('valid_flag', -errno.EINVAL),
+                              ('feature0', -errno.EOPNOTSUPP)):
+        policy.boot_tables_valid = 1
+        policy.feature_mask = 0
+        if invalid == 'partial': policy.boot_tables_valid = 0
+        if invalid == 'valid_flag': policy.boot_tables_valid = 2
+        if invalid == 'feature0': policy.feature_mask = 1
+        ctypes.memset(ctypes.byref(result), 0xa5, ctypes.sizeof(result))
+        before = bytes(result), bytes(policy)
+        assert lib.n1x_dla_prepare_gating(None if invalid == 'input' else ctypes.byref(policy),
+            None if invalid == 'output' else ctypes.byref(result)) == expected
+        assert (bytes(result), bytes(policy)) == before
+        failures += 1
+    return {'original_vs_native_cases': cases, 'rejected_inputs': failures}
 
 
 def run(pe, fields, *, overrides=None, disabled=False, setup_error=0):
@@ -161,6 +226,7 @@ def main():
     absent = run(pe, None)
     assert absent['mask'] == 7 and absent['gating_bytes'] == [0]*9
     print(json.dumps({'passed': True, 'hardware_access': False, 'kmd_sha256': KMD_SHA256,
+                      'native_comparison': compare_native(pe, fields),
                       'policy_cases': rows, 'feature_bits': features,
                       'remapper_overrides_final_value': 1, 'setup_error_propagated': error['status'],
                       'limitations': ['HAL remapper/setup callbacks are stubbed; no resource allocation or device I/O',
