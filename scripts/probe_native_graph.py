@@ -24,7 +24,9 @@ ROOT=Path(__file__).resolve().parents[1]
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target',choices=('t234','t254','t256'),help='Attempt an offline compile for this explicit candidate target')
+    parser.add_argument('--capture-mtl',action='store_true',help='Stop under GDB and save intermediate MTL buffers without translation')
     args=parser.parse_args()
+    if args.capture_mtl and not args.target:parser.error('--capture-mtl requires --target')
     outdir=ROOT/'results'/('native-compile-'+args.target) if args.target else None
     if os.environ.get('N1X_COMPILER_SANDBOX')!='1':
         command=['bwrap','--unshare-all','--die-with-parent','--clearenv',
@@ -37,6 +39,9 @@ def main():
         if outdir:
             outdir.mkdir(parents=True,exist_ok=True)
             command+=['--bind',str(outdir),str(outdir)]
+        if args.capture_mtl:
+            command+=['--setenv','N1X_MTL_CAPTURE_DIR',str(outdir),'gdb','-batch',
+                      '-x',str(ROOT/'scripts/capture_native_mtl.gdb'),'--args']
         command+=[str(ROOT/'venv/bin/python'),str(Path(__file__).resolve()),*sys.argv[1:]]
         subprocess.run(command,check=True)
         return

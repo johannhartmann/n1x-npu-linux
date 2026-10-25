@@ -331,3 +331,33 @@ and copy do not select records identically. Tests cover kinds 0, 2, 3, 7,
 The copier receives no destination capacity; a future adapter must validate
 its own destination allocation and descriptor consistency before invoking it.
 These are raw backend statuses, not yet the wrapper's translated NvError.
+
+### Capture real intermediate buffers before the missing native backend
+
+```sh
+venv/bin/python scripts/probe_native_graph.py --target t254 --capture-mtl
+```
+
+This runs GDB inside the same device-free bubblewrap sandbox. A breakpoint
+records the original `MTL::preTranslate` object; the second stops at
+`nvdla_mtl_pre_translate` before its null-context check. The pinned library
+hash is checked by the Python probe before loading. The debugger copies the
+96-byte common argument and bounded, non-null buffers from the object's map
+nodes into `results/native-compile-t254/`, then ends the inferior. It does not
+change registers, bypass the missing backend, or submit a device operation.
+The script permits at most 128 tree nodes and less than 1 MiB per buffer.
+
+For the ReLU graph the captured buffer kinds 0–4 have byte lengths
+**44, 4376, 236, 34816, 1368**. Across separate captured processes all five
+buffer hashes matched, although process-local addresses changed. The kind-0
+buffer contains the initial 44-byte network container. This is an intermediate
+compiler object, not the final 256-byte firmware network record. Assigning
+firmware meanings to its offsets would be premature.
+
+The map rooted at native object +0x60 supplies pointers; +0xc0 supplies the
+first queried size value and +0x90 the other value. For kind 0 those latter
+values are 1 and 44, so capture uses +0x90 for the byte extent; other observed
+kinds have equal values. The manifest retains the raw maps without claiming
+universal count/alignment semantics. `mtl-common.bin` contains live pointers;
+they must be relocated and any nested references audited before replay in a
+different process or emulator. Raw captured buffers remain ignored artifacts.
