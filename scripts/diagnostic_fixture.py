@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Construct RAM-only diagnostic allocations from the provisional loadable projection."""
+"""Construct RAM-only allocations for the pinned diagnostic and ReLU fixtures."""
 import hashlib
 from inspect_loadable import Buffer, inspect
 
@@ -8,6 +8,19 @@ DIAGNOSTIC_HASH = '51d26d83317807984d6a4b29be68e6e370175a0a0bd30fad2179a057e3c28
 
 def build(data, host_base):
     assert hashlib.sha256(data).hexdigest() == DIAGNOSTIC_HASH
+    assert inspect(data)['tasks'][0]['address_ids']==list(range(9))
+    return _build(data,host_base)
+
+
+def build_relu(data, host_base):
+    """RAM-only backing for the exact compiler-produced ReLU artifact."""
+    from verify_relu_loadable import LOADABLE_HASH
+    assert hashlib.sha256(data).hexdigest()==LOADABLE_HASH
+    assert inspect(data)['tasks'][0]['address_ids']==[3,1,2,4,5,6,7,8]
+    return _build(data,host_base)
+
+
+def _build(data, host_base):
     metadata, view = inspect(data), Buffer(data)
     blobs = {}
     for table in view.tables(view.u('<I', 0), 5):
@@ -40,5 +53,7 @@ def build(data, host_base):
         allocation = layout[entry['memory_id']]
         assert entry['offset']+entry['size'] <= allocation['bytes']
         addresses.append(allocation['address']+entry['offset'])
-    assert metadata['tasks'][0]['address_ids'] == list(range(9))
-    return payload, addresses, layout
+    # Task-local positions differ from global address IDs in the ReLU fixture.
+    assert len(metadata['tasks'])==1
+    task_addresses=[addresses[i] for i in metadata['tasks'][0]['address_ids']]
+    return payload, task_addresses, layout

@@ -2,9 +2,16 @@ CC ?= cc
 CFLAGS ?= -O2 -g -Wall -Wextra -Werror
 # Explicit installed-kernel target; builds only, never installs/loads modules.
 KERNEL_RELEASE ?= $(shell uname -r)
-.PHONY: test test-vendor kernel-check module clean generate-probe
+.PHONY: test test-vendor test-relu kernel-check module clean generate-probe
 generate-probe:
 	venv/bin/python scripts/create_relu_probe.py
+# Requires the generated ReLU source, checked Windows outputs and serialized
+# artifact from docs/model-probe.md. Offline only; no module or device access.
+test-relu:
+	venv/bin/python scripts/verify_relu_loadable.py
+	venv/bin/python scripts/inspect_loadable_version_gate.py --relu
+	venv/bin/python scripts/inspect_content_materialization.py --relu
+	venv/bin/python scripts/test_relu_scheduler.py
 tests/test_firmware: tests/test_firmware.c driver/n1x_dla_firmware.c include/n1x_dla_firmware.h
 	$(CC) $(CFLAGS) -Iinclude tests/test_firmware.c driver/n1x_dla_firmware.c -o $@
 test: tests/test_firmware

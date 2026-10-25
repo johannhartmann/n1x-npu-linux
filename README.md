@@ -263,8 +263,14 @@ it remains a diagnostic comparison, not the final compilation handoff.
 The native serializer now packages the exact Windows results into a checked
 2,800,596-byte NVDA 0.9.0 artifact, including the task/address lists and all five
 execution/metadata blobs. This is a reproducible adapter for one ReLU fixture,
-not a native compiler backend. Windows runtime acceptance, firmware acceptance
-and verified Linux NPU inference remain unresolved.
+not a native compiler backend. The original Windows schema-validation prefix,
+content-version provider/gate and content materializer now accept this fixture
+in isolation. The unmodified HAL-1 firmware also processes its real instruction
+and address buffers and completes the original fence/IRQ path when given a
+modeled engine-completion status. Output remains poisoned because arithmetic
+is not emulated. Complete runtime initialization, physical firmware execution
+and verified Linux NPU inference remain unresolved. Run `make test-relu` after
+generating the artifacts described in the model-probe guide.
 
 
 The default SROOT image now has an [offline signed-envelope audit](docs/sroot-envelope.md):

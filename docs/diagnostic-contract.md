@@ -195,6 +195,12 @@ The two IRQ bits in this test are firmware-local modeled sources. They neither
 identify GSI 463/800 nor prove physical GIC delivery or hardware completion.
 No real IRQ, engine register or boot configuration is changed by this test.
 
+The newer [compiler-generated ReLU fixture](model-probe.md#unmodified-hal-1-firmware-processes-the-real-relu-task)
+now supplies a real 256-byte network descriptor with populated extension
+fields and reaches original scheduler/fence completion under an explicit RAM
+engine-status/IRQ model. This is a separate artifact; the legacy diagnostic
+above is unchanged and remains subject to its zero-extension limitation.
+
 ## Runtime selector provenance
 
 `scripts/inspect_runtime_selector.py` executes the pinned runtime constructor

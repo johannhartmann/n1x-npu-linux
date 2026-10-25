@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run original content-vector materialization with modeled C++ containers."""
+import argparse
 import hashlib
 import json
 import struct
@@ -10,16 +11,21 @@ from unicorn import arm64_const as r
 from inspect_runtime_selector import ROOT,BASE,RUNTIME_HASH
 from inspect_loadable import Buffer
 from diagnostic_fixture import DIAGNOSTIC_HASH
+from verify_relu_loadable import LOADABLE_HASH
 
 CTX,MODEL,HEAP,STACK,STOP=0x40000000,0x50000000,0x60000000,0x70000000,0x71000000
 
 
 def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--relu',action='store_true',help='Inspect the checked compiler-generated ReLU artifact')
+    args=parser.parse_args()
     path=ROOT/'sources/nvidia/Display.Driver/nvdla_runtime.dll'
     assert hashlib.sha256(path.read_bytes()).hexdigest()==RUNTIME_HASH
     pe=pefile.PE(str(path),fast_load=True)
-    data=(ROOT/'sources/diagnostic-verified.nvda').read_bytes()
-    assert hashlib.sha256(data).hexdigest()==DIAGNOSTIC_HASH
+    data=(ROOT/('results/native-compile-t254/relu.nvda' if args.relu else 'sources/diagnostic-verified.nvda')).read_bytes()
+    assert hashlib.sha256(data).hexdigest()==(LOADABLE_HASH if args.relu else DIAGNOSTIC_HASH)
+    blob_count=8 if args.relu else 7
     u=Uc(UC_ARCH_ARM64,UC_MODE_ARM)
     size=(pe.OPTIONAL_HEADER.SizeOfImage+4095)&~4095
     u.mem_map(BASE,size);u.mem_write(BASE,pe.get_memory_mapped_image())
@@ -94,7 +100,7 @@ def main():
     u.reg_write(r.UC_ARM64_REG_SP,STACK+0xf000);u.reg_write(r.UC_ARM64_REG_LR,STOP)
     u.emu_start(BASE+0x88160,STOP,count=100000)
     assert u.reg_read(r.UC_ARM64_REG_PC)==STOP and reg(0)==0
-    assert len(copies)==7
+    assert len(copies)==blob_count
     view=Buffer(data);rows=[]
     for table in view.tables(root,5):
         name=view.string(table,0);node=nodes[name]
@@ -144,12 +150,19 @@ def main():
                 assert bytes(u.mem_read(destination+size,32))==b'\xa5'*32
         rows.append(dict(name=name,bytes=size,version=list(u.mem_read(node+0x68,3)),
                          interface=struct.unpack('<I',u.mem_read(node+0x60,4))[0],original_content_getter_verified=True,
+                         sub_interface=struct.unpack('<I',u.mem_read(node+0x64,4))[0],
                          original_loader_copy_and_bounds_verified=True,
                          sha256=hashlib.sha256(expected).hexdigest()))
-    assert len(rows)==len(nodes)==7 and len(copies)==14 and len(callbacks)==7
-    assert len(comparisons)==7 and not any(row['match'] for row in comparisons)
-    assert next(row for row in rows if row['name']=='task0-addr0')['bytes']==128
+    assert len(rows)==len(nodes)==blob_count and len(copies)==2*blob_count and len(callbacks)==blob_count
+    assert len(comparisons)==blob_count
+    assert [row['name'] for row in comparisons if row['match']]==(['task-0-stats'] if args.relu else [])
+    if args.relu:
+        assert next(row for row in rows if row['name']=='task-0-nw')['bytes']==256
+        assert next(row for row in rows if row['name']=='task-0-stats')['sub_interface']==8
+        assert all(row['version']==([3,0,0] if row['interface']==1 else [0,0,0]) for row in rows)
+    else:assert next(row for row in rows if row['name']=='task0-addr0')['bytes']==128
     print(json.dumps(dict(passed=True,hardware_access=False,original_function='0x88160',contents=rows,
+                         loadable_sha256=hashlib.sha256(data).hexdigest(),fixture='relu' if args.relu else 'legacy diagnostic',
                          special_symbol_pattern=pattern,special_symbol_comparisons=comparisons,
                          limitations=['C++ map/string/allocation/copy helpers are modeled; original field extraction and control flow execute',
                                       'Recovered regex is matched by Python over ASCII names; original MSVC regex compiler/executor is not run',

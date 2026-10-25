@@ -801,8 +801,8 @@ IDs. This distinction matters when building the Linux submission path.
 The 256-byte compiler network descriptor contains nonzero extension values:
 `+0xcc=0x3054`, `+0xd0=4`, `+0xd4=0x3054`, `+0xd8=3`. These are actual compiler
 output, not guessed patches to the older diagnostic's zero padding. Their
-interpretation and operation with the pinned HAL-1 firmware still need to be
-checked against the original firmware/IRQ paths.
+original firmware/IRQ consumers are exercised below in RAM; physical engine
+behavior still needs qualification.
 
 The verifier checks the pinned artifact hash, task/submit relationships,
 shared-field projection, memory bounds for the named content and exact blob
@@ -811,7 +811,93 @@ does not claim that a partial NVDLA-v1 projection validates every field of the
 modern 0.9.0 schema. JSON kind 7 remains a separate research artifact.
 
 This is now a **serialized compiler artifact for the one exact ReLU fixture**.
-It is not a general Windows compiler port, Windows-runtime acceptance test or
-proof of firmware compatibility. The next driver-facing checks are original
-runtime materialization/version handling, network-extension interpretation,
-task/address construction and eventual numerical execution on the NPU.
+It is not a general Windows compiler port or proof of physical firmware
+compatibility. The next stages below exercise the original runtime validation,
+content materialization and firmware scheduler separately. Complete runtime
+initialization and eventual numerical execution on the NPU remain outstanding.
+
+### Original runtime validation and content materialization
+
+```sh
+make test-relu
+```
+
+This target requires the generated source/oracle and serialized artifact from
+the preceding workflows. It runs the artifact verifier and the three offline
+runtime/firmware probes. It neither loads a module nor accesses hardware.
+
+`inspect_loadable_version_gate.py --relu` enters the original Windows
+deserializer at **0x888a0**. All five original validators at **0x80518,
+0x80f40, 0x80a00, 0x80130 and 0x7ff08** execute against the complete generated
+file. The root-major check then reaches **0x889cc**, the first materialization
+boundary. Only mutex operations are modeled; none of the validators is
+replaced by a successful result. Negative cases reject a changed major
+version with status **0x430003**, and a short root word, an out-of-range root
+pointer and a truncated payload with status **11**. These negative changes
+exist only in emulator RAM.
+
+The content-version check now uses the original provider chain rather than
+an invented response: runtime vtable +0x1d0 → **0x25410** → vtable +0x200 →
+**0x25460**, with device-count getter **0x25630**. On an empty cache it calls
+**0x75810**, which returns the constant **0x30000** and does **not** query a
+device. The original converter emits/caches `{3,0,0}`; a second case exercises
+the already cached path. The actual network blob's required version `{3,0,0}`
+passes comparison with status 0, so this fixture does not need selector 3's
+error-bypass behavior. Selected-device/cache storage and CFG dispatch remain
+explicit fixtures. Matching the software constant is not a firmware handshake.
+
+`inspect_content_materialization.py --relu` runs original content materializer
+**0x88160**, getter **0x8b350**, and the bounded normal-loader copy slice on all
+**eight** embedded contents. Payloads remain byte-identical; the 256-byte
+network descriptor is not expanded or patched. The five task blobs retain
+interface 1/version 3.0.0. `task-0-stats` matches the recovered ASCII predicate
+`^task-?(\d+)-stat(s|_list)$` and the original branch assigns sub-interface 8.
+The regex helper and C++ containers are modeled as in the older diagnostic
+probe. Every undersized copy destination is rejected without a copy; exact
+sizes copy correctly and preserve a 32-byte guard.
+
+These results cover the executed validator prefix and content stages. They do
+not establish completed deserialization, all other table materializers, device
+initialization or every later normal-loader check.
+
+### Unmodified HAL-1 firmware processes the real ReLU task
+
+`test_relu_scheduler.py` uses the generated artifact and the existing Linux C
+fenced-task serializer from `driver/n1x_dla_task.c`. It builds eight task-local
+addresses in order `[3,1,2,4,5,6,7,8]`, preserving the distinction between
+task-local positions and global address IDs. The input contains the checked
+3136-byte CHW16 FP16 source; output starts as 3136 bytes of 0xa5. No expected
+numerical result is injected into output storage.
+
+The original HAL-1 firmware runs from reset, accepts the task through its
+original trap/command path, DMA-fetches all 256 initialized network bytes,
+fetches the real control record and instruction data, and processes the
+instruction-generated address/register writes. Seven observed address pairs
+at modeled offsets `0x2505c + 8*i` match the first seven task-local addresses.
+These are observations of this fixture, not an independently qualified host
+register-programming interface. The scheduler reaches its engine wait at
+return address **0x101424**, with one remaining control record.
+
+The original engine IRQ handler **0x1025e6** reads the compiler's two
+offset/mask pairs: `{0x3054,4}` at network +0xcc/+0xd0 and `{0x3054,3}` at
++0xd4/+0xd8. The test injects firmware-local IRQ bit **0x400** or **0x800**
+through the original trap and supplies a RAM value for engine offset 0x3054:
+
+| Modeled status | Observed result in running state 1 |
+| ---: | --- |
+| 0 or 4 | Remains waiting, record count 1, original fence unchanged, no task IRQ |
+| 1 or 5 | Record count 0, engine/queue idle, original postaction writes fence `0x12345678`, task IRQ bit 0x40 asserted |
+
+All eight cases return through original trap code. Completion uses the
+original scheduler, postaction and DMA code; no engine counter, firmware code,
+fence or queue state is patched to manufacture that result. The injected IRQ
+and status are explicit simulated hardware inputs. The actual firmware code
+bytes are checked unchanged, as are input and poisoned output buffers.
+
+This resolves the earlier **zero-extension barrier for this newly compiled
+fixture**: its suffix comes from the real compiler and supports the observed
+completion path. It does not repair the legacy diagnostic or prove equivalence
+to the opaque SROOT executable. There is no arithmetic-engine simulation,
+physical GIC delivery, measured DMA coherence or numerical NPU inference here.
+The successful cases prove control flow under modeled completion, not computed
+ReLU output. Hardware execution remains a separate qualification step.
