@@ -823,7 +823,7 @@ make test-relu
 ```
 
 This target requires the generated source/oracle and serialized artifact from
-the preceding workflows. It runs the artifact verifier and the six offline
+the preceding workflows. It runs the artifact verifier and the seven offline
 runtime/firmware probes. It neither loads a module nor accesses hardware.
 
 `inspect_loadable_version_gate.py --relu` enters the original Windows
@@ -970,6 +970,69 @@ The current RAM fixture helper accepts only pinned artifacts, and the
 mutated files are never passed to its firmware task runner or any device.
 No general model loader, full runtime initialization or physical compatibility
 is established by this probe.
+
+### Complete original memory-content initialization
+
+`inspect_memory_initialization.py` runs the original memory loader at runtime
+RVA **0x20d00** through its return at **0x210b8**, after the full constructor,
+CRT/regex setup and deserialization described above. It reuses the original
+materialized C++ name/offset vectors and content map. Getter **0x8b350**, string
+operations, version-provider chain, copy loop, cleanup and callback **0x1b280**
+execute original instructions. Allocation, byte-copy/fill, mutex and CFG
+boundaries retain the existing emulator models.
+
+The allocator-owned memory descriptor is an explicit RAM fixture, with the
+following fields observed in this function (not a public or device wire ABI):
+
+| Offset | Observed use |
+| --- | --- |
+| `0x00` | Owner passed to the post-copy callback |
+| `0x18` | Destination extent |
+| `0x25` | Initialization flag byte, tested with mask `2` |
+| `0x30` | Vector of 32-byte C++ content-name strings |
+| `0x48` | Vector of 64-bit destination offsets |
+| `0x60` | CPU destination pointer |
+
+The runtime/provider context is also synthetic. Original provider code fills
+its version cache with `3.0.0`; this is a software constant, not a device
+handshake. All five ReLU initializers pass the original interface-1 and
+dependency-version checks. They copy **2,798,720 bytes** in total: network 256,
+instructions 30,464, control data 320, preemption context 2,738,944 and
+statistics 28,736. Every byte matches the serialized model, and poisoned guard
+bytes remain unchanged. The other four memory records have no initialization
+flag and remain untouched, including input and output. No data transformation
+or missing network suffix is synthesized in this function.
+
+Fourteen additional RAM cases establish these boundaries:
+
+| Input | Original status / effect |
+| --- | --- |
+| Null model or memory descriptor | `4`, no copy |
+| Different name/offset vector lengths | `4`, no copy |
+| Name absent from the content map | `11`, no copy for that name |
+| Content plus offset exceeds destination extent | `6`, no copy for that content |
+| Nonzero offset ending exactly at the destination boundary | `0`, exact copy |
+| Initialization flag clear | `0`, no lookup/copy, even with mismatched vectors |
+| Initialized memory with empty vectors | `0`, no copy |
+| Two valid contents | `0`, copied in vector order |
+| Second name missing or second content out of bounds | `11` or `6`; the first copy remains |
+| Overlapping content destinations | `0`; later content overwrites earlier bytes |
+
+This resolves the missing-name question left by deserialization: the content
+loader rejects it when that memory entry is initialized. It also establishes
+that this loader is **not transactional**. A Linux loader should resolve and
+validate all selected contents and destination extents before the first copy,
+using subtraction-based bounds checks rather than unchecked offset-plus-size
+arithmetic. If matching the observed overlapping-content behavior, copies
+must preserve vector order. CPU allocations must remain private until the
+complete preparation succeeds; this test supplies no DMA ownership guarantees.
+
+The original statistics-index error still occurs earlier (status `2`, ignored
+by the outer deserializer), while this function copies the newer statistics
+blob successfully. Copy success therefore does not establish compatibility
+with the old statistics consumer. No original allocator, complete model load,
+device submission, physical firmware execution or numerical inference is
+claimed. Vendor files and the serialized input remain unchanged.
 
 ### Native model-address resolution
 

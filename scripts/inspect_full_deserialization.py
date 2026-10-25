@@ -25,7 +25,7 @@ STAGES = (0x8deb0, 0x895d0, 0x893e8, 0x88d10, 0x87fc0,
 CRT_INITIALIZERS = (0x5f5a0, 0x5f650, 0x56aa0, 0x585f0, 0x4df38)
 
 
-def execute(pe, data, poison, initialize_regex=True):
+def execute(pe, data, poison, initialize_regex=True, after_deserialize=None):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     u.mem_map(BASE, (pe.OPTIONAL_HEADER.SizeOfImage + 4095) & ~4095)
     u.mem_write(BASE, pe.get_memory_mapped_image())
@@ -323,6 +323,8 @@ def execute(pe, data, poison, initialize_regex=True):
     report.update(tasks=tasks, submits=submits, memory_records=len(memories),
                   address_records=len(addresses), content_records=len(content_nodes),
                   tensor_records=len(tensors), event_records=len(events), relocation_records=0)
+    if after_deserialize is not None:
+        report['loader'] = after_deserialize(u, call, allocate, scalar, vector, data)
     return report
 
 

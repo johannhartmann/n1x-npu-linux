@@ -12,6 +12,7 @@ test-relu:
 	venv/bin/python scripts/inspect_loadable_version_gate.py --relu
 	venv/bin/python scripts/inspect_content_materialization.py --relu
 	venv/bin/python scripts/inspect_full_deserialization.py
+	venv/bin/python scripts/inspect_memory_initialization.py
 	venv/bin/python scripts/test_statistics_v2.py
 	venv/bin/python scripts/test_model_addresses.py
 	venv/bin/python scripts/test_relu_scheduler.py
