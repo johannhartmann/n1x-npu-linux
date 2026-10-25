@@ -381,8 +381,9 @@ The verifier checks every captured file against its manifest digest and
 length, relocates its pointers into Unicorn memory and executes the original
 collector with count 1 and a preallocated output vector. It also executes
 the original stack-cookie and stack-probe helper instructions with modeled
-TEB/stack memory. Only memcpy is shimmed; vector growth and allocation are
-not used by this path.
+TEB/stack memory. Only memcpy is shimmed during the collector portion; vector growth and
+allocation are not used by that portion. The subsequent constructor/builder
+portion and its additional runtime models are described below.
 
 The resulting record stride is **0x9f60 / 40800 bytes**:
 
@@ -421,6 +422,46 @@ context. Process-local pointers are replaced with emulator addresses; the
 captured payload bytes are unchanged. The input's +48 pointer is supplied
 from kind 4, matching the dispatcher load. Contexts and the caller's scratch
 frame are modeled storage because execution stops before the builder uses
-them. No builder, IR object constructor, instruction generator or physical
-NPU executes in this dispatch test. The graph's complete Windows translation
+them. No builder or constructor executes in this dispatch slice. The same script
+now probes construction separately below; no instruction generator or
+physical NPU executes. The graph's complete Windows translation
 remains the next unresolved step.
+
+### Original SDP construction and initial builder execution
+
+The same `inspect_windows_mtl_collector.py` now continues beyond the dispatch
+check. It executes original ID-registry constructor `0xb7f40`, the full SDP
+constructor `0x6e34e8`, original object-registry constructor `0x6152e8`, and
+the required IR/graph container constructors. It then enters SDP builder
+`0x6f9928` with the previously verified captured-buffer arguments and stops
+at **`0x6f9a38`**, before subsequent operand/graph translation.
+
+The full SDP constructor returns its original object pointer and installs
+final vtable **`0x11664d8`**. The early builder allocates a separate SDP
+object, registers it through original vector/map code, copies the complete
+4376-byte surface into object +0x1b8, and copies the first 156 bytes of the
+common-operation buffer into +0x12f0. Both regions are compared byte-for-byte
+with the captured inputs; the final vtable is checked again. This establishes
+actual object construction and input transfer, not completion of the builder.
+
+Additional runtime modeling is explicit in the JSON output:
+
+- The PE TLS raw template is copied into a modeled single TLS slot, with a
+  modeled TEB and stack limit. Original stack protection and CRT static-guard
+  code execute against this storage.
+- SRW acquire/release/wake calls are single-thread no-ops, and thread ID is 1.
+  This does not emulate concurrent Windows behavior.
+- Operator new uses bounded poisoned emulator memory. Delete does not reuse
+  allocations; all memory disappears when the emulator exits. Memcpy accepts
+  bounded copies, including zero-length calls.
+- `URID_RANDOM` is explicitly absent, so the ID generator takes its
+  deterministic counter path. No random seed or counter return is fabricated.
+- Atexit registration returns success; teardown callbacks are not executed.
+
+Only the needed registry constructors are called, not the complete Windows
+DLL initializer list. No backend configuration or compiler algorithm is
+replaced with a success stub. Continuing beyond the recorded builder stop in
+an exploratory run reached additional graph processing and a CRT
+`LoadLibraryExW` dependency while emitting diagnostics; that path is not
+part of the passing test and remains unresolved. The early builder result
+must not be described as a successfully translated model or a loadable.
