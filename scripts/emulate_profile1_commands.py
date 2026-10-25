@@ -3,7 +3,7 @@
 import hashlib
 import json
 import struct
-from unicorn import Uc, UC_ARCH_RISCV, UC_MODE_RISCV32, UC_HOOK_CODE, UC_HOOK_MEM_WRITE
+from unicorn import Uc, UC_ARCH_RISCV, UC_MODE_RISCV32, UC_HOOK_CODE, UC_HOOK_MEM_WRITE, UC_HOOK_MEM_READ
 from unicorn import riscv_const as regs
 from extract_profile1_firmware import PROFILE1_HASH
 from emulate_profile1_boot import boot
@@ -13,7 +13,9 @@ CTX = 0x20010000
 
 
 def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=True,
-        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False):
+        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False, via_trap=False, trap_dma_ready=True):
+    if via_trap and not boot_from_reset:
+        raise ValueError('Trap tests require original reset initialization')
     if boot_from_reset:
         u, boot_state = boot(blob)
         assert boot_state['scheduler_wfi']
@@ -37,12 +39,19 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
         u.mem_write(address, bytes.fromhex('67800000'))
     u.mem_write(HOST, struct.pack('<I', challenge))
     u.mem_write(MMIO+0x40, struct.pack('<II', 0x11223344, 0x55667788))
-    transfers, interrupts, register_writes, completed = [], [], [], []
+    transfers, interrupts, register_writes, completed, method_reads = [], [], [], [], []
+    trap_entries, trap_returns, dispatches = [], [], []
 
     def reg(n):
         return u.reg_read(getattr(regs, f'UC_RISCV_REG_A{n}'))
 
     def hook(_, address, size, user):
+        if via_trap and address == 0x1002dc:
+            trap_entries.append(address)
+        if via_trap and address == 0x100324:
+            trap_returns.append(address)
+        if via_trap and address == 0x102232:
+            dispatches.append((reg(0), reg(1)))
         if not boot_from_reset and address in (0x101c96, 0x1073ae, 0x1073d4, 0x100e14):
             u.reg_write(regs.UC_RISCV_REG_A0, 0)
         elif address in (0x104ed8, 0x105004):
@@ -61,7 +70,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
 
     def write(_, access, address, size, value, user):
         offset = address-MMIO
-        if offset not in (0, 4, 0x40, 0x44, 0xd20, 0xd24):
+        if offset not in (0, 4, 0x40, 0x44, 0x74, 0xd20, 0xd24):
             return
         assert size == 4
         register_writes.append((offset, value))
@@ -87,10 +96,15 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             pending = struct.unpack('<I', u.mem_read(MMIO+8, 4))[0] & ~value
             u.mem_write(MMIO+8, struct.pack('<I', pending))
 
+    def read(_, access, address, size, value, user):
+        if via_trap and address in (MMIO+0x64, MMIO+0x68):
+            method_reads.append((address-MMIO, struct.unpack('<I', u.mem_read(address, 4))[0]))
+
+    u.hook_add(UC_HOOK_MEM_READ, read)
     u.hook_add(UC_HOOK_CODE, hook)
     u.hook_add(UC_HOOK_MEM_WRITE, write)
-    # Re-enter the real dispatcher without resetting firmware RAM or IRQ masks.
-    # Only the synthetic host input and CPU entry registers change per command.
+    # Preserve firmware RAM and IRQ masks across commands. Enter either the
+    # isolated dispatcher or the original trap under explicit synthetic IRQ state.
     for item in ([challenge] if sequence is None else sequence):
         u.mem_write(HOST, struct.pack('<I', item))
         if host_submit is not None:
@@ -98,11 +112,32 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             submitted_method, submitted_data = struct.unpack('<II', u.mem_read(MMIO+0x68, 8))
         else:
             submitted_method, submitted_data = method, HOST >> 8
-        u.reg_write(regs.UC_RISCV_REG_A0, submitted_method)
-        u.reg_write(regs.UC_RISCV_REG_A1, submitted_data)
-        u.reg_write(regs.UC_RISCV_REG_SP, call_sp)
-        u.reg_write(regs.UC_RISCV_REG_RA, STOP)
-        u.emu_start(0x102232, STOP, count=200000 if boot_from_reset else 2000)
+        if via_trap:
+            # Explicit synthetic one-entry method FIFO and external machine IRQ.
+            # Host write-data is 0x6c; the original firmware reads receive-data 0x64.
+            u.mem_write(MMIO+0x68, struct.pack('<I', submitted_method))
+            u.mem_write(MMIO+0x64, struct.pack('<I', submitted_data))
+            pending = struct.unpack('<I', u.mem_read(MMIO+8, 4))[0]
+            u.mem_write(MMIO+8, struct.pack('<I', pending | 4))
+            # Original ISR restores the DMA channel and waits for bit 1.
+            u.mem_write(MMIO+0x118, struct.pack('<I', 2 if trap_dma_ready else 0))
+            before = [u.reg_read(getattr(regs, f'UC_RISCV_REG_X{i}')) for i in range(1, 32)]
+            status = u.reg_read(regs.UC_RISCV_REG_MSTATUS)
+            u.reg_write(regs.UC_RISCV_REG_MSTATUS,
+                        (status & ~0x1888) | 0x1800 | (0x80 if status & 8 else 0))
+            u.reg_write(regs.UC_RISCV_REG_MCAUSE, 0x8000000b)
+            u.reg_write(regs.UC_RISCV_REG_MEPC, STOP)
+            entry = u.reg_read(regs.UC_RISCV_REG_MTVEC)
+        else:
+            u.reg_write(regs.UC_RISCV_REG_A0, submitted_method)
+            u.reg_write(regs.UC_RISCV_REG_A1, submitted_data)
+            u.reg_write(regs.UC_RISCV_REG_SP, call_sp)
+            u.reg_write(regs.UC_RISCV_REG_RA, STOP)
+            entry = 0x102232
+        u.emu_start(entry, STOP, count=200000 if boot_from_reset else 2000)
+        if via_trap and u.reg_read(regs.UC_RISCV_REG_PC) == STOP:
+            after = [u.reg_read(getattr(regs, f'UC_RISCV_REG_X{i}')) for i in range(1, 32)]
+            assert before == after, 'Original ISR did not restore interrupted registers'
         if u.reg_read(regs.UC_RISCV_REG_PC) != STOP:
             break
         completed.append(struct.unpack('<I', u.mem_read(HOST, 4))[0])
@@ -112,6 +147,8 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             'transfers': transfers, 'interrupts': interrupts,
             'register_writes': register_writes, 'completed': completed,
             'boot_from_reset': boot_from_reset, 'boot_state': boot_state,
+            'via_trap': via_trap, 'method_reads': method_reads,
+            'trap_entries': trap_entries, 'trap_returns': trap_returns, 'dispatches': dispatches,
             'final_irq_mask': struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0],
             'final_irq_pending': struct.unpack('<I', u.mem_read(MMIO+8, 4))[0],
             'final_mailboxes': struct.unpack('<II', u.mem_read(MMIO+0x40, 8))}

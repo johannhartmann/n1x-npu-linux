@@ -1139,8 +1139,56 @@ The initialized mask is 0x1f85 before each reply; the C ACK clears only SWGEN1,
 leaving 0x1f05, which is preserved across subsequent commands. This supplements
 the earlier zero-initial-mask model, whose final mask was zero. The response
 words, input/output values, mailbox restoration and remaining mask/pending bits
-are all checked. Commands still enter the dispatcher explicitly with method
-register values: delivery through the original trap handler and hardware method
-FIFO is **not** established by these tests. No opaque SROOT image acceptance,
+are all checked. The initial version of this test entered the dispatcher explicitly with method
+register values. The extension below now exercises the original trap handler
+under synthetic interrupt/FIFO injection; physical delivery remains unverified. No opaque SROOT image acceptance,
 physical boot, DMA coherency, kernel IRQ delivery, task execution or inference
 is claimed.
+
+## HAL-1 external trap, method receive registers and DMA-channel restore
+
+The reset-initialized command round trip now enters **the original mtvec at
+0x1002dc**, not the dispatcher. The synthetic external-machine-interrupt model
+supplies mcause=0x8000000b, pending IRQSTAT bit 2, and machine trap-entry CSR
+state. MEPC is a synthetic stop address; this tests ISR return without claiming
+to resume the real scheduler. No physical interrupt is delivered.
+
+Original handler 0x1005f2 reads the masked pending sources and calls 0x102508
+for bit 2. That function executes the following receive sequence:
+
+1. Read method ID from internal offset **0x68**.
+2. Read received method data from internal offset **0x64**.
+3. Write **1 to 0x74** to acknowledge the method entry.
+4. Tail-call original dispatcher 0x102232 with those method/data arguments.
+
+The Linux C sender's host write-data register is **0x6c**, whereas the firmware
+receive-data register is **0x64**. The test therefore supplies an explicit
+one-entry FIFO model between those sides. This is not proof of physical FIFO
+capacity, fullness transitions, register aliasing, device-side delivery timing
+or safe concurrent submissions. The C sender's original data-before-ID ordering
+is checked separately in the same trace.
+
+After processing the reply, the ISR calls original channel-state restore
+0x104dfe -> 0x104dae. That path calls 0x100262, which polls **offset 0x118 bit 1**
+before completing channel restoration. The synthetic model supplies value 2
+there, explicitly representing the required ready condition. The actual
+firmware then executes its original interrupt epilogue and **mret at 0x100324**.
+
+`test_response.py` verifies four consecutive C send / original trap / original
+command / C response-ACK / original mret rounds after reset initialization.
+Every round checks method reads, entry acknowledgement, response, one trap
+entry/return, and restoration of **all x1..x31 integer registers**, including
+SP. Only the two DMA transfer functions remain stubbed to RAM copies; trap,
+bookkeeping, logging, channel restoration and mret execute original code.
+
+A negative control with offset 0x118 held at zero still processes the first
+ping and obtains its host ACK, but remains in the DMA-ready poll before mret.
+No further command is submitted and no ISR return occurs within the instruction
+budget. Thus a mailbox reply does not by itself establish that all firmware
+interrupt cleanup has finished. This is another concrete reason to preserve
+DMA lifetime/quiescence handling in a future Linux backend. The observation
+budget is not a firmware timeout and the model does not establish recovery.
+
+The Linux host's ACPI GSI routing, firmware hardware boot, actual DMA status
+behavior, method FIFO and coherent mapping remain unverified. These tests
+establish the firmware's software receive path under explicit model conditions.

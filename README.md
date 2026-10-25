@@ -30,8 +30,9 @@ early IRQ initializer also executes without function stubs in RAM, and the
 Windows loader's route-mask capture is checked against those firmware outputs.
 The raw image also runs from reset to scheduler WFI without function stubs under
 an explicit synthetic hardware-handshake model. Four command/ACK round trips
-then use its original initialized context, with only DMA functions stubbed.
-This does not establish physical boot or interrupt-driven command delivery. The HAL-1 word uploader
+then use its original initialized context and trap handler through `mret`, with
+only DMA functions stubbed. Method FIFO delivery, machine IRQ entry and DMA-ready
+status are explicit synthetic models. Physical boot and IRQ delivery remain untested. The HAL-1 word uploader
 also matches Windows across 16,839 callback writes, and its shared core-selection
 routine and 78 accessor cases are verified. Physical boot remains unverified. Auxiliary-driver selection is traced below.
 HAL-1 common task headers and UMD version strides are now revalidated;

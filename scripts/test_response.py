@@ -153,7 +153,7 @@ def main():
         assert struct.unpack('<I', uc.mem_read(0x1862bc, 4))[0] == 0x180100
 
     initialized = firmware_profile1(profile1, sequence=sequence, host_handler=initialized_interrupt,
-                                    host_submit=submit, boot_from_reset=True)
+                                    host_submit=submit, boot_from_reset=True, via_trap=True)
     assert initialized['boot_state']['scheduler_wfi']
     assert initialized['returned'] and initialized['completed'] == [4, 0x44444444, 0x40000000, 12]
     assert len(submissions) == len(captured) == 4
@@ -161,10 +161,26 @@ def main():
     assert [row[2][0] for row in captured] == [0x102, 0x102, 0x110101, 0x102]
     assert initialized['final_irq_mask'] == 0x1f05 and initialized['final_irq_pending'] == 0
     assert initialized['final_mailboxes'] == (0x11223344, 0x55667788)
+    assert initialized['trap_entries'] == [0x1002dc]*4
+    assert initialized['trap_returns'] == [0x100324]*4
+    assert initialized['dispatches'] == [(0x301, HOST >> 8)]*4
+    assert initialized['method_reads'] == [(0x68, 0x301), (0x64, HOST >> 8)]*4
+    assert [item for item in initialized['register_writes'] if item[0] == 0x74] == [(0x74, 1)]*4
+    stalled = firmware_profile1(profile1, sequence=sequence, host_handler=initialized_interrupt,
+                                host_submit=submit, boot_from_reset=True, via_trap=True,
+                                trap_dma_ready=False)
+    assert not stalled['returned'] and not stalled['completed']
+    assert stalled['pc'] in ('0x100266', '0x10026a', '0x10026e')
+    assert stalled['trap_entries'] == [0x1002dc] and not stalled['trap_returns']
+    assert stalled['dispatches'] == [(0x301, HOST >> 8)]
+    assert len(stalled['interrupts']) == 1 and stalled['host_word'] == 4
     print(json.dumps({'scope': 'Linux C response capture/clear/ACK with synthetic IRQSTAT and real FW mailbox code',
                       'ordered_callback_count': len(expected),
                       'persistent_hal1_commands': len(sequence),
                       'commands_after_original_reset_initialization': len(sequence),
+                      'commands_through_original_trap_and_mret': len(sequence),
+                      'all_interrupted_integer_registers_restored': True,
+                      'missing_dma_ready_prevents_isr_return': True,
                       'initialized_command_stubs': ['DMA read', 'DMA write'],
                       'firmware_rearms_swgen1_before_each_reply': True,
                       'persistent_commands_use_linux_method_sender': True,
