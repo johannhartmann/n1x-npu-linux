@@ -251,7 +251,11 @@ whole-buffer comparison with the blob named positive is treated as success.
 
 A [small FP16 ReLU source model and CPU oracle](docs/model-probe.md) now provide
 a numerical target for investigating the Windows ARM TensorRT 11.4 compiler.
-It is not yet a compiled N1X loadable or a verified Linux inference test.
+The original Windows backend now completes pretranslation and translation of
+captured native ReLU intermediates in Unicorn, producing three checked nonempty
+buffers plus an empty descriptor. The probe verifies the full C++ initializer
+sequence and original output getters. Runtime packaging into a complete N1X
+loadable and verified Linux inference remain unresolved.
 
 
 The default SROOT image now has an [offline signed-envelope audit](docs/sroot-envelope.md):

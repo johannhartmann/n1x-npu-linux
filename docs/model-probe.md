@@ -458,9 +458,10 @@ Additional runtime modeling is explicit in the JSON output:
   deterministic counter path. No random seed or counter return is fabricated.
 - Atexit registration returns success; teardown callbacks are not executed.
 
-Only the needed registry and CRT initializers are called, not the complete
-Windows DLL initializer list. No backend configuration or compiler algorithm
-is replaced with a success stub.
+The required CRT initializers execute before the complete C++ initializer
+array, as described below. This still does not reproduce the complete Windows
+DLL startup environment. No backend configuration or compiler algorithm is
+replaced with a success stub.
 
 ### Complete SDP builder and IR graph construction
 
@@ -499,7 +500,7 @@ The additional Windows API model is deliberately limited:
 - Library handles are synthetic. Only the enumerated optional CRT capability
   queries are allowed. Optional extended locale APIs and `FlsGetValue2` return
   unavailable (error 127), so original fallback code executes. The recorded
-  `AreFileApisANSI` address is supplied but not called in this probe.
+  `AreFileApisANSI` address is supplied; the later path-conversion calls use it.
 - Critical sections and SRW operations use a single-thread model; pointer
   encoding is identity. VirtualProtect is modeled against the already RWX PE
   mapping. No host library, filesystem, driver, or Windows API is invoked.
@@ -526,7 +527,7 @@ already contains executable firmware instructions.
 Two additional original DLL initializers are required: `0x19160` builds the
 registry at `0x18ce010`, and `0x20fd0` constructs backend data tables including
 the table at `0x18d77f0`. Supplying empty replacement tables would not reproduce
-this behavior. The verifier executes both original routines.
+this behavior. Both now execute through the original C++ initializer array.
 
 The Windows filesystem fixture contains no `./compile_opt.json`. Its only
 attribute query returns false with error 2, so the original default-option
@@ -541,13 +542,77 @@ interfaces for this limited fixture, rather than a general Windows filesystem.
 Original code constructs path strings for `addViewGraph`, `rvvHostCopyGraph`,
 `rvvFgsConfigGraph`, `rvvPreTranslateGraph` and `rvvRmRvvHostCopyGraph` DOT
 outputs. Those strings are recorded; no DOT file is opened or written in this
-pretranslation run. The bounded emulator heap is 16 MiB; this run consumes
-3,932,384 bytes of its bump-allocation region without reusing freed storage.
-The instruction budget is checked: exhausting it cannot produce a passing
-result.
+pretranslation run. The current verifier reserves a bounded 128 MiB emulator
+heap for the subsequent translation and retains freed storage without reuse.
+Instruction budgets are checked: exhausting one cannot produce a passing result.
 
-The subsequent translation entry **`0x624eb0`** is still experimental. It
-reaches RVV annotation, hardware-layer and finalization paths but requires
-additional global initialization and filesystem modeling. It is not yet part
-of this passing check. There is still no verified serialized loadable or
-physical NPU execution.
+### Complete backend translation and extracted output buffers
+
+The verifier now executes original translation entry **`0x624eb0`** through
+return value **0**, again with no nonzero error-flag setter calls. The original
+code completes its RVV/hardware-layer processing. No external compiler is
+launched, and no model-translation function is replaced with a success stub.
+This is still a single captured ReLU case using backend constructor defaults,
+not a Windows frontend compilation of arbitrary ONNX models.
+
+The DLL startup code at `0xf03508` calls original initializer runner `0xf19358`
+with the range `[0x10523b0, 0x1055af0)`. The verifier executes that same runner
+and checks all **1,767 non-null C++ initializer calls in their original order**.
+This replaces the earlier selection of individual registry initializers.
+Required CRT setup additionally executes low-level I/O initializer `0xf1f750`
+and stdio initializer `0xf07dc0`. The modeled process has no inherited handles
+or standard console handles. The full Windows DLL startup/loader is not emulated.
+
+The filesystem model supports only the observed fixture: absent
+`./compile_opt.json` / `.//compile_opt.json` and virtual directories `/graph`,
+`/graph/kernel_compile`, `/graph/linker`. The original read-only OPEN_EXISTING
+request for the optional config returns INVALID_HANDLE_VALUE and error 2.
+Repeated directory creation returns error 183 and the original code queries
+the modeled directory attributes. This follows the narrow observed cases of
+[CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
+and [CreateDirectoryW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createdirectoryw).
+None of these requests creates a host directory or opens a host file.
+ASCII path conversion also supports the observed null-terminated input case.
+
+`RANDOM_SEED`, `URID_RANDOM`, `RANDOMIZE_UNUSED_REGISTER` and
+`VALIDATION_SYNC_STEP` are explicitly absent. Original default branches execute.
+The performance counter is synthetic (1 MHz, incrementing 1,000 ticks per
+query); it is not usable for performance measurements. All runtime models
+and call counts are included in the JSON report.
+
+The backend's vector at +0x58 contains four 24-byte descriptors:
+
+| Kind | Bytes | Observed content | SHA-256 |
+| --- | ---: | --- | --- |
+| 3 | 256 | Binary payload; semantics not yet decoded | `d40c6354059292dc4b2c3c7faca391b59240d305ce45b35da00c902ca67f778c` |
+| 0 | 0 | Empty descriptor | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| 6 | 28,736 | Binary payload with layer names | `da9182fb36e22c8262eed1d4baf3d0383d9f90826d99d692c1139f51ec56f7c3` |
+| 7 | 3,624 | JSON metadata, schema version 1 | `c1af31f16b73278e61f8e6b9b8cf3aedb3140c3caf79afc45c8e4623aa44d76d` |
+
+For each descriptor, original size getter `0x624420` and copy getter `0x6243a0`
+are invoked. Nonempty copies match the source bytes exactly and leave a
+16-byte destination guard unchanged. The empty descriptor returns size 0 and
+copy status `0x7fffffff`, consistent with the independently tested getter ABI;
+it is not treated as a successful nonempty copy.
+
+The JSON describes one `gp_layers` entry and four named layers for CPIPE0–3.
+Their ES entries have count 2 and offsets 24832, 25216, 25600 and 25984, all
+within the kind-6 payload. These values are checked without inferring an ES
+record size or writable hardware registers from the offsets alone. Tensor
+name lists in this metadata are empty; it does not supply a complete runtime
+I/O binding contract.
+
+After all checks pass, the script writes the payloads and provenance manifest
+under ignored `results/windows-backend-output/`. No vendor binary or generated
+payload is committed. A validation run relocated emulator memory, changed
+uninitialized-memory poison from 0xa5 to 0x5a, and changed the counter increment
+from 1,000 to 17; **all four output hashes remained identical**. This checks
+those sources of accidental dependence for this one fixture, not general
+compiler correctness.
+
+These are **backend output buffers, not a complete N1X loadable**. Runtime
+packaging, address/relocation bindings, acceptance by the P16 HAL-1 firmware,
+physical firmware boot, and numerical inference against the CPU oracle remain
+unverified. The next boundary is decoding and packaging these real outputs
+through the original compiler/runtime ABI, not submitting the raw buffers to
+hardware.

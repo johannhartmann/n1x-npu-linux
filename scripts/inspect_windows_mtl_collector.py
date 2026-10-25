@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Replay original Windows MTL input collection using captured ReLU buffers.
+"""Replay original Windows backend-3 translation on captured native ReLU inputs.
 
-Original collector, SDP builder, IR graph and backend pretranslation execute with explicit
-Windows/CRT models. This is an IR check, not instruction lowering, a loadable,
-or device execution. No host DLL or host OS call is dispatched.
+Runs in Unicorn with explicit Windows/CRT models and no host API dispatch.
+Exports checked backend buffers, not a complete loadable or physical inference.
 """
 import hashlib,json,struct
 from collections import Counter
@@ -31,8 +30,8 @@ def main():
     image=pe.get_memory_mapped_image();u=Uc(UC_ARCH_ARM64,UC_MODE_ARM)
     u.ctl_set_cpu_model(r.UC_CPU_ARM64_MAX)
     u.mem_map(base,(len(image)+4095)&~4095);u.mem_write(base,image)
-    heap,stack,stop,teb=0x40000000,0x41000000,0x42000000,0x43000000
-    u.mem_map(heap,0x1000000);u.mem_map(stack,0x40000)
+    heap,stack,stop,teb=0x40000000,0x50000000,0x51000000,0x52000000
+    u.mem_map(heap,0x8000000);u.mem_map(stack,0x40000)
     u.mem_write(stack,b'\xa5'*0x40000)
     u.mem_map(stop,4096);u.mem_map(teb,4096)
     u.mem_write(teb+0x10,struct.pack('<Q',stack))
@@ -59,7 +58,10 @@ def main():
         'EnterCriticalSection', 'LeaveCriticalSection', 'VirtualProtect',
         'HeapAlloc', 'HeapFree', 'EncodePointer', 'GetLastError', 'SetLastError',
         'FlsAlloc', 'FlsGetValue', 'FlsSetValue', 'FlsFree', 'GetProcessHeap',
-        'MultiByteToWideChar', 'WideCharToMultiByte', 'GetFileAttributesExW',
+        'MultiByteToWideChar', 'GetFileAttributesExW', 'WideCharToMultiByte',
+        'CreateDirectoryW', 'QueryPerformanceFrequency', 'QueryPerformanceCounter',
+        'InitializeCriticalSectionEx', 'DeleteCriticalSection',
+        'GetStartupInfoW', 'GetStdHandle', 'CreateFileW',
     )
     import_stubs={name:stop+0x100+4*i for i,name in enumerate(import_names)}
     import_stubs['AreFileApisANSI']=stop+0x200
@@ -84,11 +86,14 @@ def main():
     modules={};fls={};fls_callbacks={};last_error=0
     allocation_cursor=heap+0x60000
     allocations={};retired=set();copies=[];shims=Counter();queries=[]
-    graph_edges=[];path_queries=[];path_conversions=set();error_flags=[]
+    graph_edges=[]
+    initializer_calls=[];error_flags=[];file_events=[];path_conversions=set()
+    modeled_ticks=0
+    virtual_directories=set()
     process_heap=0x12340000  # An opaque handle, never dereferenced.
     def allocate(n,zero=False):
         nonlocal allocation_cursor
-        assert 0<n<0x10000 and allocation_cursor+n<heap+0x1000000
+        assert 0<n<=0x1000000 and allocation_cursor+n<heap+0x8000000,(n,hex(allocation_cursor))
         ptr=allocation_cursor;allocation_cursor+=(n+15)&~15
         u.mem_write(ptr,(b'\0' if zero else b'\xa5')*n)
         allocations[ptr]=n
@@ -105,9 +110,11 @@ def main():
             value.extend(char)
         raise AssertionError('Unterminated runtime API name')
     def hook(uc,address,size,user):
-        nonlocal last_error
+        nonlocal last_error,modeled_ticks
+        if address==base+0xf19384:initializer_calls.append(uc.reg_read(r.UC_ARM64_REG_X15)-base)
         if address==base+0xc6ddd8 and uc.reg_read(r.UC_ARM64_REG_X0):
             error_flags.append(uc.reg_read(r.UC_ARM64_REG_X0))
+
         if address==base+0x61e1b0:
             graph_edges.append(struct.unpack('<2I',uc.mem_read(uc.reg_read(r.UC_ARM64_REG_X1),8)))
         if address==base+0x61e298:
@@ -120,28 +127,52 @@ def main():
             if name in ('ReleaseSRWLockExclusive','AcquireSRWLockExclusive',
                         'WakeAllConditionVariable','EnterCriticalSection','LeaveCriticalSection'):
                 pass  # Explicit single-thread model; not a Windows lock implementation.
-            elif name in ('MultiByteToWideChar','WideCharToMultiByte'):
-                # Only the observed ASCII paths with explicit positive lengths.
+            elif name=='CreateFileW':
+                filename=cstring(x0,wide=True);disposition=uc.reg_read(r.UC_ARM64_REG_W4)
+                file_events.append(dict(api=name,path=filename,access=hex(x1),disposition=disposition))
+                assert filename=='.//compile_opt.json' and x1==0x80000000 and disposition==3
+                result=0xffffffffffffffff;last_error=2
+            elif name=='GetStartupInfoW':
+                uc.mem_write(x0,struct.pack('<I',104)+b'\0'*100)
+            elif name=='GetStdHandle':
+                assert x0&0xffffffff in (0xfffffff6,0xfffffff5,0xfffffff4);result=0
+            elif name=='InitializeCriticalSectionEx':
+                assert x0 and x2 in (0,0x1000000);result=1
+            elif name=='DeleteCriticalSection':pass
+            elif name=='MultiByteToWideChar':
                 dst,capacity=uc.reg_read(r.UC_ARM64_REG_X4),uc.reg_read(r.UC_ARM64_REG_W5)
-                assert x0==0 and 0<x3<256
-                if name=='MultiByteToWideChar':
-                    assert x1==8
-                    text=bytes(uc.mem_read(x2,x3)).decode('ascii')
-                    encoded=text.encode('utf-16-le');result=len(encoded)//2
-                else:
-                    default,used=uc.reg_read(r.UC_ARM64_REG_X6),uc.reg_read(r.UC_ARM64_REG_X7)
-                    assert x1==0x400 and default==0
-                    text=bytes(uc.mem_read(x2,x3*2)).decode('utf-16-le')
-                    encoded=text.encode('ascii');result=len(encoded)
-                    if used:uc.mem_write(used,struct.pack('<I',0))
-                path_conversions.add(text)
+                assert x0==0 and x1 in (8,9) and (0<x3<256 or x3==0xffffffff),(x0,x1,x3,cstring(x2))
+                raw=(cstring(x2)+'\0').encode('ascii') if x3==0xffffffff else bytes(uc.mem_read(x2,x3))
+                path_conversions.add(raw.decode('ascii').rstrip('\0'))
+                encoded=raw.decode('ascii').encode('utf-16-le');result=len(encoded)//2
                 if capacity:
                     assert dst and capacity>=result;uc.mem_write(dst,encoded)
+            elif name=='WideCharToMultiByte':
+                dst,capacity=uc.reg_read(r.UC_ARM64_REG_X4),uc.reg_read(r.UC_ARM64_REG_W5)
+                default,used=uc.reg_read(r.UC_ARM64_REG_X6),uc.reg_read(r.UC_ARM64_REG_X7)
+                assert x0==0 and x1==0x400 and default==0 and 0<x3<256
+                raw=bytes(uc.mem_read(x2,x3*2));encoded=raw.decode('utf-16-le').encode('ascii')
+                path_conversions.add(encoded.decode('ascii').rstrip('\0'))
+                result=len(encoded)
+                if used:uc.mem_write(used,struct.pack('<I',0))
+                if capacity:
+                    assert dst and capacity>=result;uc.mem_write(dst,encoded)
+            elif name=='CreateDirectoryW':
+                filename=cstring(x0,wide=True);file_events.append(dict(api=name,path=filename))
+                assert filename in ('/graph','/graph/kernel_compile','/graph/linker') and x1==0
+                assert filename=='/graph' or '/graph' in virtual_directories
+                if filename in virtual_directories:result=0;last_error=183
+                else:virtual_directories.add(filename);result=1
             elif name=='GetFileAttributesExW':
-                filename=cstring(x0,wide=True)
-                assert filename=='./compile_opt.json' and x1==0
-                path_queries.append(filename)
-                result=0;last_error=2  # Explicit fixture: optional config is absent.
+                filename=cstring(x0,wide=True);file_events.append(dict(api=name,path=filename))
+                assert x1==0
+                if filename=='./compile_opt.json':result=0;last_error=2
+                else:
+                    assert filename in virtual_directories
+                    uc.mem_write(x2,struct.pack('<I',16)+b'\0'*32);result=1
+            elif name in ('QueryPerformanceFrequency','QueryPerformanceCounter'):
+                if name=='QueryPerformanceCounter':modeled_ticks+=1000
+                uc.mem_write(x0,struct.pack('<Q',1000000 if name=='QueryPerformanceFrequency' else modeled_ticks));result=1
             elif name=='GetCurrentThreadId':result=1
             elif name=='GetProcessHeap':result=process_heap
             elif name=='LoadLibraryExW':
@@ -184,8 +215,9 @@ def main():
             shims['atexit registration; callbacks not executed']+=1
             uc.reg_write(r.UC_ARM64_REG_X0,0)
         elif address==base+0xf0c6b8:
-            shims['getenv URID_RANDOM unset']+=1
-            assert cstring(uc.reg_read(r.UC_ARM64_REG_X0))=='URID_RANDOM'
+            key=cstring(uc.reg_read(r.UC_ARM64_REG_X0))
+            assert key in ('URID_RANDOM','RANDOMIZE_UNUSED_REGISTER','RANDOM_SEED','VALIDATION_SYNC_STEP'),key
+            shims[f'getenv {key} unset']+=1
             uc.reg_write(r.UC_ARM64_REG_X0,0)
         elif address in (base+0xf028b0,base+0xf02908):
             shims['operator new' if address==base+0xf028b0 else 'operator delete; no reuse']+=1
@@ -194,12 +226,13 @@ def main():
             else:retire(ptr)
         elif address==base+0x1200:
             dst,src,n=(uc.reg_read(reg) for reg in (r.UC_ARM64_REG_X0,r.UC_ARM64_REG_X1,r.UC_ARM64_REG_X2))
-            assert 0<=n<=0x9f60
+            assert 0<=n<=0x1000000
             if n:uc.mem_write(dst,bytes(uc.mem_read(src,n)))
             copies.append(n);uc.reg_write(r.UC_ARM64_REG_X0,dst)
         else:return
         uc.reg_write(r.UC_ARM64_REG_PC,uc.reg_read(r.UC_ARM64_REG_LR))
-    u.hook_add(UC_HOOK_CODE,hook)
+    for address in set(stub_names)|{base+x for x in (0xf19384,0xc6ddd8,0x61e1b0,0x61e298,0xf02e08,0xf0c6b8,0xf028b0,0xf02908,0x1200)}:
+        u.hook_add(UC_HOOK_CODE,hook,begin=address,end=address)
     for reg,value in ((r.UC_ARM64_REG_X0,0),(r.UC_ARM64_REG_X1,common),(r.UC_ARM64_REG_X2,vector),
                       (r.UC_ARM64_REG_X18,teb),(r.UC_ARM64_REG_SP,stack+0x40000),(r.UC_ARM64_REG_LR,stop)):
         u.reg_write(reg,value)
@@ -232,17 +265,21 @@ def main():
         u.emu_start(base+address,until,count=instruction_limit)
         assert u.reg_read(r.UC_ARM64_REG_PC)==until
         return u.reg_read(r.UC_ARM64_REG_X0)
-    # Call actual registry constructors, not the whole DLL/CRT initializer list.
+    # Required original CRT setup precedes the complete C++ initializer array.
     assert invoke(0xf267d0)==1
     assert invoke(0xf190e0)==1
     assert struct.unpack('<Q',u.mem_read(base+0x1a19138,8))[0]==base+0x18ac930
     assert invoke(0xf1dce0)==1
     assert invoke(0xf2fa98)==1
-    invoke(0xb7f40,base+0x18cb7d0)
+    assert invoke(0xf1f750)==1
+    assert invoke(0xf07dc0)==0
+    initializer_array=pe.get_data(0x10523b0,0x1055af0-0x10523b0)
+    expected_initializers=[ptr-base for (ptr,) in struct.iter_unpack('<Q',initializer_array) if ptr]
+    assert len(expected_initializers)==1767
+    invoke(0xf19358,base+0x10523b0,base+0x1055af0,instruction_limit=100000000)
+    assert initializer_calls==expected_initializers
     assert invoke(0x6e34e8,heap+0x50000)==heap+0x50000
     assert struct.unpack('<Q',u.mem_read(heap+0x50000,8))[0]==base+0x11664d8
-    invoke(0x6152e8,base+0x18ccbb0)
-    invoke(0xb7f40,base+0x18ccc30)
     invoke(0x614da8,ir_object+8)
     invoke(0x614f68,ir_object+0x48)
     invoke(0x614f68,ir_object+0x88)
@@ -295,9 +332,6 @@ def main():
     graph_edges.clear()
     assert invoke(0x70e910,ir2,graph2,common)==graph2
     ir_graph=verify_graph(graph2,list(graph_edges))
-    # Original pass registry and static backend data-table initializers.
-    invoke(0x19160)
-    invoke(0x20fd0)
     mtl=heap+0xe00
     assert invoke(0x617a70,mtl)==mtl
     assert invoke(0x624630,mtl,common,instruction_limit=10000000)==0
@@ -309,16 +343,68 @@ def main():
     node=qword(begin)
     assert qword(node)==base+0x1150a90 and node_name(node)=='layer-anon-0'
     assert invoke(0x622bf0,pre_graph,dword(node+8))==node
-    assert path_queries==['./compile_opt.json'] and not error_flags
+    assert not error_flags
     pretranslation=dict(rva='0x624630',completed=True,return_value=0,
                         graph_nodes=1,graph_edges=0,node_name=node_name(node),
-                        node_vtable_rva=hex(qword(node)-base),
-                        original_initializers=['0x19160','0x20fd0'],
-                        optional_config='absent',error_flags=error_flags,
-                        path_queries=path_queries,path_conversions=sorted(path_conversions))
+                        node_vtable_rva=hex(qword(node)-base),optional_config='absent')
+    assert invoke(0x624eb0,mtl,common,instruction_limit=100000000)==0
+    assert not error_flags
+    begin,end,capacity=struct.unpack('<3Q',u.mem_read(mtl+0x58,24))
+    assert end-begin==4*24 and end<=capacity
+    expected_outputs={
+        0:(0,'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
+        3:(256,'d40c6354059292dc4b2c3c7faca391b59240d305ce45b35da00c902ca67f778c'),
+        6:(28736,'da9182fb36e22c8262eed1d4baf3d0383d9f90826d99d692c1139f51ec56f7c3'),
+        7:(3624,'c1af31f16b73278e61f8e6b9b8cf3aedb3140c3caf79afc45c8e4623aa44d76d'),
+    }
+    outputs=[];payloads={}
+    for slot in range(begin,end,24):
+        descriptor=bytes(u.mem_read(slot,24))
+        ptr=struct.unpack_from('<Q',descriptor)[0];kind=descriptor[12]
+        n=struct.unpack_from('<Q',descriptor,16)[0]
+        assert kind in expected_outputs and kind not in payloads
+        assert n==expected_outputs[kind][0]
+        data=bytes(u.mem_read(ptr,n)) if n else b''
+        sha=hashlib.sha256(data).hexdigest()
+        assert sha==expected_outputs[kind][1],(kind,sha)
+        u.mem_write(heap+0xf00,bytes([kind]));u.mem_write(heap+0xf10,b'\xa5'*16)
+        assert invoke(0x624420,mtl,heap+0xf00,heap+0xf10)==0
+        assert qword(heap+0xf10)==n and bytes(u.mem_read(heap+0xf18,8))==b'\xa5'*8
+        destination=allocate(n+16)
+        copy_status=invoke(0x6243a0,mtl,heap+0xf00,destination)
+        assert copy_status==(0 if n else 0x7fffffff)
+        assert (bytes(u.mem_read(destination,n)) if n else b'')==data
+        assert bytes(u.mem_read(destination+n,16))==b'\xa5'*16
+        payloads[kind]=data
+        outputs.append(dict(kind=kind,bytes=n,sha256=sha,file=f'kind-{kind}.bin',
+                            original_size_and_copy_verified=True,copy_status=copy_status))
+    metadata=json.loads(payloads[7])
+    assert metadata['schema_version']==1 and len(metadata['gp_layers'])==1
+    assert len(metadata['layers'])==4
+    es_lists=metadata['gp_layers'][0]['es_lists']
+    assert metadata['gp_layers'][0]['id']==0 and len(es_lists)==4
+    for index,entry in enumerate(es_lists):
+        assert entry['es_type']==f'NVDLA_PAUSE_ES_CPIPE{index}' and entry['count']==2
+        assert entry['blob_offset']==24832+index*384<len(payloads[6])
+        assert metadata['layers'][index]['name']==f'layer-anon-0_cpipe_tile_{index}_ts_hwl_cpipe_{index}'
+    # Write artifacts only after all checks. These are research intermediates.
+    outdir=ROOT/'results/windows-backend-output';outdir.mkdir(exist_ok=True)
+    for entry in outputs:(outdir/entry['file']).write_bytes(payloads[entry['kind']])
+    output_manifest=dict(passed=True,hardware_access=False,complete_loadable=False,
+                         windows_sha256=digest,source_capture='native-compile-t254',
+                         input_sha256={kind:hashlib.sha256(data).hexdigest() for kind,data in buffers.items()},
+                         pretranslation_return=0,translation_return=0,outputs=outputs)
+    (outdir/'manifest.json').write_text(json.dumps(output_manifest,indent=2)+'\n')
     print(json.dumps(dict(passed=True,hardware_access=False,windows_sha256=digest,
         collector_rva='0x756630',operation_count=1,record_bytes=len(record),
-        pretranslation=pretranslation,allocator_bytes_used=allocation_cursor-(heap+0x60000),
+        pretranslation=pretranslation,
+        translation=dict(rva='0x624eb0',completed=True,return_value=0,outputs=outputs,
+                         output_manifest=str(outdir/'manifest.json'),complete_loadable=False),
+        cpp_initializers=dict(runner_rva='0xf19358',array_begin_rva='0x10523b0',
+                              array_end_rva='0x1055af0',count=len(initializer_calls),order_verified=True),
+        allocator_bytes_used=allocation_cursor-(heap+0x60000),
+        file_events=file_events,virtual_directories=sorted(virtual_directories),
+        path_conversions=sorted(path_conversions),error_flags=error_flags,
         dispatch=dict(surface_type_offset='0x1004',surface_type=2,builder_rva='0x6f9928',
                       constructor_rva='0x6e34e8',constructor_label='MtlEngineSdp',
                       original_dispatch_executed=True,original_constructor_completed=True,
@@ -327,18 +413,18 @@ def main():
                                                dict(offset="0x12f0",bytes=156,source_kind=2)],
                       verified_argument_source_kinds=[None,2,1,3,0,4,None]),
         original_stack_helpers_executed=True,memcpy_size_counts=dict(Counter(copies)),runtime_shims=shims,
-        crt_initializers=["0xf267d0","0xf190e0","0xf1dce0","0xf2fa98"],
+        crt_initializers=["0xf267d0","0xf190e0","0xf1dce0","0xf2fa98","0xf1f750","0xf07dc0"],
         optional_api_queries=queries,fls_cleanup_callbacks_not_executed=fls_callbacks,
         builder_graph=builder_graph,ir_graph=dict(rva="0x70e910",completed=True,**ir_graph),
         verified_regions=[dict(offset=0,bytes=236,source_kind=2),dict(offset=240,bytes=34816,source_kind=3),
                           dict(offset=35056,bytes=4376,source_kind=1)],
         untouched_regions=[dict(offset=236,bytes=4),dict(offset=39432,bytes=1368)],
         limitations=['Collector uses a preallocated record; builder graph vectors execute original growth with modeled allocation',
-                     'Copied buffers match the captured native input, not translated firmware output',
+                     'One captured ReLU input is translated under constructor defaults; full Windows frontend configuration is not reproduced',
                      'Windows APIs use a single-thread C-locale model; optional locale APIs are unavailable',
                      'CRT teardown is not executed and freed storage is not reused',
-                     'Pretranslation uses constructor defaults and absent compile_opt.json; full Windows frontend setup is not reproduced',
-                     'No instruction lowering/translation, loadable or inference is established']),indent=2))
+                     'Clock ticks are synthetic; no performance measurements are valid',
+                     'Backend outputs are not a complete loadable; runtime packaging, firmware acceptance and inference remain unverified']),indent=2))
 
 
 if __name__=='__main__':main()
