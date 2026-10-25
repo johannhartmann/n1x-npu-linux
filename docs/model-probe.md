@@ -238,3 +238,31 @@ backends compile valid models or that another compiler version behaves alike.
 Do not change the backend to 1/2 and label the resulting format N1X-compatible.
 The Windows compiler dependency remains the route to investigate for the
 missing backend implementation. No machine code has been patched.
+
+### Windows compiler acquired from the SDK
+
+The [official TensorRT download page](https://developer.nvidia.com/tensorrt/download/11x)
+links the Windows ARM64 SDK archive
+`TensorRT-Enterprise-11.4.0.106-Windows-arm64-cuda-13.4-Release-external.zip`.
+Unlike the Python wheel, its central directory contains
+`TensorRT-11.4.0.106/bin/nvdla_compiler.dll` (26536048 bytes, compressed
+7564073 bytes). The archive is 332016940 bytes. HTTP range requests acquired
+its central directory and this entry; the full SDK archive was not downloaded.
+
+```sh
+venv/bin/python scripts/fetch_windows_compiler.py
+venv/bin/python scripts/inspect_windows_compiler.py
+```
+
+The extractor checks response lengths, uncompressed length, ZIP CRC32 and
+pinned DLL SHA-256
+`0ef7c9366205a7151490f07b0df94a5e6908c94da32e83fabaaef5d06254147d`.
+This pins the acquired file; it is not an independent Authenticode trust check.
+The verifier confirms ARM64 PE, 655 named exports and imports from KERNEL32,
+dbghelp and ADVAPI32. It executes the original leaf version getter at RVA
+`0x4b2290` in Unicorn: `{1,3,16,13}`, status 0, preserved trailing bytes, and
+status 4 for null output. These match the native counterpart and Windows
+TensorRT requirement. No DLL constructors, backend factory, Windows APIs or
+compiler graph execute in this verifier. The DLL is an ignored analysis
+artifact, not installed or committed. Its backend implementation is the next
+code-analysis target; successful compilation remains unproved.
