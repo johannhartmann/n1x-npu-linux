@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Replay original Windows MTL input collection using captured ReLU buffers.
 
-Original collector, SDP builder and IR graph construction execute with explicit
+Original collector, SDP builder, IR graph and backend pretranslation execute with explicit
 Windows/CRT models. This is an IR check, not instruction lowering, a loadable,
 or device execution. No host DLL or host OS call is dispatched.
 """
@@ -32,7 +32,7 @@ def main():
     u.ctl_set_cpu_model(r.UC_CPU_ARM64_MAX)
     u.mem_map(base,(len(image)+4095)&~4095);u.mem_write(base,image)
     heap,stack,stop,teb=0x40000000,0x41000000,0x42000000,0x43000000
-    u.mem_map(heap,0x100000);u.mem_map(stack,0x40000)
+    u.mem_map(heap,0x1000000);u.mem_map(stack,0x40000)
     u.mem_write(stack,b'\xa5'*0x40000)
     u.mem_map(stop,4096);u.mem_map(teb,4096)
     u.mem_write(teb+0x10,struct.pack('<Q',stack))
@@ -59,6 +59,7 @@ def main():
         'EnterCriticalSection', 'LeaveCriticalSection', 'VirtualProtect',
         'HeapAlloc', 'HeapFree', 'EncodePointer', 'GetLastError', 'SetLastError',
         'FlsAlloc', 'FlsGetValue', 'FlsSetValue', 'FlsFree', 'GetProcessHeap',
+        'MultiByteToWideChar', 'WideCharToMultiByte', 'GetFileAttributesExW',
     )
     import_stubs={name:stop+0x100+4*i for i,name in enumerate(import_names)}
     import_stubs['AreFileApisANSI']=stop+0x200
@@ -83,11 +84,11 @@ def main():
     modules={};fls={};fls_callbacks={};last_error=0
     allocation_cursor=heap+0x60000
     allocations={};retired=set();copies=[];shims=Counter();queries=[]
-    graph_edges=[]
+    graph_edges=[];path_queries=[];path_conversions=set();error_flags=[]
     process_heap=0x12340000  # An opaque handle, never dereferenced.
     def allocate(n,zero=False):
         nonlocal allocation_cursor
-        assert 0<n<0x10000 and allocation_cursor+n<heap+0x100000
+        assert 0<n<0x10000 and allocation_cursor+n<heap+0x1000000
         ptr=allocation_cursor;allocation_cursor+=(n+15)&~15
         u.mem_write(ptr,(b'\0' if zero else b'\xa5')*n)
         allocations[ptr]=n
@@ -105,6 +106,8 @@ def main():
         raise AssertionError('Unterminated runtime API name')
     def hook(uc,address,size,user):
         nonlocal last_error
+        if address==base+0xc6ddd8 and uc.reg_read(r.UC_ARM64_REG_X0):
+            error_flags.append(uc.reg_read(r.UC_ARM64_REG_X0))
         if address==base+0x61e1b0:
             graph_edges.append(struct.unpack('<2I',uc.mem_read(uc.reg_read(r.UC_ARM64_REG_X1),8)))
         if address==base+0x61e298:
@@ -117,6 +120,28 @@ def main():
             if name in ('ReleaseSRWLockExclusive','AcquireSRWLockExclusive',
                         'WakeAllConditionVariable','EnterCriticalSection','LeaveCriticalSection'):
                 pass  # Explicit single-thread model; not a Windows lock implementation.
+            elif name in ('MultiByteToWideChar','WideCharToMultiByte'):
+                # Only the observed ASCII paths with explicit positive lengths.
+                dst,capacity=uc.reg_read(r.UC_ARM64_REG_X4),uc.reg_read(r.UC_ARM64_REG_W5)
+                assert x0==0 and 0<x3<256
+                if name=='MultiByteToWideChar':
+                    assert x1==8
+                    text=bytes(uc.mem_read(x2,x3)).decode('ascii')
+                    encoded=text.encode('utf-16-le');result=len(encoded)//2
+                else:
+                    default,used=uc.reg_read(r.UC_ARM64_REG_X6),uc.reg_read(r.UC_ARM64_REG_X7)
+                    assert x1==0x400 and default==0
+                    text=bytes(uc.mem_read(x2,x3*2)).decode('utf-16-le')
+                    encoded=text.encode('ascii');result=len(encoded)
+                    if used:uc.mem_write(used,struct.pack('<I',0))
+                path_conversions.add(text)
+                if capacity:
+                    assert dst and capacity>=result;uc.mem_write(dst,encoded)
+            elif name=='GetFileAttributesExW':
+                filename=cstring(x0,wide=True)
+                assert filename=='./compile_opt.json' and x1==0
+                path_queries.append(filename)
+                result=0;last_error=2  # Explicit fixture: optional config is absent.
             elif name=='GetCurrentThreadId':result=1
             elif name=='GetProcessHeap':result=process_heap
             elif name=='LoadLibraryExW':
@@ -200,11 +225,11 @@ def main():
     assert arguments==[ir_object,pointers[2],pointers[1],pointers[3],pointers[0],pointers[4],graph_object]
     assert buffers[1][0x1004]==2
     assert pe.get_data(0x1166560,13)==b'MtlEngineSdp\0'
-    def invoke(address,*args,until=stop):
+    def invoke(address,*args,until=stop,instruction_limit=2000000):
         for reg,value in zip((r.UC_ARM64_REG_X0,r.UC_ARM64_REG_X1,r.UC_ARM64_REG_X2,r.UC_ARM64_REG_X3,
                               r.UC_ARM64_REG_X4,r.UC_ARM64_REG_X5,r.UC_ARM64_REG_X6),args):u.reg_write(reg,value)
         u.reg_write(r.UC_ARM64_REG_SP,stack+0x40000);u.reg_write(r.UC_ARM64_REG_LR,stop)
-        u.emu_start(base+address,until,count=2000000)
+        u.emu_start(base+address,until,count=instruction_limit)
         assert u.reg_read(r.UC_ARM64_REG_PC)==until
         return u.reg_read(r.UC_ARM64_REG_X0)
     # Call actual registry constructors, not the whole DLL/CRT initializer list.
@@ -270,8 +295,30 @@ def main():
     graph_edges.clear()
     assert invoke(0x70e910,ir2,graph2,common)==graph2
     ir_graph=verify_graph(graph2,list(graph_edges))
+    # Original pass registry and static backend data-table initializers.
+    invoke(0x19160)
+    invoke(0x20fd0)
+    mtl=heap+0xe00
+    assert invoke(0x617a70,mtl)==mtl
+    assert invoke(0x624630,mtl,common,instruction_limit=10000000)==0
+    pre_graph=qword(mtl+0xc0)
+    assert pre_graph in allocations and pre_graph not in retired
+    assert qword(pre_graph+0x18)==1 and qword(pre_graph+0x58)==0
+    begin,end,capacity=struct.unpack('<3Q',u.mem_read(pre_graph+0xe0,24))
+    assert end-begin==8 and end<=capacity
+    node=qword(begin)
+    assert qword(node)==base+0x1150a90 and node_name(node)=='layer-anon-0'
+    assert invoke(0x622bf0,pre_graph,dword(node+8))==node
+    assert path_queries==['./compile_opt.json'] and not error_flags
+    pretranslation=dict(rva='0x624630',completed=True,return_value=0,
+                        graph_nodes=1,graph_edges=0,node_name=node_name(node),
+                        node_vtable_rva=hex(qword(node)-base),
+                        original_initializers=['0x19160','0x20fd0'],
+                        optional_config='absent',error_flags=error_flags,
+                        path_queries=path_queries,path_conversions=sorted(path_conversions))
     print(json.dumps(dict(passed=True,hardware_access=False,windows_sha256=digest,
         collector_rva='0x756630',operation_count=1,record_bytes=len(record),
+        pretranslation=pretranslation,allocator_bytes_used=allocation_cursor-(heap+0x60000),
         dispatch=dict(surface_type_offset='0x1004',surface_type=2,builder_rva='0x6f9928',
                       constructor_rva='0x6e34e8',constructor_label='MtlEngineSdp',
                       original_dispatch_executed=True,original_constructor_completed=True,
@@ -290,7 +337,8 @@ def main():
                      'Copied buffers match the captured native input, not translated firmware output',
                      'Windows APIs use a single-thread C-locale model; optional locale APIs are unavailable',
                      'CRT teardown is not executed and freed storage is not reused',
-                     'No backend configuration, instruction lowering, loadable or inference is established']),indent=2))
+                     'Pretranslation uses constructor defaults and absent compile_opt.json; full Windows frontend setup is not reproduced',
+                     'No instruction lowering/translation, loadable or inference is established']),indent=2))
 
 
 if __name__=='__main__':main()

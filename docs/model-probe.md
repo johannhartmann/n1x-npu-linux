@@ -508,6 +508,46 @@ The additional Windows API model is deliberately limited:
   instruction used in the CRT path.
 
 This establishes **IR construction for the one captured FP16 ReLU graph**.
-It does not establish full backend pretranslation (`0x624630`), instruction
-lowering/translation (`0x624eb0`), a serialized N1X loadable, firmware acceptance,
-or physical inference. Those are separate remaining boundaries.
+Backend pretranslation is checked separately below. Instruction translation,
+a serialized N1X loadable, firmware acceptance and physical inference remain
+separate boundaries.
+
+### Original backend pretranslation returns success
+
+The same verifier now constructs a fresh Windows backend object with original
+constructor `0x617a70` and executes its full pretranslation entry **`0x624630`**.
+The original code returns **0**, with no nonzero error-flag setter calls.
+The graph pointer retained in backend +0xc0 refers to one live allocated
+graph, with one node and zero edges. Its node has vtable RVA `0x1150a90` and
+name `layer-anon-0`; original graph lookup returns that same node pointer.
+These are checked properties of the transformed graph, not a claim that it
+already contains executable firmware instructions.
+
+Two additional original DLL initializers are required: `0x19160` builds the
+registry at `0x18ce010`, and `0x20fd0` constructs backend data tables including
+the table at `0x18d77f0`. Supplying empty replacement tables would not reproduce
+this behavior. The verifier executes both original routines.
+
+The Windows filesystem fixture contains no `./compile_opt.json`. Its only
+attribute query returns false with error 2, so the original default-option
+path runs. This is distinct from reproducing the complete Windows frontend's
+configuration. The only additional conversion models cover the observed
+ASCII path strings, explicit positive lengths, size queries and bounded
+UTF-16/ASCII output. They follow the documented
+[MultiByteToWideChar](https://learn.microsoft.com/en-us/windows/win32/api/stringapiset/nf-stringapiset-multibytetowidechar)
+and [GetFileAttributesExW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileattributesexw)
+interfaces for this limited fixture, rather than a general Windows filesystem.
+
+Original code constructs path strings for `addViewGraph`, `rvvHostCopyGraph`,
+`rvvFgsConfigGraph`, `rvvPreTranslateGraph` and `rvvRmRvvHostCopyGraph` DOT
+outputs. Those strings are recorded; no DOT file is opened or written in this
+pretranslation run. The bounded emulator heap is 16 MiB; this run consumes
+3,932,384 bytes of its bump-allocation region without reusing freed storage.
+The instruction budget is checked: exhausting it cannot produce a passing
+result.
+
+The subsequent translation entry **`0x624eb0`** is still experimental. It
+reaches RVV annotation, hardware-layer and finalization paths but requires
+additional global initialization and filesystem modeling. It is not yet part
+of this passing check. There is still no verified serialized loadable or
+physical NPU execution.
