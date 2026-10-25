@@ -551,3 +551,63 @@ values must not be mistaken for the final firmware layout.
 Still needed: the running machine's final FRTS location and contents, or
 another verified acquisition of its matching ROM, followed by validation
 of its NPU BIT `l` tables. No valid board GFWI container has been acquired.
+
+### Reading the host's cached FRTS metadata
+
+The 615.78.08 host source confirms the return path: `kgspSendInitRpcs_IMPL`
+receives a key/value response to `GMCAPI_CMD_GSP_INIT` and decodes key
+`NVGMC_SC_WPR_LAYOUT_FRTS_OFFSET` (`0x1081`). The original encoded response is
+freed, but the decoded offset remains in `KernelGsp.gspStaticInfo`. On the
+ACR-layout path, `kgspPopulateSrRegionsInfo_GH100` copies it into the suspend
+metadata. **Do not resend the initialization command to query this value.**
+
+The public `NV2080_CTRL_CMD_FB_GET_FB_REGION_INFO` getter is not a substitute:
+its host implementation explicitly excludes reserved and internal heap
+regions. The installed module contains DWARF for parts of the kernel layer,
+but GDB finds no type information for `OBJGPU`, `GspStaticConfigInfo`, or the
+`g_pSys` variable. The relevant compiled accessors nevertheless retain names
+and can be disassembled directly.
+
+`scripts/read_gsp_frts_cache.py` follows those compiled accessors' field
+offsets through kernel RAM. It opens `/proc/kcore` read-only, resolves only
+four named NVIDIA symbols from `/proc/kallsyms`, and reads the pointer chain
+and cached offset/size. It does not call kernel functions, send GPU RPCs,
+read `/dev/mem`, map GPU memory, access MMIO, load a module, or upload firmware.
+The output remains a **firmware-region offset**, not a CPU physical address
+or a ROM dump.
+
+This helper is intentionally restricted to the existing build:
+
+| Guard | Pinned value |
+| --- | --- |
+| Kernel | `7.2.8-23-omarchy-p16-asus-npu1` |
+| NVIDIA version | `615.78.08` |
+| Module srcversion | `4200B1C66D4D12038311105` |
+| Installed `nvidia.ko` SHA256 | `d8878935a9c353dc82cc7b31f85a8a1e9eac6d0dab624a03451fc3616f56da1c` |
+
+Before walking objects, it compares selected non-relocated instructions in
+the **running** `gpumgrGetGpu`, `gpuGetGspStaticInfo`, and
+`kgspPopulateSrRegionsInfo_GH100` against the inspected module. It rejects
+unavailable symbols, different code, invalid pointers, multiple GPU handles,
+an uninitialized GPU, an alternate static-info path, and a non-ACR layout.
+It requires the static and suspend-cache offsets to agree and the host WPR
+size to agree with the suspend-cache size. It samples twice and rejects
+different results. These are consistency checks, not a lock or a guarantee
+against concurrent teardown; use it while the GPU driver remains loaded and
+the machine is awake.
+
+```sh
+# Offline bounds/instruction tests; uses pyelftools from requirements.txt:
+venv/bin/python scripts/test_gsp_frts_cache.py -v
+# Root, read-only inspection of this specific running build:
+sudo /usr/bin/python scripts/read_gsp_frts_cache.py
+```
+
+Eight offline tests pass, covering segment boundaries, overlapping segments,
+short reads, invalid headers/pointers, changed-code rejection before cache
+access, matching instruction bytes in the installed module, and synthetic
+cache agreement/disagreement. The live reader has only reached its
+unavailable-symbol rejection without privilege. **No live FRTS offset or
+container has yet been obtained with it.** The existing privileged NVIDIA
+diagnostic process is still waiting for authentication; no second prompt or
+driver restart was initiated.
