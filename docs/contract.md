@@ -1100,3 +1100,47 @@ it, and their complete vendor-backed regression suite passes again. The new
 upload-selector test also uses the original helpers. Previous traces were
 isolated observations under stubbed helpers; the rerun with correct stack
 semantics is the current evidence. No OS security mechanism or device is invoked.
+
+## HAL-1 reset-to-scheduler execution with original context
+
+`emulate_profile1_boot.py` now enters the raw HAL-1 image at **0x100000** rather
+than calling an isolated function with an injected context. No function is
+stubbed. The original reset code clears CPU registers, installs its temporary
+trap vector, loads stack top **0x187300** from the inline word at 0x1000b0 and
+calls initializer 0x10032a. Code/data come from the pinned raw image. The global
+context pointer at 0x1862bc already contains **0x180100** in that image and is
+not replaced by the test.
+
+With zero-initialized synthetic MMIO, execution reaches original 0x100e1e,
+writes bit 0 to internal offset 0x7c and waits at 0x100e4a..0x100e4e until that
+bit clears. The explicit register model can clear this bit immediately or after
+3/17 busy reads. Under those supplied conditions, all 13 recorded initializer
+and scheduler entry points execute in order, including the original IRQ setup,
+and execution reaches WFI at **0x102194**, with SP=0x1872b0, mstatus=0x2008,
+mie=0x888 and mtvec=0x1002dc. The test stops **before** executing WFI because
+asynchronous interrupt delivery is not modeled. There are 95 original MMIO
+writes before that point. Mask set/clear effects are modeled in the current
+mask at 0xd28.
+
+Without the model's bit-clear event, the same original code remains at the
+0x7c poll through the 200,000-instruction observation budget. This establishes
+a software handshake dependency, not its physical completion time, register
+name, reason or recovery policy. It is not evidence that a Linux host should
+clear that bit itself. All MMIO is emulator RAM; no NPU device is mapped.
+
+`test_response.py` additionally runs four consecutive Linux C method-send / C
+ACK round trips **after this reset initialization**, preserving the original
+context pointer and initialized data. Logging, command bookkeeping and hang
+checking now execute their original RV32 code. Only DMA functions 0x104ed8 and
+0x105004 remain stubbed to bounded RAM copies. The sequence covers ping inputs
+1/0x11111111, overflow input 0x40000000 and a following successful ping 3.
+
+The initialized mask is 0x1f85 before each reply; the C ACK clears only SWGEN1,
+leaving 0x1f05, which is preserved across subsequent commands. This supplements
+the earlier zero-initial-mask model, whose final mask was zero. The response
+words, input/output values, mailbox restoration and remaining mask/pending bits
+are all checked. Commands still enter the dispatcher explicitly with method
+register values: delivery through the original trap handler and hardware method
+FIFO is **not** established by these tests. No opaque SROOT image acceptance,
+physical boot, DMA coherency, kernel IRQ delivery, task execution or inference
+is claimed.

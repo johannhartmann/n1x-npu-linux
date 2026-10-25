@@ -142,9 +142,30 @@ def main():
     assert not negative['returned'] and not negative['interrupts'] and not negative['completed']
     assert len(captured) == 4  # Masked request cannot reach the host handler.
     assert negative['final_irq_mask'] == 0 and negative['final_irq_pending'] == 0x80
+    captured.clear()
+    submissions.clear()
+
+    def initialized_interrupt(uc):
+        assert struct.unpack('<I', uc.mem_read(MMIO+0xd28, 4))[0] == 0x1f85
+        captured.append(host(uc, modeled_irq=True))
+        assert struct.unpack('<I', uc.mem_read(MMIO+0xd28, 4))[0] == 0x1f05
+        assert struct.unpack('<I', uc.mem_read(MMIO+8, 4))[0] == 0
+        assert struct.unpack('<I', uc.mem_read(0x1862bc, 4))[0] == 0x180100
+
+    initialized = firmware_profile1(profile1, sequence=sequence, host_handler=initialized_interrupt,
+                                    host_submit=submit, boot_from_reset=True)
+    assert initialized['boot_state']['scheduler_wfi']
+    assert initialized['returned'] and initialized['completed'] == [4, 0x44444444, 0x40000000, 12]
+    assert len(submissions) == len(captured) == 4
+    assert all(row[0] == 0 and row[1] == expected for row in captured)
+    assert [row[2][0] for row in captured] == [0x102, 0x102, 0x110101, 0x102]
+    assert initialized['final_irq_mask'] == 0x1f05 and initialized['final_irq_pending'] == 0
+    assert initialized['final_mailboxes'] == (0x11223344, 0x55667788)
     print(json.dumps({'scope': 'Linux C response capture/clear/ACK with synthetic IRQSTAT and real FW mailbox code',
                       'ordered_callback_count': len(expected),
                       'persistent_hal1_commands': len(sequence),
+                      'commands_after_original_reset_initialization': len(sequence),
+                      'initialized_command_stubs': ['DMA read', 'DMA write'],
                       'firmware_rearms_swgen1_before_each_reply': True,
                       'persistent_commands_use_linux_method_sender': True,
                       'suppressed_mask_set_blocks_delivery': True, 'error_prefixes_checked': 6,

@@ -6,22 +6,34 @@ import struct
 from unicorn import Uc, UC_ARCH_RISCV, UC_MODE_RISCV32, UC_HOOK_CODE, UC_HOOK_MEM_WRITE
 from unicorn import riscv_const as regs
 from extract_profile1_firmware import PROFILE1_HASH
+from emulate_profile1_boot import boot
 from emulate_firmware_commands import ROOT, MMIO, HOST, STACK, STOP, ACK
 
 CTX = 0x20010000
 
 
 def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=True,
-        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None):
-    u = Uc(UC_ARCH_RISCV, UC_MODE_RISCV32)
-    for address, size in ((0x100000, 0x9000), (0x180000, 0x10000),
-                          (MMIO, 0x2000), (CTX, 0x4000), (HOST & ~4095, 0x1000),
-                          (STACK, 0x10000), (STOP, 0x1000)):
-        u.mem_map(address, size)
-    u.mem_write(0x100000, blob[512:512+36864])
-    u.mem_write(0x180000, blob[512+36864:])
-    u.mem_write(0x1862bc, struct.pack('<I', CTX))
-    for address in (0x101c96, 0x1073ae, 0x1073d4, 0x100e14, 0x104ed8, 0x105004):
+        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False):
+    if boot_from_reset:
+        u, boot_state = boot(blob)
+        assert boot_state['scheduler_wfi']
+        for address, size in ((HOST & ~4095, 0x1000), (STOP, 0x1000)):
+            u.mem_map(address, size)
+        call_sp = boot_state['sp']
+        stubs = (0x104ed8, 0x105004)  # Only DMA remains an environment boundary.
+    else:
+        boot_state = None
+        u = Uc(UC_ARCH_RISCV, UC_MODE_RISCV32)
+        for address, size in ((0x100000, 0x9000), (0x180000, 0x10000),
+                              (MMIO, 0x2000), (CTX, 0x4000), (HOST & ~4095, 0x1000),
+                              (STACK, 0x10000), (STOP, 0x1000)):
+            u.mem_map(address, size)
+        u.mem_write(0x100000, blob[512:512+36864])
+        u.mem_write(0x180000, blob[512+36864:])
+        u.mem_write(0x1862bc, struct.pack('<I', CTX))
+        call_sp = STACK+0x8000
+        stubs = (0x101c96, 0x1073ae, 0x1073d4, 0x100e14, 0x104ed8, 0x105004)
+    for address in stubs:
         u.mem_write(address, bytes.fromhex('67800000'))
     u.mem_write(HOST, struct.pack('<I', challenge))
     u.mem_write(MMIO+0x40, struct.pack('<II', 0x11223344, 0x55667788))
@@ -31,7 +43,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
         return u.reg_read(getattr(regs, f'UC_RISCV_REG_A{n}'))
 
     def hook(_, address, size, user):
-        if address in (0x101c96, 0x1073ae, 0x1073d4, 0x100e14):
+        if not boot_from_reset and address in (0x101c96, 0x1073ae, 0x1073d4, 0x100e14):
             u.reg_write(regs.UC_RISCV_REG_A0, 0)
         elif address in (0x104ed8, 0x105004):
             if address == 0x104ed8:
@@ -88,9 +100,9 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             submitted_method, submitted_data = method, HOST >> 8
         u.reg_write(regs.UC_RISCV_REG_A0, submitted_method)
         u.reg_write(regs.UC_RISCV_REG_A1, submitted_data)
-        u.reg_write(regs.UC_RISCV_REG_SP, STACK+0x8000)
+        u.reg_write(regs.UC_RISCV_REG_SP, call_sp)
         u.reg_write(regs.UC_RISCV_REG_RA, STOP)
-        u.emu_start(0x102232, STOP, count=2000)
+        u.emu_start(0x102232, STOP, count=200000 if boot_from_reset else 2000)
         if u.reg_read(regs.UC_RISCV_REG_PC) != STOP:
             break
         completed.append(struct.unpack('<I', u.mem_read(HOST, 4))[0])
@@ -99,6 +111,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             'host_word': struct.unpack('<I', u.mem_read(HOST, 4))[0],
             'transfers': transfers, 'interrupts': interrupts,
             'register_writes': register_writes, 'completed': completed,
+            'boot_from_reset': boot_from_reset, 'boot_state': boot_state,
             'final_irq_mask': struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0],
             'final_irq_pending': struct.unpack('<I', u.mem_read(MMIO+8, 4))[0],
             'final_mailboxes': struct.unpack('<II', u.mem_read(MMIO+0x40, 8))}
