@@ -82,6 +82,9 @@ The matching GPU HAL's separate ROM reader uses a `GFWI` container. Its member
 layout is replayed offline, with a bounded file extractor available. The
 packaged init task supplies one source branch from the WPR metadata's FRTS
 region; the handoff and ROM extraction are replayed with synthetic inputs.
+The alternative `KernelFsp` source is disabled by the original GB20B
+constructor, also verified by replay; it is not a second established source
+for this board.
 Acquiring the actual board container remains open. See
 [GFWI evidence](docs/hfrp-vbios.md#gsp-rom-source-gfwi-container).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI

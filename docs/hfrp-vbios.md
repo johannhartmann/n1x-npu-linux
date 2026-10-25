@@ -417,12 +417,14 @@ NVOC dynamic casts stubbed. Indices 61/62/70/71 and RM variants 0..3 all select
 the same two targets (16 cases). This confirms the callback for the observed
 GB20B index; it does not identify which source branch is active on this boot.
 
-The reader first checks `GPU+0x22d0`, its flag `+0x1e9` and descriptor pointer
-`+0x1f0`. When available, it copies that descriptor's memory buffer into a
-temporary allocation before calling `0x11bcd14`. Otherwise, an object at
-`GPU+0x22f0` with flag `+0x378` supplies a buffer at `+0x3500` and size at
-`+0x3508`; that path inlines the same extraction rules. These are GSP virtual
-object offsets, **not CPU physical addresses**.
+The reader first checks `GPU+0x22d0` (`KernelFsp`), its flag `+0x1e9` and
+descriptor pointer `+0x1f0`. When the object and flag are present, it copies
+that descriptor's memory buffer into a temporary allocation before calling
+`0x11bcd14`. Only an absent object or clear flag selects the other object at
+`GPU+0x22f0`: with flag `+0x378` set, its buffer at `+0x3500` and size at
+`+0x3508` go to the same extraction helper. An enabled first source with a
+null descriptor, zero size or bad signature **does not fall back**. These are
+GSP virtual object offsets, **not CPU physical addresses**.
 
 The GFWI member layout is:
 
@@ -467,6 +469,46 @@ No valid raw GFWI container was found in the four inspected local files:
 Windows `nvlddmkm.sys`. This literal-signature scan does not rule out compressed
 or otherwise wrapped content. Acquisition of the actual source buffer remains
 open. No GPU object, NPU register, boot configuration or firmware was changed.
+
+### KernelFsp source is disabled by the GB20B constructor
+
+The class-lookup fragment at `0x140d55c..0x140d570` maps NVOC ID `0x87fb96`
+to `GPU+0x22d0`. That ID is `KernelFsp` in the installed driver's generated
+`g_kern_fsp_nvoc.h`. The pinned firmware's class record at `0x1ca8400`
+independently gives ID `0x87fb96`, object size `0x300` and constructor
+`0x19b3f88`. These identifications are more specific than matching an FSP
+string elsewhere in the image.
+
+Ghidra decompilation and execution of that original constructor agree:
+for this machine's HAL index **70**, all four RM variants set the inherited
+missing property at `+0x58` to 1. The source flag at `+0x1e9` and descriptor
+at `+0x1f0` remain zero. The boot-command preparation slot at `+0x150` points
+to `0x19aa23c`, an original stub returning success without preparing data.
+The public `g_kern_fsp_nvoc.c` identifies the matching constructor decision
+as `PDB_PROP_KFSP_IS_MISSING`: indices in group 2 must match mask `0x303f`;
+index 70 has bit 6, which is absent. This is a software selection property,
+not proof that the hardware lacks all FSP-related circuitry.
+
+The extended `test_gsp_rom_source.py` executes 24 original constructor cases:
+indices 61/62/70/71 are marked missing; 64/65 are positive controls with the
+property clear and a different preparation callback. Twelve additional
+full-reader cases distinguish the two sources with different synthetic ROM
+payloads. They verify source precedence, fallback only when the first source
+is disabled or absent, temporary allocation/free, unchanged outputs on error,
+and the class-lookup fragment. Allocation/free and logging are stubs; both
+copy operations execute original instructions. Descriptor length is at
+`+0x30`, its tested field at `+0x8c` is 0 or 1, and its buffer pointer is at
+`+0x110`. Cases entering the assertion path for field values above 1 are
+not part of this replay.
+
+The public Hopper implementation prepares a sysmem FRTS descriptor named
+`pSysmemFrtsMemdesc`, but that alone does **not** identify the GSP object's
+`+0x1f0` member or establish a live host buffer. Its allocation procedure
+must not be imported into the NPU driver on the strength of that name.
+For GB20B, the constructor rules out this first source in the normal
+initialized state. Acquiring the FRTS startup buffer below remains the
+relevant route. A live snapshot has not yet confirmed the object state or
+provided board ROM bytes.
 
 ### FRTS supplies the GFWI startup buffer
 
