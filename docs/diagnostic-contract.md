@@ -194,3 +194,32 @@ it still does not establish model execution.
 The two IRQ bits in this test are firmware-local modeled sources. They neither
 identify GSI 463/800 nor prove physical GIC delivery or hardware completion.
 No real IRQ, engine register or boot configuration is changed by this test.
+
+## Runtime selector provenance
+
+`scripts/inspect_runtime_selector.py` executes the pinned runtime constructor
+prefix at RVA 0xb910 through 0xb998, with its mutex helper modeled. That prefix
+sets context+0x98 to **0x7fffffff** and installs vtable 0x653d88. Its slot +0x208
+points to the original three-byte getter at 0x255d0. This executes only a
+constructor prefix, not device initialization.
+
+The original direct getter at 0x22788 returns selectors 0 through 3 unchanged
+and returns 0x7fffffff for the other tested inputs. The three-byte getter and
+diagnostic append give the following observed results:
+
+| Selector | Three-byte getter status | Output bytes | Diagnostic append status |
+| --- | --- | --- | --- |
+| 0 | 0 | 1, 0, 0 | 2 |
+| 1 | 0 | 2, 0, 0 | 0 |
+| 2 | 15 | 0, 0, 0 | 2 |
+| 3 | 0 | 3, 0, 0 | 2 |
+| 42, 0x7fffffff, 0xffffffff | 15 | 0, 0, 0 | 2 |
+
+The getter preserves the five poisoned bytes after its three-byte output. The
+append test models the final model-parser boundary, as described above; status
+0 does not establish device execution. No enum, version or hardware meaning is
+assigned to these byte values. In particular, this selector is not established
+as the KMD classifier or HAL profile number. The setter, the physical Windows
+device's selected value and its connection to firmware compatibility remain
+unresolved. The seven cases use original ARM64 instructions without hardware
+access and cannot establish a successful diagnostic or numerical inference.
