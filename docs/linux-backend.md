@@ -360,3 +360,47 @@ The inspected menu still selects **Omarchy/linux-p16-asus-23** by default,
 with a five-second timeout. No menu or installed EFI image has been changed.
 Package/module installation and adding a separate test entry remain pending;
 physical boot and successful DMA allocation are still unverified.
+
+## Additional test-entry installation
+
+`install_sroot_test.py` installs the two prepared kernel/header packages and
+copies the eight prebuilt external/observation modules into the **new release's**
+`updates/npu-test/` directory. Those extra module files are recorded by path/hash
+in the root-owned checkpoint; they are not registered in the live DKMS database.
+The installed kernel/header files remain package-managed. Nothing is loaded
+into the running kernel by this installation.
+
+Before any mutation it rechecks the machine, working kernel, EFI mount/free
+space, package/module/UKI hashes, actual UKI contents and unchanged configuration
+snapshot. Under the existing boot-partition lock it also checks the unchanged
+Limine snapshot and the BLAKE2b hash of the current default EFI image. Existing
+test destinations/checkpoints cause a refusal rather than an implicit retry.
+The root-owned checkpoint is `/var/lib/n1x-npu-test/npu1/`.
+
+Only this pacman transaction receives a temporary hook-directory mask. Existing
+hook files remain untouched. Thus DKMS, initramfs and bootloader package hooks
+cannot rewrite working images/defaults during this isolated installation. The
+installer uses the verified prebuilt modules, runs depmod for the new release,
+and checks their vermagic/dependency paths. It copies the already checked UKI
+into a new EFI filename and verifies its on-disk hash before appending an entry.
+
+The new top-level menu entry is **N1X NPU test**. The complete original menu
+remains its byte-for-byte prefix, including the old default/timeout and old EFI
+paths. The new entry uses the on-disk image's BLAKE2b URI digest and the checked
+command line. No reboot or NPU operation is performed. The menu-generation
+function passes two append-only fixtures and five invalid-input cases, and a
+concrete proposal has been rendered from the actual captured menu.
+
+```sh
+sudo python3 scripts/install_sroot_test.py \
+  results/npu1-uki-v3 results/linux-7.2.8-p16-npu1 \
+  results/npu1-kernel-packages results/npu1-external-modules
+```
+
+If interrupted, inspect the actual package/module/EFI/menu state and checkpoint;
+do not rerun blindly. A failure before the final append leaves the old menu
+unchanged, even if the new packages or unused EFI file already exist. The final
+menu write is atomic; its error path restores the previous bytes if the written
+proposal is still present. The original boot entry remains the default and is
+the recovery route. Successful boot, graphics/input and NPU DMA qualification
+still require explicit observation after manually selecting the test entry.
