@@ -291,8 +291,10 @@ lead rather than an implemented Linux acquisition path.
 
 ## GSP diagnostic export investigation
 
-The installed Linux GPU stack offers another acquisition lead. This is a
-**different binary** from the Windows NPU KMD: NVIDIA 615.78.08
+The installed Linux GPU stack has a diagnostic labelled `VBIOS`, but its
+traced producer supplies **MXM data**, not a demonstrated full board ROM.
+It does not resolve NPU policy acquisition. This is a **different binary**
+from the Windows NPU KMD: NVIDIA 615.78.08
 `gsp_ga10x.bin`, SHA-256
 `a20100cafd5a85e22b3e13188339730c6ced94bd5f654984dd2ed274ed58d584`.
 Its `.fwimage` contains an RV64 ELF at payload offset `0x1dd000`, SHA-256
@@ -303,7 +305,7 @@ Function `0x1bd0148` conditionally exports a buffer:
 
 | Input or operation | Observed contract |
 | --- | --- |
-| First argument + `0x72e` | Nonzero byte required; its complete producer semantics remain unresolved |
+| First argument + `0x72e` | Nonzero byte required; the traced MXM producer sets it after accepting descriptors |
 | Second argument + `0x630` / `0x638` | Nonnull byte-buffer pointer / u32 length |
 | Encoder initialization `0x1058a44` | Allocates input length + 32; outer field descriptor at `0x1c4e8f8` |
 | Encoding `0x10580b4` | Byte field descriptor at `0x1c4a770`; copies the full input buffer |
@@ -312,7 +314,8 @@ Function `0x1bd0148` conditionally exports a buffer:
 
 The descriptors match the public `prbrt.h` representation: outer optional
 message field **307**, containing optional bytes field **1**. The wire format
-is `field(307, field(1, original_bytes))`; it is not just a version string.
+is `field(307, field(1, original_bytes))`. This establishes byte preservation,
+not the meaning or provenance of those bytes.
 The publisher is separately identified as the GSP NOCAT path: its RPC event
 is `0x1020`, and its record layout matches the host's
 `_kgspRpcGspPostNocatRecord()` in `kernel_gsp.c`. That RPC record has a bounded
@@ -328,7 +331,43 @@ buffer sizes from zero through `0x110000`, and tests the disabled gate, null
 buffer and both allocation failures. Failure of the output-node allocation
 silently discards the encoded buffer and publishes an empty descriptor. Thus
 neither a publisher call nor a successful-looking return establishes capture.
-All 11 offline cases pass. No synthetic bytes are valid board policy.
+All 11 exporter cases pass. The 0x110000-byte case checks the exporter with
+an injected pointer; it is **not** evidence that its producer creates a ROM
+buffer of that size. No synthetic bytes are valid board policy.
+
+### MXM producer, rather than a ROM acquisition path
+
+Ghidra and radare2 trace the copy into the export object's `+0x630/+0x638` to
+function `0x1180988`. Its registry reader receives `MXMDisable`; the property
+reader receives `MXMVersion`, `MXMSize` and `MXMData`. On the alternative
+platform-reader path, it obtains an eight-byte header, reads the version at
+header byte 4 and calculates total size as `u16(header+6) + 8`. It rejects
+sizes above **4096** before requesting the body. It then requires version 3,
+checks the byte-sum checksum and parses MXM descriptors. These observations
+are consistent with the distinct MXM system-information structure in the
+[Linux Nouveau MXM implementation](https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/+/8934827db5403eae57d4537114a9ff88b0a8460f/drivers/gpu/drm/nouveau/nvkm/subdev/mxm/base.c),
+not an identification of this P16's firmware storage.
+
+After descriptor acceptance, the original tail at `0x1181696` sets the gate
+at first argument + `0x72e`. If the cached pointer is null, it allocates the
+MXM input length, copies from the temporary MXM buffer into `+0x630`, stores
+the length at `+0x638` and releases the temporary buffer. An existing cached
+pointer is retained. Setting `MXMDisable` nonzero clears the gate. No option
+has been changed on this machine.
+
+The same test script now executes the original producer **prefix**, with
+registry/property/platform reads and allocation/logging boundaries stubbed.
+Six additional cases exercise both input sources, the disable flag, bad
+checksum, accepted sizes 16 and 4096, and rejection at 4097 before the body
+read. Successful cases stop at `0x1180f0a`, before descriptor decoding; they
+do not claim that a complete MXM structure was accepted or cached. The
+copy-tail identification is static evidence. Ghidra's decompilation has an
+unresolved descriptor jump table, so it is not used as proof of every parser
+branch. The export is in ignored `results/gsp-vbios-producer.txt`.
+
+This corrects the earlier acquisition inference: a `VBIOS` label and faithful
+buffer export are insufficient to identify the actual BIT `l` ROM required
+by the Windows NPU startup path. The MXM path is not a substitute for that ROM.
 
 ```sh
 venv/bin/python scripts/test_gsp_vbios_export.py \
