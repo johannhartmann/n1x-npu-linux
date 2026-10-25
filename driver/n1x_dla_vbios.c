@@ -50,3 +50,93 @@ int n1x_dla_decode_vbios_policy(const __u8 *frequency, size_t frequency_size,
     *out = parsed;
     return 0;
 }
+
+static int fits(size_t offset, size_t length, size_t size)
+{
+    return offset <= size && length <= size - offset;
+}
+
+int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
+                                struct n1x_dla_vbios_policy *out,
+                                struct n1x_dla_vbios_location *location)
+{
+    struct n1x_dla_vbios_policy parsed = {0};
+    struct n1x_dla_vbios_location found = {0};
+    size_t i, base = 0;
+    unsigned int have_base = 0, have_policy = 0, headers = 0;
+
+    if (!data || !out || !location)
+        return -EINVAL;
+    if (size > 0x110000U)
+        return -EFBIG;
+    if (size < 12)
+        return -EMSGSIZE;
+    for (i = 0; i <= size - 12; i++) {
+        size_t header_size, entry_size, count, j;
+        unsigned int checksum = 0;
+
+        if (!(i & 15U) && get16(data + i) == 0xaa55) {
+            base = i;
+            have_base = 1;
+        }
+        if (get16(data + i) != 0xb8ff || get32(data + i + 2) != 0x544942)
+            continue;
+        header_size = data[i + 8];
+        entry_size = data[i + 9];
+        count = data[i + 10];
+        if (header_size < 12 || !fits(i, header_size, size))
+            return -EBADMSG;
+        for (j = 0; j < header_size; j++)
+            checksum += data[i + j];
+        if (checksum & 255U)
+            continue;
+        if (++headers > 32)
+            return -E2BIG;
+        if (entry_size < 6 || !fits(i + header_size, count * entry_size, size))
+            return -EBADMSG;
+        for (j = 0; j < count; j++) {
+            const __u8 *entry = data + i + header_size + j * entry_size;
+            size_t directory, frequency, tuning, gating;
+            __u32 pointer;
+            int err;
+
+            if (entry[0] != 0x6c)
+                continue;
+            if (have_policy)
+                return -EEXIST;
+            if (!have_base || get16(entry + 2) < 36)
+                return -EBADMSG;
+            pointer = entry_size >= 8 ? get32(entry + 4) : get16(entry + 4);
+            if (!pointer || !fits(pointer, get16(entry + 2), size - base))
+                return -EBADMSG;
+            directory = base + pointer;
+            frequency = get32(data + directory + 8);
+            tuning = get32(data + directory + 12);
+            gating = get32(data + directory + 16);
+            if (!frequency || !tuning || !gating ||
+                !fits(frequency, 18, size - base) ||
+                !fits(tuning, 32, size - base) || !fits(gating, 16, size - base))
+                return -EBADMSG;
+            frequency += base;
+            tuning += base;
+            gating += base;
+            err = n1x_dla_decode_vbios_policy(data + frequency, size - frequency,
+                                              data + tuning, size - tuning,
+                                              data + gating, size - gating, &parsed);
+            if (err)
+                return err;
+            found.bit_offset = i;
+            found.rom_base = base;
+            found.directory_offset = directory;
+            found.frequency_offset = frequency;
+            found.tuning_offset = tuning;
+            found.gating_offset = gating;
+            have_policy = 1;
+        }
+    }
+    if (!have_policy)
+        return -ENOENT;
+    *out = parsed;
+    *location = found;
+    return 0;
+}

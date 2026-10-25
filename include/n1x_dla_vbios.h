@@ -30,4 +30,20 @@ int n1x_dla_decode_vbios_policy(const __u8 *frequency, size_t frequency_size,
                                  const __u8 *tuning, size_t tuning_size,
                                  const __u8 *gating, size_t gating_size,
                                  struct n1x_dla_vbios_policy *out);
+
+struct n1x_dla_vbios_location {
+    __u32 bit_offset, rom_base, directory_offset;
+    __u32 frequency_offset, tuning_offset, gating_offset;
+};
+
+/* Find one unambiguous BIT 'l' policy in an immutable ROM window, at most
+ * 0x110000 bytes. Checks checksum, all nested bounds, nonzero table pointers
+ * and the decoder's version gates. Uses the Windows preceding aligned AA55
+ * ROM-base rule; at most 32 checksummed BIT headers are examined. No physical
+ * mapping, file access or hardware writes. Both outputs unchanged on failure.
+ * This locates data, not firmware provenance or authority to program hardware.
+ */
+int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
+                                struct n1x_dla_vbios_policy *out,
+                                struct n1x_dla_vbios_location *location);
 #endif

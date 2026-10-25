@@ -83,16 +83,29 @@ subtable buffers, validates their lengths and the observed version gate, and
 decodes fields without alignment-dependent loads. It preserves output on error
 and performs no allocation or hardware access.
 
-This is a subtable decoder, not a complete ROM loader or proof that policy is
-valid for this board. The caller still must establish matching ROM provenance,
-locate and bound each table, apply only proven override rules and validate the
-complete startup sequence. No live module links or calls the decoder yet.
+`n1x_dla_parse_vbios_policy()` now locates those tables in an immutable ROM
+window of at most 0x110000 bytes. It follows the observed preceding aligned
+`55 aa` ROM-base rule, checks BIT header checksum and entry-array bounds, finds
+token `l`, validates its declared length and all three nested table ranges,
+then invokes the decoder. Null/overflowing pointers, missing ROM signatures,
+truncated buffers, unsupported table versions and multiple matching policies
+are rejected. At most 32 checksummed BIT headers are examined. Both policy
+and source-location outputs remain unchanged on failure.
+
+These functions neither acquire ROM data nor prove that a policy is valid for
+this board. The caller still must establish matching ROM provenance, apply
+only proven override rules and validate the complete startup sequence. No live
+module links or calls either function yet.
 
 The differential test generates 32 reproducible mixed-width input sets and
-compares **every decoded C field** with the original Windows parser's output.
+compares **every decoded C field** with the original Windows parser's output,
+both through the subtable decoder and through the complete table locator.
 Its 76 negative cases cover every truncated table length, unsupported version
 gates and null pointers, with unchanged output on rejection. Normal and UBSan
 runs pass; the component also builds against the running kernel headers.
+Another 27 negative cases check ROM-level bounds, absent tokens, checksums,
+zero/overflowing pointers, ambiguity, header-flood limits and null arguments.
+Both BIT entry widths and a nonzero ROM base are tested through the locator.
 
 ```sh
 venv/bin/python scripts/test_hfrp_vbios.py
@@ -101,12 +114,50 @@ CC='cc -fsanitize=undefined -fno-sanitize-recover=undefined' \
 make -C "/usr/lib/modules/$(uname -r)/build" M="$PWD/driver" n1x_dla_vbios.o
 ```
 
+## Windows physical fallback, emulated only
+
+The original `0xd3d2c0` function is now replayed through the full original
+BIT parser. Global-owner lookup and map/unmap are explicit stubs; the original
+32-bit mapped read at `0xd3b228` executes against synthetic RAM. Five locator
+words establish the exact address arithmetic, including its 32-bit wrap:
+
+1. Map four bytes at physical `0x1182bc80`.
+2. Read u32 `locator` from that mapping.
+3. Map 0x110000 bytes starting at
+   `((locator << 12) + 0x80000600) & 0xffffffff`.
+4. Unmap the four-byte locator, parse the ROM, unmap the ROM, clear the stored
+   pointer, and return the parser's status.
+
+This is an observed Windows fallback, **not yet a validated Linux acquisition
+procedure**. In the current machine's privileged `/proc/iomem` snapshot,
+`0x1182bc80` has no named resource owner. The base produced by a hypothetical
+zero locator (`0x80000600`) lies in a reserved range, but the full hypothetical
+window would cross System RAM. No actual locator was read, and no physical
+window was mapped. Zero must not be substituted for the unknown locator.
+Register identity, accessibility and the resulting range need confirmation
+before implementing a physical read path; strict `/dev/mem` protections remain
+enabled and were not bypassed.
+
 ## Still required for hardware bring-up
 
 The local GPU driver's `/proc/driver/nvidia/gpus/000f:01:00.0/information`
 reports VBIOS **9a.0b.31.00.04**. This is a version string, not the ROM contents,
 and does not prove that it contains the NPU's `l` table. The examined ACPI DLA0
 description supplies no VBIOS buffer. No matching raw VBIOS has been extracted.
+
+Read-only inventory on 2026-10-25 established the system-firmware ESRT class
+`97686c57-e102-5ecf-ae23-27647f24f0ca`, version 768 (`0x300`), type 1. This is
+system firmware identity, not VBIOS content. The graphics debugfs search found
+no file named for BIOS. Simple ASCII/UTF-16 string searches of the local ASUS
+WinRE SYSTEM hive found no `vbios` or `NVDA200A` entries; this is not a complete
+registry-hive audit or evidence that a running Windows installation lacks them.
+
+The [ASUS model support page](https://www.asus.com/supportonly/h7607ba/helpdesk_bios/)
+exposed a BIOS API request whose response was `FAIL` with no result. A
+[Microsoft Catalog query for the firmware class](https://www.catalog.update.microsoft.com/Search.aspx?q=97686c57-e102-5ecf-ae23-27647f24f0ca)
+reported no results. These narrow lookups did not yield an artifact; they do not
+establish that no matching firmware package exists. Raw acquisition metadata
+and HTTP responses are in ignored `results/` files.
 
 The next acquisition should use a matching vendor firmware artifact or a
 reviewed read-only path to an existing firmware copy. The actual table values,

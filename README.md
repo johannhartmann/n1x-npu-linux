@@ -52,7 +52,7 @@ and tuning, with synthetic policy inputs. The physical startup configuration,
 IRQ roles, live handshake and power-on remain unverified. See
 [HFRP/IRQ evidence](docs/hfrp-irq.md).
 The power-policy source is now traced to VBIOS BIT token `l`. A bounded Linux
-subtable decoder matches the original Windows parser on synthetic images;
+table locator and decoder match the original Windows parser on synthetic images;
 the actual machine's policy values still require a matching VBIOS capture.
 See [VBIOS policy evidence](docs/hfrp-vbios.md).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
