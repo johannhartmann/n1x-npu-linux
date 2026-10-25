@@ -61,8 +61,8 @@ def main():
             u.mem_write(ptr,struct.pack('<Q',backing));capacity=len(value)
         u.mem_write(ptr+16,struct.pack('<QQ',len(value),capacity))
     def hook(_,address,size,user):
-        if address in (BASE+0x1000,BASE+0x1020):ret()
-        elif address==BASE+0x8c5e8:
+        # Keep the original stack guards: they reserve/release 16 stack bytes.
+        if address==BASE+0x8c5e8:
             length=struct.unpack('<I',u.mem_read(reg(0),4))[0]
             assign(reg(1),bytes(u.mem_read(reg(0)+4,length)));ret(reg(1))
         elif address==BASE+0x7cfb0:

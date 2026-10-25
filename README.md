@@ -265,7 +265,12 @@ The native serializer now packages the exact Windows results into a checked
 execution/metadata blobs. This is a reproducible adapter for one ReLU fixture,
 not a native compiler backend. The original Windows schema-validation prefix,
 content-version provider/gate and content materializer now accept this fixture
-in isolation. The unmodified HAL-1 firmware also processes its real instruction
+in isolation. A separate probe runs the original constructor and complete outer
+deserializer with original C++ containers, checking all task, memory, address,
+content and tensor records. Its outer success hides a statistics-index error
+caused by missing DLL regex initialization in the emulator; that limitation
+is reported explicitly. Malformed-reference tests also show that deserialization
+alone does not establish model validity. The unmodified HAL-1 firmware processes its real instruction
 and address buffers and completes the original fence/IRQ path when given a
 modeled engine-completion status. Output remains poisoned because arithmetic
 is not emulated. Complete runtime initialization, physical firmware execution

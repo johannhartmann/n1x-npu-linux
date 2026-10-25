@@ -11,6 +11,7 @@ test-relu:
 	venv/bin/python scripts/verify_relu_loadable.py
 	venv/bin/python scripts/inspect_loadable_version_gate.py --relu
 	venv/bin/python scripts/inspect_content_materialization.py --relu
+	venv/bin/python scripts/inspect_full_deserialization.py
 	venv/bin/python scripts/test_relu_scheduler.py
 tests/test_firmware: tests/test_firmware.c driver/n1x_dla_firmware.c include/n1x_dla_firmware.h
 	$(CC) $(CFLAGS) -Iinclude tests/test_firmware.c driver/n1x_dla_firmware.c -o $@

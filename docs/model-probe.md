@@ -823,7 +823,7 @@ make test-relu
 ```
 
 This target requires the generated source/oracle and serialized artifact from
-the preceding workflows. It runs the artifact verifier and the three offline
+the preceding workflows. It runs the artifact verifier and the four offline
 runtime/firmware probes. It neither loads a module nor accesses hardware.
 
 `inspect_loadable_version_gate.py --relu` enters the original Windows
@@ -856,9 +856,78 @@ The regex helper and C++ containers are modeled as in the older diagnostic
 probe. Every undersized copy destination is rejected without a copy; exact
 sizes copy correctly and preserve a 32-byte guard.
 
-These results cover the executed validator prefix and content stages. They do
-not establish completed deserialization, all other table materializers, device
-initialization or every later normal-loader check.
+Those two probes cover the validator prefix and content stages. The separate
+probe below extends coverage through the outer deserializer's return; device
+initialization and later normal-loader checks are still not covered.
+
+### Complete outer deserialization and its statistics limitation
+
+`inspect_full_deserialization.py` runs the original loadable constructor
+**0x7e2d8**, checks its vtable **0x669260** and deserializer slot **0x669328**,
+then calls **0x888a0** with the complete pinned ReLU artifact. The original
+constructor, all five prefix validators, reference validator **0x8deb0**, all
+eight table materializers, and final statistics-index function **0x8c740**
+execute. The outer function returns **0** and restores the caller's stack.
+The input file is unchanged.
+
+Unlike the isolated content probe, this test executes the original C++ map,
+vector and string implementations. Allocation/free, byte copy/fill/compare,
+single-thread mutex operations, CFG dispatch and the recovered ASCII regex
+predicate at **0x7d970** remain modeled. Both zero-filled and 0xa5-filled heap
+allocations/initial stacks produce the same checked fields. The original
+stack guards **0x1000/0x1020** must execute: they reserve/release 16 bytes, and
+replacing them with no-ops can corrupt nested frames. The older content probe
+now also executes those guards.
+
+The original in-memory records agree with an independent FlatBuffers field
+projection at these locations. These are private C++ object layouts in the
+pinned DLL, **not** firmware or kernel ABI structures:
+
+| Root vector | Object vector offset | Record bytes | Checked records |
+| --- | --- | --- | --- |
+| Memory, field 2 | `+0xe0` | 80 | 9, including sizes, alignment, flags and content offsets |
+| Tasks, field 1 | `+0xf8` | 88 | 1, including interface/instance and all three ID lists |
+| Submits, field 8 | `+0x110` | 32 | 1, task ID 0 |
+| Events, field 4 | `+0x128` | 12 | 1, exact materialized bytes |
+| Addresses, field 3 | `+0x140` | 24 | 9, memory ID, size and offset |
+| Tensors, field 6 | `+0x158` | 112 | 2, names, IDs, extents, formats, dimensions and stride fields |
+| Relocations, field 7 | `+0x170` | 32 | 0; nonempty relocation materialization is not qualified |
+
+The content map at **+0xd0** contains eight original tree nodes. Their keys
+are ordered and all payloads, sizes, interface/sub-interface fields and content
+versions agree byte-for-byte. The task's local address order remains
+**`[3,1,2,4,5,6,7,8]`**, as used by the Linux C task/firmware scheduler test.
+The original runtime does not rearrange this list during deserialization.
+
+**The outer return value is not proof that every stage succeeded.** The final
+statistics-index function returns **8**, but its caller ignores that value
+at **0x88b0c** and returns 0. In this emulator the compiled global regex at
+**0x6a5b10** is absent because DLL-wide initialization is not run. The original
+branch **0x8c998 → 0x8ca68** therefore has no capture group from which to read
+the task ID and reaches **0x8d238**, which selects error 8. The statistics map
+at **+0x1b0** stays empty and its dirty flag at **+0x1c0** becomes 0. This is
+an observed initialization limitation of the probe, **not evidence of a
+statistics-format defect in the compiler output**. Static initializer
+**0x3490** constructs this regex; execution with its required CRT/locale
+environment remains to be qualified. The predicate shim used during content
+classification does not initialize the compiled regex used here.
+
+Three in-memory mutations test the extent of the original checks:
+
+| Mutation | Original outer status | Observation |
+| --- | --- | --- |
+| Address 3 references nonexistent memory ID 99 | `0x30007` | Reference validator rejects before materialization |
+| Task's first address ID is 99 | `0` | Bad ID is preserved in the materialized task |
+| Memory 3 names `Xask-0-nw`, absent from content map | `0` | Missing name is preserved in the materialized memory record |
+
+The latter two are **not successful loads or valid execution inputs**. They
+show that the deserializer alone does not check all relationships; later
+loader checks may still reject them. A Linux model loader must verify task
+IDs, address/memory references, named content and extents before submission.
+The current RAM fixture helper accepts only pinned artifacts, and the
+mutated files are never passed to its firmware task runner or any device.
+No general model loader, full runtime initialization or physical compatibility
+is established by this probe.
 
 ### Unmodified HAL-1 firmware processes the real ReLU task
 
