@@ -110,13 +110,16 @@ struct n1x_hfrp_exchange_result {
     __u8 peer_ready;
     __u8 ack_attempted;
     __u8 ack_completed;
+    __u8 mode_select_attempted;
+    __u8 mode_selected;
 };
 
 /* Both APIs are synchronous, bounded polling operations, not kernel bindings.
  * polls is 1..5001; interval_us is passed to delay_us between unsuccessful
  * polls (required when polls > 1 and interval_us != 0). Invalid parameters and
  * state-gate failures leave channel/result unchanged and perform no I/O.
- * Only handshake on NEW may reset the HFRP transport. It does not power on or
+ * Handshake on NEW selects circular mode (register 4 = 1), then resets the
+ * HFRP transport. It does not power on or
  * authenticate the NPU. Startup replies are drained/counted after reset, before
  * command 1 is issued. The matched reply is retained; no undocumented payload
  * interpretation is imposed. Reset timeout and firmware errors fail handshake.
@@ -137,4 +140,42 @@ int n1x_hfrp_exchange(const struct n1x_dla_io *io,
                        struct n1x_hfrp_channel *channel, __u16 command,
                        const __u8 *payload, __u32 length, __u32 polls,
                        __u32 interval_us, struct n1x_hfrp_exchange_result *result);
+
+struct n1x_hfrp_version {
+    __u32 stamp;
+    __u32 response_word;
+    __u8 stamp_valid;
+    __u8 query_requested;
+    __u8 valid;
+    __u8 major;
+    __u8 minor;
+};
+
+/* Requires a READY channel. Reads offset 0, follows the recovered fixed-version
+ * thresholds or issues command 999. Query replies must have status zero and
+ * exactly four payload bytes. An accepted discovery attempt clears the old
+ * version and marks it valid only on success; argument/state rejection leaves
+ * outputs unchanged.
+ * All decoded versions can be reported; power-on accepts only major 1 with
+ * minor 3 or >= 5, matching the recovered Windows format selection.
+ * Access errors/truncated replies poison the channel; an unsupported old stamp
+ * or confirmed firmware error does not imply successful discovery.
+ */
+int n1x_hfrp_discover_version(const struct n1x_dla_io *io,
+                               struct n1x_hfrp_channel *channel, __u32 polls,
+                               __u32 interval_us, struct n1x_hfrp_version *version,
+                               struct n1x_hfrp_exchange_result *result);
+
+/* One POWER_CONTROL command corresponding to Windows request mask 7:
+ * clock, power domain and rail ON. No implicit SRAM/config/tuning/limit writes.
+ * Caller must establish required startup configuration first and check success
+ * before loading firmware. v1.3 carries an explicit caller-supplied raw PPS byte;
+ * v1.5+ omits it. This API does not choose/calibrate PPS or prove power is on.
+ * An accepted response is command completion, not a measured physical state.
+ */
+int n1x_hfrp_power_on(const struct n1x_dla_io *io,
+                       struct n1x_hfrp_channel *channel,
+                       const struct n1x_hfrp_version *version, __u8 pps,
+                       __u32 polls, __u32 interval_us,
+                       struct n1x_hfrp_exchange_result *result);
 #endif

@@ -516,7 +516,8 @@ device lifetime:
 | READY | one synchronous command at a time |
 | FAILED | neither further exchange nor another handshake |
 
-Handshake writes the recovered reset request, requires reset-bit clearance
+Handshake first selects circular mode (offset `4 = 1`), then writes the
+recovered reset request, requires reset-bit clearance
 and peer readiness, drains/counts startup replies, acknowledges only doorbell
 bit 1, then sends the exact original command-1 packet. It accepts only a
 matching sequence-1 response with firmware status zero. Unlike the original
@@ -563,7 +564,7 @@ does not override a later transport error**; callers must check return value
 and channel state before proceeding.
 
 `scripts/test_hfrp_channel.py` compiles the actual C component and drives a
-synthetic register/firmware peer. Its **31 scenarios**, **123 injected access
+synthetic register/firmware peer. Its **31 scenarios**, **125 injected access
 failures** and **22 invalid-argument/state checks** cover:
 
 - Immediate and delayed reset/readiness/reply, including the last allowed poll.
@@ -585,7 +586,107 @@ CC='cc -fsanitize=undefined -fno-sanitize-recover=undefined' \
   venv/bin/python scripts/test_hfrp_channel.py
 ```
 
-Next, version discovery must use this checked exchange API and validate the
-response size/status before choosing a power-command format. Platform binding,
-power policy and their ordering relative to the retained SROOT upload remain
-unresolved; the channel's READY state is not a substitute for those steps.
+## Checked version discovery and power-on packet
+
+`n1x_hfrp_discover_version()` requires READY and reads the stamp at offset 0.
+It follows the recovered Windows thresholds: below `0x20250211` is unsupported;
+before `0x20250425` selects 1.3; before `0x2025ffff` selects 1.5. Newer stamps
+require command 999 with a successful, exactly four-byte response. The major
+and minor bytes come from bits 16..23 and 8..15 respectively. Discovery clears
+previous output on an accepted attempt and never marks an unsuccessful result
+valid. Access errors and malformed replies fail the channel. A completed
+firmware error leaves transport ownership intact, but the version invalid.
+Argument/state rejection preserves output and performs no I/O.
+
+`n1x_hfrp_power_on()` sends command 400 for Windows request mask 7: wire bits
+`0x008c`, enabling clock, power domain and rail. Version 1.3 carries a third,
+explicit caller-supplied PPS byte; major 1/minor >= 5 uses two bytes, matching
+Windows. Other versions are rejected. This helper neither chooses a PPS value
+nor installs the required startup configuration. Completion is not proof of
+physical power state. These functions remain outside the live module lists.
+
+`scripts/test_hfrp_startup.py` checks 36 stamp/response combinations through
+the actual C rings and synthetic peer against original ARM64 version discovery.
+For valid versions it compares power packets at four PPS inputs against the
+original Windows policy. Additional checks cover unsupported versions, invalid
+states, malformed response lengths, failed reads, firmware errors and timeouts.
+It passes normally and under UndefinedBehaviorSanitizer. Test PPS values are
+arbitrary differential inputs, not values approved for this hardware.
+
+## Windows startup configuration recovered with Ghidra and radare2
+
+Ghidra exports of KMD RVAs `0xd41b50`, `0xd456e0`, `0xd49900` and the mode
+setter `0xd3dd08` were checked against ARM64 instructions in radare2. The
+decompiler's prototypes are unreliable around shared stack-cookie helpers and
+tail calls; the executable replay below supplies stronger evidence.
+
+`scripts/test_hfrp_config.py` executes the original startup parent, mode setter,
+SRAM builder, configuration function, VF decoder and tuning function. Registry,
+resource writes, handshake/version, HFRP transport and the final callback are
+stubbed and recorded. No device is accessed. The default tested order is:
+
+1. Read `RmSocDlaHfrpMode`, default 1; the original setter writes resource 2,
+   offset 4, value 1 for nonzero mode. Mode 0 performs no resource write.
+2. Invoke handshake/version discovery for mode 1.
+3. Send command 412 (`SRAM_HOLD`), one byte: 2 for nonzero HAL+`0x474`, else 1.
+4. Invoke HAL+`0x200`, resolved to `0xd456e0`, which sends command 401 (`CONFIG`).
+5. Query command 428 (`GET_VF_CURVE`) and decode its response.
+6. If HAL+`0x490` enables the policy, invoke HAL+`0x208` (`0xd49900`) to send
+   command 408 (`SET_POWER_CONTROL_TUNING`) followed by command 407
+   (`GET_POWER_DRAW_CAP`). Both names match NVIDIA's L4T command table; the
+   four-byte request to 407 does **not** establish that it sets a power cap.
+
+Command 401 has 14 bytes for the older branch and 26 for major 1/minor >= 5:
+
+| Byte offset | Type | Source / observed interpretation |
+| --- | --- | --- |
+| 0 | LE u16 | HAL+`0x5a4`, power-gating delay in ms |
+| 2 | LE u16 | HAL+`0x5a8`, rail-gating delay in ms |
+| 4 | LE u32 | settings+`0xac`, entry frequency in kHz, or zero when policy disabled |
+| 8 | LE u32 | settings+`0xb0`, exit frequency in kHz, or zero when policy disabled |
+| 12 | LE u16 | HAL+`0x5a0`, clock-gating delay in ms |
+| 14..17 | 4 bytes | zero in the extended branch |
+| 18 | LE u16 | constant 1 in the extended branch |
+| 20, 22, 24 | 3 LE u16 | zero-extended outer bytes `0x31f`, `0x322`, `0x325` |
+
+The original registry/default slice `0xd44488..0xd44508`, starting with the
+observed preceding `w22=1`, establishes clock/power/rail delays of **1/4/10 ms**.
+Registry names are `RmSocDlaDelayFlcg`, `RmSocDlaDelayElpg` and
+`RmSocDlaDelayDlarg`. Successful synthetic overrides are also tested. L4T
+confirms the units and first 14-byte layout. This does not establish the
+appropriate frequency or power settings for a physical upload attempt.
+
+The VF response starts with a u16 count, capped to eight by Windows, followed
+by pairs of u16 values. The first value is stored as the voltage field; the
+second is multiplied by 1000 into a frequency field. With a synthetic curve
+`(700,400), (850,900), (800,600)`, replay produces frequency bounds
+400000..900000 and voltage bounds 700..850. A synthetic requested frequency of
+650000 is selected within those bounds. No real device curve was queried.
+
+Command 408 copies nine consecutive u32 words from settings+`0xc0..0xe0`
+into a 36-byte payload. Command 407 copies settings+`0xbc` into a four-byte
+payload. Their real producers/defaults and any override policy still need
+tracing before Linux can choose hardware values. The test uses deliberately
+distinct synthetic words to establish field order only.
+
+The replay covers 12 version/policy/SRAM combinations, mode overrides 0 and 2,
+eight injected command failures and two delay-default/override cases. It also
+establishes error-propagation defects: the parent discards configuration return
+codes, CONFIG firmware errors can be logged and ignored, and tuning command
+408 can fail while the next command still runs. These are observed Windows
+behaviors, **not** rules to copy into a Linux driver. A future Linux startup
+sequence must check every required command and exact reply layout.
+
+```sh
+venv/bin/python scripts/test_hfrp_startup.py
+venv/bin/python scripts/test_hfrp_config.py
+CC='cc -fsanitize=undefined -fno-sanitize-recover=undefined' \
+  venv/bin/python scripts/test_hfrp_startup.py
+```
+
+Platform binding, the trailing startup callback, full policy initialization
+and cold-start ordering relative to SROOT remain unresolved. The retained DMA
+from the failed physical upload was not released or reused. No reset, new
+firmware upload, module reload, boot change or reboot was performed for this
+work. The next step is to trace the settings producers and remaining callbacks,
+then review the complete startup sequence before a separate hardware attempt.

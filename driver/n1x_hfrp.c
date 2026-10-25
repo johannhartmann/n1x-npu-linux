@@ -319,6 +319,11 @@ int n1x_hfrp_handshake(const struct n1x_dla_io *io,
     channel->state = N1X_HFRP_ACTIVE;
     channel->next_sequence = 1;
     channel->pending_sequence = N1X_HFRP_NO_SEQUENCE;
+    result->mode_select_attempted = 1;
+    err = io->write32(io->context, 4, 1);
+    if (err)
+        goto failed;
+    result->mode_selected = 1;
     result->reset_attempted = 1;
     err = io->write32(io->context, 0x100, 1);
     if (err)
@@ -342,6 +347,70 @@ int n1x_hfrp_handshake(const struct n1x_dla_io *io,
 failed:
     channel->state = N1X_HFRP_FAILED;
     return err;
+}
+
+int n1x_hfrp_discover_version(const struct n1x_dla_io *io,
+                               struct n1x_hfrp_channel *channel, __u32 polls,
+                               __u32 interval_us, struct n1x_hfrp_version *version,
+                               struct n1x_hfrp_exchange_result *result)
+{
+    __u32 word;
+    int err = hfrp_parameters(io, channel, polls, interval_us, result);
+
+    if (err || !version)
+        return -EINVAL;
+    if (channel->state != N1X_HFRP_READY)
+        return channel->state == N1X_HFRP_FAILED ? -ENOTRECOVERABLE : -EBUSY;
+    if (channel->next_sequence >= N1X_HFRP_ASYNC_SEQ ||
+        channel->pending_sequence != N1X_HFRP_NO_SEQUENCE)
+        return -EINVAL;
+    memset(version, 0, sizeof(*version));
+    memset(result, 0, sizeof(*result));
+    err = io->read32(io->context, 0, &word);
+    if (err) {
+        channel->state = N1X_HFRP_FAILED;
+        return err;
+    }
+    version->stamp = word;
+    version->stamp_valid = 1;
+    if (word < 0x20250211U)
+        return -EOPNOTSUPP;
+    if (word < 0x2025ffffU) {
+        version->major = 1;
+        version->minor = word < 0x20250425U ? 3 : 5;
+    } else {
+        version->query_requested = 1;
+        err = n1x_hfrp_exchange(io, channel, 999, NULL, 0, polls, interval_us, result);
+        if (err)
+            return err;
+        if (result->reply.length != 4) {
+            channel->state = N1X_HFRP_FAILED;
+            return -EBADMSG;
+        }
+        word = (__u32)result->reply.payload[0] | ((__u32)result->reply.payload[1] << 8) |
+               ((__u32)result->reply.payload[2] << 16) | ((__u32)result->reply.payload[3] << 24);
+        version->response_word = word;
+        version->major = (word >> 16) & 0xffU;
+        version->minor = (word >> 8) & 0xffU;
+    }
+    version->valid = 1;
+    return 0;
+}
+
+int n1x_hfrp_power_on(const struct n1x_dla_io *io,
+                       struct n1x_hfrp_channel *channel,
+                       const struct n1x_hfrp_version *version, __u8 pps,
+                       __u32 polls, __u32 interval_us,
+                       struct n1x_hfrp_exchange_result *result)
+{
+    __u8 payload[3] = {0x8c, 0, pps};
+
+    if (!version || !version->valid)
+        return -EINVAL;
+    if (version->major != 1 || (version->minor != 3 && version->minor < 5))
+        return -EOPNOTSUPP;
+    return n1x_hfrp_exchange(io, channel, 400, payload,
+                             version->minor == 3 ? 3 : 2, polls, interval_us, result);
 }
 
 int n1x_hfrp_exchange(const struct n1x_dla_io *io,

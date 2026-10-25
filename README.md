@@ -45,7 +45,11 @@ The auxiliary HFRP register/IRQ capture and shared Windows dispatch are now
 cross-checked against L4T. Bounded HFRP command/reply ring helpers are compared
 against the original Windows code but are not connected to the live modules;
 the Linux handshake and single-command channel are tested against a synthetic
-peer. Physical IRQ roles, live handshake and power-on remain unverified. See
+peer. Version discovery and the power-on packet now use that checked channel;
+offline comparisons cover the original Windows version/power policy. Startup
+replay also recovers mode selection, SRAM/configuration packets, VF decoding
+and tuning, with synthetic policy inputs. The physical startup configuration,
+IRQ roles, live handshake and power-on remain unverified. See
 [HFRP/IRQ evidence](docs/hfrp-irq.md).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
 device nor write hardware registers.

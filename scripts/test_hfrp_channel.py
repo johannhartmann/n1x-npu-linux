@@ -28,7 +28,8 @@ class Result(ctypes.Structure):
                 ('discarded_startup_replies', ctypes.c_uint32), ('reply_valid', ctypes.c_uint8),
                 ('reset_attempted', ctypes.c_uint8), ('reset_completed', ctypes.c_uint8),
                 ('peer_ready', ctypes.c_uint8), ('ack_attempted', ctypes.c_uint8),
-                ('ack_completed', ctypes.c_uint8)]
+                ('ack_completed', ctypes.c_uint8), ('mode_select_attempted', ctypes.c_uint8),
+                ('mode_selected', ctypes.c_uint8)]
 
 
 class Peer:
@@ -110,6 +111,9 @@ class Peer:
         if failed and not self.fail_after_write:
             return self.access_error
         if offset == 0x100 and value == 1:
+            if self.word(4) != 1:
+                self.errors.append('reset before circular-mode selection')
+                return -errno.EPROTO
             self.put(0x100, 1)
             self.put(0x104, 0)
             self.put(0x110, 0)
@@ -195,6 +199,7 @@ def main():
         assert code == 0 and channel.state == READY and channel.pending_sequence == NO_SEQUENCE
         assert channel.next_sequence == 2 and result.reply_valid and result.reply.sequence == 1
         assert result.reset_completed and result.peer_ready and result.ack_completed
+        assert result.mode_selected and peer.trace[0] == ('write', 4, 1)
         assert result.discarded_startup_replies == int(options.get('startup', False))
         assert peer.packets == [bytes.fromhex('090104000000ccdd00')]
         before = len(peer.trace)
