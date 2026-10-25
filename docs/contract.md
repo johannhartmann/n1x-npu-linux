@@ -1778,3 +1778,13 @@ HFRP-first parent dispatch are exercised, with a separate minimal C capture
 component. Physical GSIs and power behavior remain unverified. Full hashes,
 addresses, error-policy differences and reproduction commands are in
 [HFRP/IRQ evidence](hfrp-irq.md).
+
+
+## Exact Windows region-5 allocation
+
+Original HAL-1 allocation preparation and provider now establish a cleared
+1-MiB allocation, 16-byte descriptor/ring offset, provider stride 52 and ring
+length 0xfffd8. The complete original buffer is accepted by raw HAL-1 software
+and matches the new optional Linux initialization phase byte-for-byte at
+publication. Ring production/consumption and hardware remain unverified. See
+[region-5 evidence](region5.md) for functions, arithmetic, failures and tests.

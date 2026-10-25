@@ -27,6 +27,11 @@
 #define N1X_BOOT_KERNEL "7.2.8-23-omarchy-p16-asus-npu1"
 #define N1X_BOOT_FIRMWARE "nvidia/n1x/p16-sroot-v0.bin"
 #define N1X_BOOT_BYTES 67508
+#define N1X_REGION5_ALLOC (1U << 20)
+#define N1X_REGION5_OFFSET 16U
+#define N1X_REGION5_STRIDE 52U
+#define N1X_REGION5_BYTES (((N1X_REGION5_ALLOC - N1X_REGION5_OFFSET - 8U) / \
+			   N1X_REGION5_STRIDE) * N1X_REGION5_STRIDE + 8U)
 
 static bool enable_upload;
 module_param(enable_upload, bool, 0400);
@@ -39,6 +44,10 @@ MODULE_PARM_DESC(enable_ping, "Permit one explicit DMA-word ping after successfu
 static bool enable_config_snapshot;
 module_param(enable_config_snapshot, bool, 0400);
 MODULE_PARM_DESC(enable_config_snapshot, "Permit one explicit command-22 snapshot after DMA ping (default false)");
+
+static bool enable_region5;
+module_param(enable_region5, bool, 0400);
+MODULE_PARM_DESC(enable_region5, "Permit one explicit region-5 initialization after DMA ping (default false)");
 
 struct n1x_boot_endpoint {
 	struct device *dev;
@@ -70,6 +79,13 @@ static struct {
 	bool attempted, valid;
 	int error;
 } boot_config;
+static struct {
+	void *buffer;
+	dma_addr_t dma;
+	struct n1x_dla_control_result transaction;
+	bool attempted, registered;
+	int error;
+} boot_region5;
 
 static bool n1x_boot_machine(void)
 {
@@ -390,6 +406,78 @@ free:
 	return err;
 }
 
+/* Caller holds boot_lock; exactly the observed Windows region-5 allocation
+ * layout, without a ring consumer, task submission or configuration import.
+ */
+static int n1x_boot_init_region5_once(void)
+{
+	struct n1x_dla_io io;
+	u64 maximum = DMA_BIT_MASK(36);
+	int err;
+
+	if (!enable_region5 || !n1x_boot_machine())
+		return -EPERM;
+	if (!boot_sroot || !boot_dla || !boot_ping.verified)
+		return -ENODEV;
+	if (boot_region5.attempted)
+		return -EALREADY;
+	err = n1x_boot_dma_gate(boot_dla);
+	if (err)
+		return err;
+	err = dma_set_mask_and_coherent(boot_dla->dev, maximum);
+	if (err)
+		return err;
+	boot_region5.buffer = dma_alloc_coherent(boot_dla->dev, N1X_REGION5_ALLOC,
+						 &boot_region5.dma, GFP_KERNEL);
+	if (!boot_region5.buffer)
+		return -ENOMEM;
+	if (!boot_region5.dma || (boot_region5.dma & 255) || boot_region5.dma > maximum ||
+	    N1X_REGION5_ALLOC - 1 > maximum - boot_region5.dma) {
+		err = -ERANGE;
+		goto free;
+	}
+	memset(boot_region5.buffer, 0, N1X_REGION5_ALLOC);
+	err = n1x_dla_build_region(boot_region5.buffer, N1X_REGION5_ALLOC, 5,
+				    boot_region5.dma + N1X_REGION5_OFFSET, N1X_REGION5_BYTES);
+	if (err)
+		goto free;
+	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+	dma_wmb();
+	/* The existing upload reference owns module/runtime lifetime. Do not
+	 * release this descriptor/ring even after an accepted/ACKed command.
+	 */
+	boot_region5.attempted = true;
+	err = n1x_dla_control_command(&io, 11, boot_region5.dma, 5001, 1000,
+				       &boot_region5.transaction);
+	if (!err)
+		boot_region5.registered = true;
+	return err;
+free:
+	dma_free_coherent(boot_dla->dev, N1X_REGION5_ALLOC,
+			  boot_region5.buffer, boot_region5.dma);
+	boot_region5.buffer = NULL;
+	boot_region5.dma = 0;
+	return err;
+}
+
+static ssize_t init_region5_store(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	int err;
+
+	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "init"))
+		return -EPERM;
+	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev)
+		err = -ENODEV;
+	else
+		err = n1x_boot_init_region5_once();
+	boot_region5.error = err;
+	mutex_unlock(&boot_lock);
+	return err ? err : count;
+}
+static DEVICE_ATTR_WO(init_region5);
+
 static ssize_t read_config_store(struct device *dev, struct device_attribute *attr,
 				 const char *buf, size_t count)
 {
@@ -470,20 +558,21 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 
 	mutex_lock(&boot_lock);
 	size = sysfs_emit(buf,
-		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u\n",
+		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u\n",
 		!!boot_dla, !!boot_sroot, enable_upload, boot_attempted, boot_error,
 		boot_result.reply_valid, boot_result.reply.header,
 		boot_result.idle_observed, !!boot_buffer, enable_ping, boot_ping.attempted,
 		boot_ping.error, boot_ping.verified, boot_ping.word, !!boot_ping.buffer,
 		enable_config_snapshot, boot_config.attempted, boot_config.error, boot_config.valid,
 		boot_config.transaction.response_valid, boot_config.transaction.response.word,
-		!!boot_config.buffer);
+		!!boot_config.buffer, enable_region5, boot_region5.attempted, boot_region5.error,
+		boot_region5.registered, !!boot_region5.buffer);
 	mutex_unlock(&boot_lock);
 	return size;
 }
 static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_show, NULL);
 static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
-	&dev_attr_config_snapshot.attr, &dev_attr_status.attr, NULL};
+	&dev_attr_config_snapshot.attr, &dev_attr_init_region5.attr, &dev_attr_status.attr, NULL};
 ATTRIBUTE_GROUPS(boot);
 
 static int n1x_boot_probe(struct platform_device *pdev)

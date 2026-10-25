@@ -597,8 +597,8 @@ sudo rmmod n1x_npu_observe
 sudo install -Dm644 sources/dla-p16-sroot-v0.bin \
   /usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin
 # Use the module built for npu1, not the current-kernel build in driver/:
-sudo insmod results/npu1-bootstrap-control-build/driver/n1x_npu_bootstrap.ko \
-  enable_upload=1 enable_ping=1 enable_config_snapshot=1
+sudo insmod results/npu1-bootstrap-region5-build/driver/n1x_npu_bootstrap.ko \
+  enable_upload=1 enable_ping=1 enable_region5=1 enable_config_snapshot=1
 sudo cat /sys/bus/platform/devices/NVDA200A:00/status
 # This is the one write trigger; it requires retention/reboot afterward:
 printf 'upload\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/upload
@@ -737,3 +737,34 @@ Earlier upload-only/ping-only build directories describe earlier sources, not
 this current module. No bootstrap has been loaded, no firmware installed and no
 upload, ping or config read has occurred on the machine. Full initialization,
 IRQ routing/recovery and inference remain incomplete.
+
+
+### Optional exact-layout region-5 setup (built, not yet run)
+
+`enable_region5=1` adds a root/CAP_SYS_RAWIO `init_region5` trigger accepting
+`init`, gated on this boot's verified DMA-word ping and both endpoint bindings.
+It initializes the exact Windows-default 1-MiB allocation/layout through command
+11, preserves the buffer after every transaction attempt, and reports attempt,
+error, registration and retention in status. It does not implement ring
+production/consumption, task submission or configuration import.
+
+The recommended pending qualification order is upload, DMA-word ping, region-5
+registration, then optional configuration export. The earlier config-only
+experiment can still run without region 5; its export does not import/mutate
+operating settings. The updated pending module-load example selects all four
+independently triggered phases and uses the latest source-matched module at
+`results/npu1-bootstrap-region5-build/`. Historical control-only and ping-only
+builds do not contain this phase.
+
+```sh
+# Only after upload and DMA-word ping status are successful:
+printf 'init\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/init_region5
+sudo cat /sys/bus/platform/devices/NVDA200A:00/status
+```
+
+See [region-5 allocation and initialization evidence](region5.md) for the original
+constructor/provider/builder functions, exact arithmetic, buffer comparison,
+failure policy, firmware test and remaining ring semantics. The 26 new lifecycle
+cases and prior 26 snapshot, 29 ping, 21 upload and 2592 DMA/MMIO cases pass.
+Both current- and test-kernel module builds pass. No module was installed/loaded,
+no firmware file installed and no device register touched by this work.

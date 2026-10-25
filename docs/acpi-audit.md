@@ -138,7 +138,9 @@ Do not add `_CCA=1`, force direct DMA or reuse DLA0's IOMMU domain on the basis
 of shared chip identity. The firmware-declared SROOT requester is identified;
 physical DMA operation remains untested. Windows explicitly requests uncached
 common-buffer memory, supporting a noncoherent Linux configuration. A scoped
-kernel patch is available in [Linux backend](linux-backend.md), but is not installed. The Windows allocator's returned logical/physical address
+kernel patch is installed in the isolated npu1 test kernel; see
+[Linux backend](linux-backend.md) for the still-pending manual boot and DMA
+qualification. It is not active in the currently running original kernel. The Windows allocator's returned logical/physical address
 separation remains relevant; see [SROOT transport](sroot-transport.md).
 
 ## Address discrepancy requiring resolution

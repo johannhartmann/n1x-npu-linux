@@ -22,8 +22,9 @@ now connects that phase to guarded Linux MMIO and SROOT DMA storage. It builds
 for the isolated test kernel but has not been installed or run. It is a
 one-attempt experiment requiring retained DMA storage/reboot, and does not
 complete IRQ/configuration initialization or inference. An additional opt-in
-DMA-word ping phase and command-22 configuration export are implemented but
-also remain untested on hardware. Configuration import is not exposed.
+DMA-word ping, exact Windows-layout region-5 setup and command-22 configuration
+export are implemented but remain untested on hardware. Configuration import
+and ring consumption are not exposed. See [region-5 setup](docs/region5.md).
 The auxiliary HFRP register/IRQ capture and shared Windows dispatch are now
 cross-checked against L4T; physical IRQ roles remain unverified. See
 [HFRP/IRQ evidence](docs/hfrp-irq.md).
