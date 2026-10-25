@@ -249,6 +249,10 @@ zero/nonzero software predicates. The remaining result layout and hardware
 comparison meaning are still unresolved; neither a zero result buffer nor
 whole-buffer comparison with the blob named positive is treated as success.
 
+A [small FP16 ReLU source model and CPU oracle](docs/model-probe.md) now provide
+a numerical target for investigating the Windows ARM TensorRT 11.4 compiler.
+It is not yet a compiled N1X loadable or a verified Linux inference test.
+
 
 The default SROOT image now has an [offline signed-envelope audit](docs/sroot-envelope.md):
 its embedded-key signature and both complete body digests verify. Chip trust,

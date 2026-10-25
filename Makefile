@@ -2,7 +2,9 @@ CC ?= cc
 CFLAGS ?= -O2 -g -Wall -Wextra -Werror
 # Explicit installed-kernel target; builds only, never installs/loads modules.
 KERNEL_RELEASE ?= $(shell uname -r)
-.PHONY: test test-vendor kernel-check module clean
+.PHONY: test test-vendor kernel-check module clean generate-probe
+generate-probe:
+	venv/bin/python scripts/create_relu_probe.py
 tests/test_firmware: tests/test_firmware.c driver/n1x_dla_firmware.c include/n1x_dla_firmware.h
 	$(CC) $(CFLAGS) -Iinclude tests/test_firmware.c driver/n1x_dla_firmware.c -o $@
 test: tests/test_firmware
