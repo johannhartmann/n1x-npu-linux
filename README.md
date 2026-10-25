@@ -42,7 +42,9 @@ Custom configuration overrides and ring consumption are not exposed. See
 on immutable CPU snapshots; see [history evidence](docs/region5-history.md) and
 [region-5 setup](docs/region5.md).
 The auxiliary HFRP register/IRQ capture and shared Windows dispatch are now
-cross-checked against L4T; physical IRQ roles remain unverified. See
+cross-checked against L4T. Bounded HFRP command/reply ring helpers are compared
+against the original Windows code but are not connected to the live modules;
+physical IRQ roles and the Linux handshake remain unverified. See
 [HFRP/IRQ evidence](docs/hfrp-irq.md).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
 device nor write hardware registers.

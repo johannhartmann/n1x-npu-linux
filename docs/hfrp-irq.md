@@ -4,7 +4,8 @@ The auxiliary P16 aperture has a verified Windows HFRP register/interrupt
 protocol correspondence with the pinned L4T source. **The physical P16 GSI
 assignment is still unverified.** No Linux IRQ is registered by this work, and
 the bootstrap still does not map/write the auxiliary aperture. HFRP response
-rings, clock/power transitions and recovery are not implemented by the new
+rings are now implemented as separate bounded callback helpers, described
+below. Clock/power transitions and recovery are not implemented by the IRQ
 capture helper.
 
 ## Inputs and boundaries
@@ -383,7 +384,114 @@ venv/bin/python scripts/test_hfrp_version.py
 ```
 
 These findings identify missing bootstrap dependencies, not a working power
-backend. The remaining immediate work is the HFRP handshake, bounded command
-ring and reply parser, followed by correct parent-path selection. The Linux
+backend. Bounded ring helpers are now implemented below. The remaining
+immediate work is integrating a strict handshake, pending-command ownership
+and recovery, followed by correct parent-path selection. The Linux
 bootstrap still sends no HFRP power/reset commands. Neither observed SROOT
 upload rejection is explained or repaired by these offline results alone.
+
+## Bounded Linux command and reply rings
+
+`driver/n1x_hfrp.c` now provides `n1x_hfrp_queue_command()` and
+`n1x_hfrp_read_reply()`. They use the existing ordered read32/write32 callback
+interface and **are not linked into either live kernel module**. They do not
+establish device power, reset or protocol mode. The caller must own and
+serialize the HFRP transport, including IRQ consumers.
+
+The original mode-0 initializer `0xd4aeb8`, producer `0xd4b3a0`, consumer
+`0xd4b7f0` and byte-copy helpers establish this layout:
+
+| Location | Ownership and purpose |
+| --- | --- |
+| `0x110`, byte 0 | host command head |
+| `0x110`, byte 1 | host response tail |
+| `0x188`, byte 0 | firmware response head |
+| `0x188`, byte 1 | firmware command tail |
+| `0x114..0x187` | 116-byte command ring |
+| `0x18c..0x1ff` | 116-byte response ring |
+| `0x100`, bit 1 | host doorbell via IRQ_IN_SET |
+
+The four-byte little-endian header holds total byte length in bits 0..7,
+sequence in bits 8..17, and command (request) or firmware status (reply) in
+bits 18..27. The reply helper preserves the entire raw header, including upper
+bits whose meaning has not been established. Sequence `0x3ff` denotes an
+asynchronous reply and is rejected for synchronous request allocation.
+
+The producer leaves one ring byte unused to distinguish full from empty.
+Consequently, maximum request payload is 111 bytes. It validates both index
+bytes, writes the packet, publishes the command head, then rings the doorbell.
+Byte writes preserve neighboring bytes through aligned word reads/writes;
+publishing the head preserves the response tail and upper client-offset bytes.
+`-ENOSPC` performs no packet writes. Access failures stop immediately.
+
+Publication is tracked explicitly. A failed head-pointer write may still have
+reached the device, as may a failed doorbell write. The result distinguishes
+attempted and confirmed publications; callers must retain uncertain requests
+and must not automatically retry or reuse their sequence. No automatic retry,
+rollback, command timeout or sequence allocator is supplied by these primitives.
+
+The consumer reads **one** response per call and checks published availability
+before copying. Its fixed 50-byte payload limit matches the original Windows
+consumer's length check. It rejects invalid indices, lengths below four and
+oversized responses; empty/incomplete frames return `-EAGAIN`. These cases do
+not advance the tail. Successful copying is followed by tail publication;
+failure of that final write leaves consumption uncertain and must not be
+treated as successful delivery. Firmware status is returned separately from
+transport success, and an async response is not mistaken for command completion.
+The helper does not acknowledge IRQs or match responses to outstanding commands.
+
+`scripts/test_hfrp_ring.py` executes the original ARM64 initializer, producer,
+consumer and byte helpers against synthetic MMIO. **72 TX and 162 RX cases**
+compare packet bytes, preserved surrounding register memory, index updates,
+payload/status and original outstanding-bit release. They include unaligned
+heads/tails, wrapping, empty/full boundaries, maximum sizes and async replies.
+Additional tests cover two queued responses consumed separately, eight
+malformed/incomplete cases, invalid arguments/indices and **48 access-failure
+cases**, including writes which take effect before returning an error.
+The original consumer is not run on malformed inputs; its behavior is not used
+as the Linux safety policy. Existing IRQ tests still pass, and the updated
+component builds against the running kernel's headers.
+
+## Complete original handshake in the emulator
+
+The same test now executes original handshake **`0xd4af88`**, including the
+original poll helper **`0xd3d750`**, producer and consumer. Only register access,
+delay, logging, memory/CFG boundaries are modeled. The modeled peer supplies
+reset acknowledgments and replies; this is not physical firmware validation.
+
+The observed sequence is:
+
+1. Clear software sequence ownership and IRQ bookkeeping.
+2. Write `1` to IRQ_IN_SET (`0x100`) and wait for its bit 0 to clear.
+3. Wait for IRQ_OUT_SET (`0x104`) bit 1 to become set.
+4. Drain replies, clear IRQ_OUT bit 1 through `0x10c`, then drain again.
+5. Queue command **1**, sequence **1**, with five bytes **`00 00 cc dd 00`**.
+   The complete packet is `09 01 04 00 00 00 cc dd 00`.
+6. Ring IRQ_IN bit 1, poll/drain/ack until that sequence is released.
+
+This is a transport handshake, not DLA firmware authentication. The poll helper
+also recognizes software IRQ status/counter changes; the modeled tests exercise
+the direct register path. Each timeout case executes 5,000 original delay-helper
+calls with argument 10. No wall-clock unit or physical timeout duration is
+inferred from this argument alone.
+
+Five peer scenarios establish normal completion, missing readiness, missing
+reply, a reset bit which never clears, and firmware status `0x123`. Missing
+readiness/reply returns Windows status `0x65`. **The initial reset timeout is
+logged and ignored**, and a nonzero status in the matching reply still allows
+success. The handshake does not validate the modeled four-byte reply payload.
+A Linux handshake must reject failed reset and nonzero firmware status instead
+of copying this permissive behavior. Its pending-sequence lifecycle must also
+remain explicit on timeout; a timed-out command is not proven canceled.
+
+Reproduce without accessing hardware:
+
+```sh
+venv/bin/python scripts/test_hfrp_ring.py
+venv/bin/python scripts/test_hfrp_irq.py
+make -C "/usr/lib/modules/$(uname -r)/build" M="$PWD/driver" n1x_hfrp.o
+```
+
+No HFRP mapping, reset, bootloader update, new firmware upload or module reload
+was performed. These helpers still require a transport owner and strict
+handshake before they can support the NPU's actual power-on path.
