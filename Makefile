@@ -12,6 +12,7 @@ test-relu:
 	venv/bin/python scripts/inspect_loadable_version_gate.py --relu
 	venv/bin/python scripts/inspect_content_materialization.py --relu
 	venv/bin/python scripts/inspect_full_deserialization.py
+	venv/bin/python scripts/test_statistics_v2.py
 	venv/bin/python scripts/test_relu_scheduler.py
 tests/test_firmware: tests/test_firmware.c driver/n1x_dla_firmware.c include/n1x_dla_firmware.h
 	$(CC) $(CFLAGS) -Iinclude tests/test_firmware.c driver/n1x_dla_firmware.c -o $@
@@ -113,7 +114,7 @@ test-vendor: test
 	venv/bin/python scripts/test_il_slice.py
 	venv/bin/python scripts/emulate_init_il.py
 kernel-check:
-	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" n1x_dla_ring.o n1x_hfrp.o n1x_dla_control.o n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o n1x_sroot.o
+	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" n1x_dla_ring.o n1x_hfrp.o n1x_dla_control.o n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o n1x_dla_statistics.o n1x_sroot.o
 clean:
 	rm -f tests/test_firmware
 

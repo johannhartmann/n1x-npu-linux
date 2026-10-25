@@ -271,7 +271,9 @@ content and tensor records. Required original CRT/regex initialization now
 exposes a statistics-header mismatch: compiler byte 2 versus runtime 617.42's
 expected byte 1. The outer deserializer ignores that error. A version-only
 mutation makes the old runtime index 3,392 of 28,736 bytes, so it is not a
-compatibility fix. Malformed-reference tests also show that deserialization
+compatibility fix. A [Linux statistics-layout parser](docs/statistics-v2.md)
+now checks the newer header and record bounds against the original compiler
+builder; metadata fields and hardware counters remain opaque. Malformed-reference tests also show that deserialization
 alone does not establish model validity. The unmodified HAL-1 firmware processes its real instruction
 and address buffers and completes the original fence/IRQ path when given a
 modeled engine-completion status. Output remains poisoned because arithmetic

@@ -92,6 +92,7 @@ def main():
     allocations={};retired=set();copies=[];shims=Counter();queries=[]
     graph_edges=[]
     initializer_calls=[];error_flags=[];file_events=[];path_conversions=set()
+    statistics_builder=[]
     modeled_ticks=0
     virtual_directories=set()
     process_heap=0x12340000  # An opaque handle, never dereferenced.
@@ -115,6 +116,16 @@ def main():
         raise AssertionError('Unterminated runtime API name')
     def hook(uc,address,size,user):
         nonlocal last_error,modeled_ticks
+        if address==base+0xc76488:
+            statistics_builder.append(dict(context=uc.reg_read(r.UC_ARM64_REG_X0)))
+        if address==base+0xc76734:
+            assert len(statistics_builder)==1 and uc.reg_read(r.UC_ARM64_REG_X0)==0
+            context=statistics_builder[-1]['context']
+            n=struct.unpack('<I',uc.mem_read(context+0x34,4))[0]
+            pointer=struct.unpack('<Q',uc.mem_read(context+0x38,8))[0]
+            header=list(struct.unpack('<7I',uc.mem_read(pointer,28)))
+            assert n==28736 and header==[0x300,2,4,6144,28,1024,24640]
+            statistics_builder[-1].update(status=0,bytes=n,header_words=header)
         if address==base+0xf19384:initializer_calls.append(uc.reg_read(r.UC_ARM64_REG_X15)-base)
         if address==base+0xc6ddd8 and uc.reg_read(r.UC_ARM64_REG_X0):
             error_flags.append(uc.reg_read(r.UC_ARM64_REG_X0))
@@ -235,7 +246,7 @@ def main():
             copies.append(n);uc.reg_write(r.UC_ARM64_REG_X0,dst)
         else:return
         uc.reg_write(r.UC_ARM64_REG_PC,uc.reg_read(r.UC_ARM64_REG_LR))
-    for address in set(stub_names)|{base+x for x in (0xf19384,0xc6ddd8,0x61e1b0,0x61e298,0xf02e08,0xf0c6b8,0xf028b0,0xf02908,0x1200)}:
+    for address in set(stub_names)|{base+x for x in (0xc76488,0xc76734,0xf19384,0xc6ddd8,0x61e1b0,0x61e298,0xf02e08,0xf0c6b8,0xf028b0,0xf02908,0x1200)}:
         u.hook_add(UC_HOOK_CODE,hook,begin=address,end=address)
     for reg,value in ((r.UC_ARM64_REG_X0,0),(r.UC_ARM64_REG_X1,common),(r.UC_ARM64_REG_X2,vector),
                       (r.UC_ARM64_REG_X18,teb),(r.UC_ARM64_REG_SP,stack+0x40000),(r.UC_ARM64_REG_LR,stop)):
@@ -451,6 +462,7 @@ def main():
         outputs.append(dict(kind=kind,bytes=n,sha256=sha,file=f'kind-{kind}.bin',
                             original_size_and_copy_verified=True,copy_status=copy_status))
     metadata=json.loads(payloads[7])
+    assert len(statistics_builder)==1 and statistics_builder[0]['status']==0
     assert metadata['schema_version']==1 and len(metadata['gp_layers'])==1
     assert len(metadata['layers'])==4
     es_lists=metadata['gp_layers'][0]['es_lists']
@@ -484,6 +496,8 @@ def main():
     print(json.dumps(dict(passed=True,hardware_access=False,windows_sha256=digest,
         collector_rva='0x756630',operation_count=1,record_bytes=len(record),
         pretranslation=pretranslation,
+        statistics_builder=dict(rva='0xc76488',status=0,bytes=statistics_builder[0]['bytes'],
+                                header_words=statistics_builder[0]['header_words']),
         translation=dict(rva='0x624eb0',completed=True,return_value=0,outputs=outputs,
                          metrics=metrics,handoff=handoff,
                          output_manifest=str(outdir/'manifest.json'),complete_loadable=False),

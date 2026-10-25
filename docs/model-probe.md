@@ -823,7 +823,7 @@ make test-relu
 ```
 
 This target requires the generated source/oracle and serialized artifact from
-the preceding workflows. It runs the artifact verifier and the four offline
+the preceding workflows. It runs the artifact verifier and the five offline
 runtime/firmware probes. It neither loads a module nor accesses hardware.
 
 `inspect_loadable_version_gate.py --relu` enters the original Windows
@@ -949,9 +949,10 @@ then returns 0 and creates one index entry, but its recorded extent is only
 blob is **28,736 bytes**. Its four layer names are at offsets `0x1c`, `0x181c`,
 `0x301c`, `0x481c`, spaced by `0x1800`, rather than the old parser's `0x340`
 record stride. A version-byte rewrite is consequently **not** a conversion or
-a valid compatibility fix. The checked artifact remains unchanged. A Linux
-statistics implementation needs a properly reconstructed newer layout; no
-decoder for that layout or hardware statistics collection is claimed here.
+a valid compatibility fix. The checked artifact remains unchanged. The
+[original producer and Linux layout parser](statistics-v2.md) now establish
+the newer header, strides, and per-record data offsets. Internal fields,
+counter decoding and hardware statistics collection remain unverified.
 
 Three in-memory mutations test the extent of the original checks:
 
