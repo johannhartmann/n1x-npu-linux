@@ -64,8 +64,10 @@ code offsets `0x4168..0x4186` construct `0x144648`, `0x146d54` and `0x1480c4`;
 subtracting that base locates an IRQ synchronization error format, `[ERROR]`
 and newline in the second payload. Adjacent code also constructs `0x144630`
 and `0x14466c`, matching nearby error formats. This is static evidence only.
-The CPU code base, complete mapping, entry path and mailbox function boundaries
-still require reconstruction before an emulation can be treated as reliable.
+The CPU code base, complete mapping and entry path still require reconstruction
+before a full firmware emulation can be treated as reliable. The bounded reply
+routine below can nevertheless run with a synthetic code base because its
+executed calls are PC-relative and its absolute data accesses are accounted for.
 Descriptor words `0x10001000`/`0x10001100` are preserved without labeling them
 CPU execution addresses.
 
@@ -74,6 +76,42 @@ different wrapper flags and high-entropy payload regions. No transform or
 decryption interpretation is established. Do not equate OSROOT helper return
 values with the P16 SROOT replies `6/42` or `1023/37` without tracing the actual
 packing and error-return paths. Those reply meanings remain unresolved.
+
+## Original reply routine: verified field packing
+
+`scripts/test_osroot_reply.py` executes the original RV32 routine at payload
+offset `0x341c`, its original register-address accessor at `0x31c0` and the
+original zero-return helper at `0x36b6`. There are no function stubs. The harness
+maps code at synthetic address zero, supplies stack and cookie memory, and
+replaces the four register bases at `0x146d44` with emulator-owned memory.
+This is function-level execution, not a recovered full boot layout.
+
+The input structure contains a 32-bit combined status at offset 0, command byte
+at offset 4, low-four-bit payload count at offset 8 and payload words at offset
+12. The routine writes its third argument to mailbox offset `0x210`, emits the
+header and every payload word through the same offset `0x214`, then writes 1 to
+`0x21c`. The header is:
+
+```text
+command | (count << 8) | ((status & 0xfff) << 12)
+        | (((status >> 12) & 0xff) << 24)
+```
+
+All 80 synthetic combinations of four mailboxes, five counts and four statuses
+produce the expected complete write sequence; null-packet and invalid-mailbox
+controls return 1 without register writes. The two observed P16 replies are
+reproduced from combined statuses `0x2a006` and `0x253ff`, then decoded by the
+original Windows provider to `(command=0x18, status=6, detail=42, count=0)` and
+`(command=0x18, status=1023, detail=37, count=0)` respectively.
+
+This proves shared field packing, not shared error semantics, successful image
+authentication or that OSROOT is the P16 SROOT image. The reference routine
+accepts a count of 15; Linux's existing maximum of 14 is unchanged. The static
+service tables referenced by the dispatcher at offset `0x1186a` list commands
+`0x10/0x19/0x30/0x31` for mailbox 0, none for mailbox 1,
+`0x1b/0x22/0x23/0x25` for mailbox 2, and `0x02/0x03` for mailbox 3.
+They do not supply a handler for upload command `0x18`. Their code-pointer
+mapping and the actual SROOT upload error producers remain unresolved.
 
 ## Reproduce without touching hardware
 
@@ -91,6 +129,8 @@ tools/usr/lib/7zip/7z x -osources/dgx-spark-socfw-2.158.15 \
 venv/bin/python scripts/inspect_spark_osroot.py
 # Optional; refuses an existing directory instead of overwriting prior evidence:
 venv/bin/python scripts/inspect_spark_osroot.py --extract-dir sources/dgx-spark-osroot
+# After extraction; also needs the existing pinned Windows provider:
+venv/bin/python scripts/test_osroot_reply.py
 ```
 
 The script pins the whole capsule, verifies the internal signature and all
