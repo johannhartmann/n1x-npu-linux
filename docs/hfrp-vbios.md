@@ -19,10 +19,13 @@ value of 1 enables it, and every other successfully read u32 disables it.
 `scripts/emulate_boot_policy.py` covers this alongside boot-method/remapper
 defaults. This does not identify overrides on an actual Windows installation.
 The global initializer gates settings allocation and VBIOS parsing on this
-field. Disabling it to avoid acquiring the board policy is not a validated
-Linux startup configuration.
+field. However, the normal global path checks the constructor's value before
+the later registry override is read. Setting the registry value to zero does
+not bypass that earlier acquisition; see [the connected replay](#registry-override-timing).
+Disabling it to avoid acquiring the board policy is not a validated Linux
+startup configuration.
 
-The initializer checks for a `vbios` property through `0xd3b6b0`. If present,
+The initializer checks for a `vbios` registry value through `0xd3b6b0`. If present,
 `0xd3bab0` builds a buffer from that property and any numbered continuations.
 Otherwise `0xd3d2c0` follows a mapped-memory fallback. Both call `0xd3d010` to
 parse the image and release the temporary mapping/allocation afterward.
@@ -162,6 +165,52 @@ window was mapped. Zero must not be substituted for the unknown locator.
 Register identity, accessibility and the resulting range need confirmation
 before implementing a physical read path; strict `/dev/mem` protections remain
 enabled and were not bypassed.
+
+## Registry override timing
+
+`scripts/test_vbios_startup_gate.py` executes the original global initializer
+`0xd38a88`, settings constructor `0x195d6d8`, policy initializer `0xd440d0`,
+gating-mask producer and start wrappers in one emulated instance. The actual
+profile/HAL callback constructors and HAL default block supply the callbacks
+and initial `HAL+0x490=1`. Outer allocation/resource discovery is reconstructed;
+ROM acquisition supplies synthetic decoded fields, and remapper, buffer
+setup, HFRP, power, loader and post-start operations are recording stubs.
+
+For both registry-supplied ROM and physical-fallback branches, acquisition
+occurs **before** the `RmSocDlaEnableVbios` override is queried. The override
+disables later consumers such as tuning, but the policy initializer still
+uses an existing settings object for gating bytes and feature updates. A test
+with override zero changes the resulting mask from `7` to `0x777` solely by
+changing synthetic VBIOS frequency/gating flags. Feature bit 0 rejects the
+global initialization with `0x40` before the override is queried at all.
+
+Both acquisition boundaries were also made to return error `0x65` without
+populating settings. Windows ignores that return, retains the constructor's
+zeroed settings, applies its 4/1/3 substitutions and reaches the loader stub.
+The final global status is zero. This is an error-propagation defect, not proof
+that empty settings are valid or that a physical NPU can boot without them.
+Linux must retain explicit policy validation and propagate acquisition errors.
+
+A counterfactual control sets the field to zero **before** entering the global
+initializer. That does skip settings allocation and acquisition, confirming
+the gate itself. It does not establish a production path that applies the
+registry override that early, or justify silently changing Linux's board-policy
+requirements. Fifteen cases cover the two acquisition sources, five override
+values, retained policy effects, early rejection, the counterfactual gate and
+both ignored acquisition errors. No physical registers are accessed.
+
+Static instruction/import inspection further identifies the value reader's
+OS boundary: `0xd3b6b0` uses `ZwOpenKey` (IAT `0xe3e480`) and
+`ZwQueryValueKey` (`0xe3e488`), with ANSI-to-Unicode conversion through
+`RtlInitAnsiString`/`RtlAnsiStringToUnicodeString`. The key name comes from
+`outer+0x158`; this is not an ACPI `vbios` property lookup. The fallback mapper
+`0xd3b4f8` tail-calls `MmMapIoSpace` (IAT `0xe3ead8`) with the supplied physical
+address and size. This confirms the physical nature of that fallback without
+establishing that its locator register is safe to access on Linux.
+
+```sh
+venv/bin/python scripts/test_vbios_startup_gate.py
+```
 
 ## Still required for hardware bring-up
 

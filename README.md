@@ -71,6 +71,8 @@ on synthetic inputs, including feature ordering and PPS substitutions.
 The complete registry/policy initializer is replayed with synthetic inputs,
 including feature precedence and the final remapper selection;
 the actual machine's policy values still require a matching VBIOS capture.
+The connected Windows startup replay confirms that its disable-VBIOS registry
+override is read after acquisition and therefore does not bypass that step.
 See [VBIOS policy evidence](docs/hfrp-vbios.md).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
 device nor write hardware registers.
