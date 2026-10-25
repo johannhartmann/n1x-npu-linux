@@ -288,3 +288,70 @@ unrelated offsets or allocation flags. Ghidra exports are in ignored
 register or establish access safety; no physical locator read or arbitrary
 ROM mapping was attempted. The known address remains a reverse-engineering
 lead rather than an implemented Linux acquisition path.
+
+## GSP diagnostic export investigation
+
+The installed Linux GPU stack offers another acquisition lead. This is a
+**different binary** from the Windows NPU KMD: NVIDIA 615.78.08
+`gsp_ga10x.bin`, SHA-256
+`a20100cafd5a85e22b3e13188339730c6ced94bd5f654984dd2ed274ed58d584`.
+Its `.fwimage` contains an RV64 ELF at payload offset `0x1dd000`, SHA-256
+`eb092d6d6f156e1403b479bcdc33c6f0d7470ad20f259b9c97ff3e06ef80eb5c`.
+The addresses below are virtual addresses in that ELF, not Windows RVAs.
+
+Function `0x1bd0148` conditionally exports a buffer:
+
+| Input or operation | Observed contract |
+| --- | --- |
+| First argument + `0x72e` | Nonzero byte required; its complete producer semantics remain unresolved |
+| Second argument + `0x630` / `0x638` | Nonnull byte-buffer pointer / u32 length |
+| Encoder initialization `0x1058a44` | Allocates input length + 32; outer field descriptor at `0x1c4e8f8` |
+| Encoding `0x10580b4` | Byte field descriptor at `0x1c4a770`; copies the full input buffer |
+| Finalization `0x1058984` | Allocates a 24-byte output-list node and appends it to third argument + 8 |
+| Publisher `0x1c1b784` | Receives a record named `VBIOS`, type 2, referencing the encoded bytes |
+
+The descriptors match the public `prbrt.h` representation: outer optional
+message field **307**, containing optional bytes field **1**. The wire format
+is `field(307, field(1, original_bytes))`; it is not just a version string.
+The publisher is separately identified as the GSP NOCAT path: its RPC event
+is `0x1020`, and its record layout matches the host's
+`_kgspRpcGspPostNocatRecord()` in `kernel_gsp.c`. That RPC record has a bounded
+1024-byte diagnostic slot; it must not be confused with the complete output
+list retained by the exporter. The host's platform flags enable GSP NOCAT for
+Windows builds. None of this proves that Linux's normal dump command reaches
+the exporter or returns its complete output list.
+
+`scripts/test_gsp_vbios_export.py` executes the original exporter **and the
+original protobuf encoder**. Only allocation/free, logging and the NOCAT
+publisher are stubbed. It compares exact encoded bytes for seven synthetic
+buffer sizes from zero through `0x110000`, and tests the disabled gate, null
+buffer and both allocation failures. Failure of the output-node allocation
+silently discards the encoded buffer and publishes an empty descriptor. Thus
+neither a publisher call nor a successful-looking return establishes capture.
+All 11 offline cases pass. No synthetic bytes are valid board policy.
+
+```sh
+venv/bin/python scripts/test_gsp_vbios_export.py \
+  --elf /path/to/locally-extracted-gsp-rm.elf
+```
+
+The file must match the pinned ELF hash. Local extraction currently lives in
+`../src/firmware/extract_gsp.py`; its manifest is
+`../results/firmware/extraction.json`. No firmware binary is committed.
+
+The public Linux source registers `NVDUMP_COMPONENT_ENG_VBIOS` (component 9)
+through a GSP dump callback. `NV2080_CTRL_CMD_NVD_GET_DUMP_SIZE` (`0x20802401`)
+is nonprivileged; `NV2080_CTRL_CMD_NVD_GET_DUMP` (`0x20802402`) requires an
+administrator. A real component-9 size query on this P16, kernel
+`7.2.8-23-omarchy-p16-asus-npu1`, driver 615.78.08, returned `NV_OK` and **250
+bytes** on 2026-10-25. This proves an accessible diagnostic size query, not
+raw ROM acquisition. The small result does not establish a full board ROM;
+the contents and the relationship to the separate field-307 exporter remain
+unverified. The local query source and result are retained in ignored
+`results/nvd-vbios-size.cpp` and `results/nvd-vbios-size.txt`.
+
+An unprivileged `nvidia-debugdump --dumpall` returned permission errors despite
+process exit status zero and wrote only a 44-byte empty archive. A usable dump
+must be checked for actual members and payload bytes. No matching board ROM
+has yet been recovered through this route, and no Linux NPU startup policy
+has been populated from it.

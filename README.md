@@ -74,6 +74,10 @@ the actual machine's policy values still require a matching VBIOS capture.
 The connected Windows startup replay confirms that its disable-VBIOS registry
 override is read after acquisition and therefore does not bypass that step.
 See [VBIOS policy evidence](docs/hfrp-vbios.md).
+An offline replay of the Linux GSP's separate VBIOS exporter now identifies
+the complete byte-buffer format (protobuf fields 307 → 1). Its availability
+through Linux diagnostics and the actual board ROM remain unverified; see
+[GSP export evidence](docs/hfrp-vbios.md#gsp-diagnostic-export-investigation).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
 device nor write hardware registers.
 
