@@ -199,3 +199,81 @@ new cases perform no MMIO on this machine and change no Linux IRQ registration.
 They recover more of the required software dispatch/ownership chain; physical
 463/800 assignment, GIC delivery, deferred-work consumption, reset/recovery and
 numerical execution remain unresolved.
+
+## Pre-loader reset and idle commands
+
+Ghidra decompilation and radare2 ARM64 disassembly identify another required
+area to resolve before extending the physical bootstrap: a parent of common
+loader `0xd439c0` performs HFRP operations first. All addresses below are RVAs
+in the pinned 617.42 KMD. The complete entry is **`0xd41740`**; `0xd4176c` is
+an interior body block after its stack-cookie prelude and argument guard.
+PE exception-table entries are not sufficient evidence of callable entry points.
+
+`scripts/test_loader_prerequisites.py` executes the original complete parent
+and its original helper `0xd3f120`, including the original stack-cookie helpers.
+With a nonnull chain `outer+0x300 -> object+0x60 -> provider+0x18` and value
+1 at the final object's +8, the observed order is:
+
+1. Helper `0xd3f120(outer, mode, 1)` sends HFRP command `0x19b`.
+2. The parent sends `0x19a` with the single byte `01`.
+3. The parent sends another `0x19b` with a mode-dependent byte.
+4. The parent calls the common loader with `outer+0x170` as its HAL object.
+
+| Low byte of mode argument | First `0x19b` byte | `0x19a` byte | Final `0x19b` byte |
+| --- | --- | --- | --- |
+| 0 | `03` | `01` | `0c` |
+| 1 | `00` | `01` | `04` |
+| 2 | `02` | `01` | `08` |
+| 3 | `01` | `01` | `00` |
+| Other (tested 4) | `00` | `01` | `00` |
+
+The mode's low byte is used: input 256 reproduces mode 0. Its caller-level
+meaning is not yet established. Missing links or a capability value other
+than 1 skip all three commands but still reach the common loader. A nonzero
+second entry argument returns `0x56` before this sequence. Pending work at
+outer+0x4a8 invokes callback +0xe0 first; its failure prevents the sequence.
+Injected HFRP transport errors and firmware response errors are logged/ignored
+by this parent, whereas the common loader's error becomes its result.
+
+The NVIDIA-authored L4T R38.4 reference
+[`nvdla_pm_hfrp_cmd_v1_3.c`](https://github.com/OE4T/linux-nv-oot/blob/33227347c89543042e0eda352db5de852983c8a3/drivers/video/tegra/host/nvdla/port/pm/nvdla_pm_hfrp_cmd_v1_3.c)
+names command 410 (`0x19a`) **RESET** and 411 (`0x19b`) **RESET_IDLE**, both
+with one-byte payloads. Its SHA-256 is
+`22d224fc2ad2ccf0db5a7c0e2ae72f048a16dd5f49b261aa25bfad64075e8acf`;
+the test verifies this hash and the four command/length definitions. This
+establishes an ABI correspondence, not the physical meaning of each payload
+bit or permission to reset the device. These HFRP commands are distinct from
+the DLA firmware's SET/GET_LPWR_CONFIG commands.
+
+The Windows send wrapper at `0xd3de30` takes its lock, forwards to `0xd4b568`
+using object+0x60, releases the lock and records the response. The current
+emulator stubs this wrapper, the common loader, memset, logging/timing and the
+pending-work/CFG boundaries. **It does not execute HFRP transport, reset
+hardware, authenticate firmware or show that this parent runs on a P16 cold
+boot.** Seventeen cases cover modes, capability/pointer gates, entry rejection,
+pending work and injected errors. The existing Linux bootstrap does not send
+these commands; their necessity for the observed SROOT rejection is unproven.
+
+A separate candidate is now excluded for the recovered selector-1 table:
+the original initializer `0x1951238` assigns HAL +0x3d8 to `0x5be0`, whose
+entire implementation is `mov w0, 0; ret`. Parent `0xd40060` calls this slot
+with argument 1 before the common loader. The test executes both initializer
+and target. Parent `0xd47700` instead calls outer +0xc8 with `(outer, 0, 7)`;
+that outer callback's implementation and the actual parent selection still
+need tracing. Do not equate outer +0xc8 with a primary HAL slot.
+
+Reproduce offline:
+
+```sh
+venv/bin/python scripts/test_loader_prerequisites.py
+venv/bin/python scripts/emulate_sroot_resources.py
+```
+
+`scripts/ghidra/ExportFunctions.java` exports selected functions with the input
+SHA-256 and references. Use an installed Ghidra `support/analyzeHeadless` with
+`-scriptPath "$PWD/scripts/ghidra" -postScript ExportFunctions.java OUTPUT ADDRESS...`.
+For the large KMD, targeted `-noanalysis` imports are sufficient when entry
+addresses are already verified; use `140d41740`, `140d3f120`, `140d3de30`
+and `140d47700`. Export paths must be new. Shared stack-cookie helpers can
+confuse inferred prototypes, so check assembly and original-code execution.
+Projects, exports and vendor code stay in ignored `results/`, outside Git.

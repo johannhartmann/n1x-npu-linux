@@ -63,6 +63,47 @@ def run(pe, resources):
     return calls, fields
 
 
+def power_callback(pe, entry):
+    """Execute complete provider D0 callbacks with only KMDF/CFG stubs."""
+    u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
+    for rva, length in ((0x30000, 0x1000), (0x19000, 0x1000), (0x1b000, 0x1000)):
+        u.mem_map(BASE+rva, length)
+        u.mem_write(BASE+rva, pe.get_data(rva, length))
+    for address in (TABLE, STUB, STACK):
+        u.mem_map(address, 0x10000)
+    u.mem_write(BASE+0x1b358, struct.pack('<Q', BASE+0x1b358))
+    u.mem_write(BASE+0x1b838, struct.pack('<Q', TABLE))
+    u.mem_write(BASE+0x19200, struct.pack('<Q', STUB))
+    names = {0x2e0: 'WdfDeviceGetDefaultQueue', 0x4d0: 'WdfIoQueueStart',
+             0x4e0: 'WdfIoQueueStopSynchronously', 0x520: 'WdfIoQueuePurgeSynchronously'}
+    device, queue = 0x45670000, 0x45680000
+    targets, events = {}, []
+    u.mem_write(STUB, bytes.fromhex('c0035fd6'))
+    for index, (offset, name) in enumerate(names.items(), 1):
+        address = STUB+16*index
+        targets[address] = name
+        u.mem_write(address, bytes.fromhex('c0035fd6'))
+        u.mem_write(TABLE+offset, struct.pack('<Q', address))
+
+    def hook(_, address, size, user):
+        if address not in targets:
+            return
+        name = targets[address]
+        argument = u.reg_read(regs.UC_ARM64_REG_X1)
+        assert argument == (device if name == 'WdfDeviceGetDefaultQueue' else queue)
+        events.append(name)
+        u.reg_write(regs.UC_ARM64_REG_X0, queue if name == 'WdfDeviceGetDefaultQueue' else 0)
+
+    u.hook_add(UC_HOOK_CODE, hook)
+    u.reg_write(regs.UC_ARM64_REG_X0, device)
+    u.reg_write(regs.UC_ARM64_REG_SP, STACK+0x8000)
+    u.reg_write(regs.UC_ARM64_REG_LR, STUB+0xff0)
+    u.emu_start(BASE+entry, STUB+0xff0, count=10000)
+    assert u.reg_read(regs.UC_ARM64_REG_PC) == STUB+0xff0
+    assert u.reg_read(regs.UC_ARM64_REG_X0) == 0
+    return events
+
+
 def main():
     path = ROOT/'sources/platform-drivers/Windows/System32/DriverStore/FileRepository/nvsrootmbx.inf_arm64_6ee85afcd10dd594/nvsrootmbx.sys'
     assert hashlib.sha256(path.read_bytes()).hexdigest() == HASH
@@ -78,7 +119,12 @@ def main():
         rows.append({'resources': [hex(base), hex(size), hex(stride)], 'calls': calls, 'fields': fields})
     calls, fields = run(pe, [(3, 0x18010000, 0x1000)])
     assert calls == [('count', 1)] and not any(fields.values())
+    power = {hex(entry): power_callback(pe, entry) for entry in (0x302d0, 0x30380)}
+    assert power['0x302d0'] == ['WdfDeviceGetDefaultQueue', 'WdfIoQueueStart']
+    assert power['0x30380'] == ['WdfDeviceGetDefaultQueue', 'WdfIoQueueStopSynchronously',
+                               'WdfDeviceGetDefaultQueue', 'WdfIoQueuePurgeSynchronously']
     print(json.dumps({'passed': True, 'hardware_access': False, 'cases': rows,
+                      'original_power_callbacks': power,
                       'wrong_resource_count_skips_mapping': True,
                       'conclusion': 'Second memory resource length becomes register stride; first resource is mapped',
                       'limitations': ['Synthetic translated WDF resources, not live Windows resource values',

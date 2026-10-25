@@ -194,6 +194,20 @@ verify base/length propagation, stride selection, mapping arguments and output.
 A one-resource case skips mapping. These are synthetic OS resources, not an
 observation of Windows hardware execution.
 
+Ghidra analysis of the complete provider confirms that device creation at
+`0x30a80` registers PrepareHardware (`0x304b0`, including its stack-cookie
+prelude), ReleaseHardware (`0x30170`), D0Entry (`0x302d0`) and D0Exit (`0x30380`).
+The complete D0 callbacks now execute in `emulate_sroot_resources.py`:
+D0Entry obtains and starts the default queue; D0Exit obtains/stops it
+synchronously, then obtains/purges it synchronously. The indirect KMDF table
+offsets are `0x2e0`, `0x4d0`, `0x4e0` and `0x520`, respectively. Their names
+agree with Microsoft's
+[KMDF function table](https://github.com/microsoft/Windows-Driver-Frameworks/blob/main/src/publicinc/wdf/kmdf/1.27/wdffuncenum.h).
+The test supplies only framework/CFG stubs and synthetic RAM, with no device
+MMIO mapping. No additional hardware initialization occurs in these two
+callbacks. This does not exclude initialization in ACPI, the framework or
+the parent KMD.
+
 With archived ROT0 descriptors `0x18010000/0x1000` and
 `0x18010000/0x10`, this implies **stride 16 bytes**, rather than two independent
 MMIO apertures. The TX FIFO would be at logical offset 0x10, RX FIFO at 0x40,
@@ -586,6 +600,8 @@ The original HAL-1 initializer assigns +0x408 to upload helper `0xd45cb0`,
 `0xd47430`. A scan of direct BL targets finds calls to common loader `0xd439c0`
 at RVAs `0xd402f4`, `0xd419b0`, `0xd42268`, `0xd4779c`; these references locate
 further parent paths but do not alone prove live cold/resume invocation order.
+The parent reset/idle sequence is now independently recovered and tested in
+[the HFRP evidence](hfrp-irq.md#pre-loader-reset-and-idle-commands).
 
 `emulate_method2_start.py` now executes **the complete original 0xd47430**
 function, not just its selection slice. With method 2 and optional feature
