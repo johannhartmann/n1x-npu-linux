@@ -48,6 +48,62 @@ def init_machine(binary):
     return u
 
 
+def startup_parameters(binary, *, selector, map_status=0):
+    """Trace the original entry's mapped startup block into the base selector.
+
+    The mapping and unmapping boundaries are stubs. The original memcpy runs;
+    execution stops before the subsequent mapping setup and task bootstrap.
+    """
+    u = init_machine(binary)
+    source, destination, source_address = CONTAINER + 3, 0x4002368, 0x123456783
+    block = bytearray((i * 29 + 7) & 255 for i in range(0x1E8))
+    struct.pack_into("<Q", block, 0x48, 0x100000000)
+    struct.pack_into("<Q", block, 0x58, 0x200000000)
+    struct.pack_into("<Q", block, 0x1A0, 0x23456000)
+    block[0x1E0] = selector
+    u.mem_write(source, bytes(block))
+    u.mem_write(destination, b"\xA5" * len(block))
+    # Entry args: startup mode zero selects mapping rather than IPC receive.
+    for reg, value in zip(ARGS + (UC_RISCV_REG_A5,), (0, 17, 23, 0, source_address, 29)):
+        u.reg_write(reg, value)
+    maps, unmaps = [], []
+
+    def hook(u, pc, size, _):
+        if pc == 0x1002412:
+            args = [u.reg_read(reg) for reg in ARGS + (UC_RISCV_REG_A5,)]
+            assert args[0] == 1 and args[3:] == [source_address, 0x1E8, 4]
+            assert struct.unpack("<I", u.mem_read(args[1], 4))[0] == 0
+            assert get64(u, args[2]) == 0
+            maps.append(args)
+            if not map_status:
+                u.mem_write(args[1], struct.pack("<I", 31))
+                put64(u, args[2], source)
+            u.reg_write(UC_RISCV_REG_A0, map_status)
+            u.reg_write(UC_RISCV_REG_PC, u.reg_read(UC_RISCV_REG_RA))
+        elif pc == 0x100106E:
+            unmaps.append(u.reg_read(UC_RISCV_REG_A0))
+            u.reg_write(UC_RISCV_REG_A0, 0)
+            u.reg_write(UC_RISCV_REG_PC, u.reg_read(UC_RISCV_REG_RA))
+        elif pc in (0x10027FE, 0x10018AA):
+            u.emu_stop()
+
+    u.hook_add(UC_HOOK_CODE, hook)
+    u.emu_start(0x100283E, STOP, count=10_000)
+    assert len(maps) == 1
+    assert u.reg_read(UC_RISCV_REG_PC) == (0x10018AA if map_status else 0x10027FE)
+    assert unmaps == ([] if map_status else [31])
+    assert bytes(u.mem_read(destination, len(block))) == (
+        b"\xA5" * len(block) if map_status else bytes(block))
+    if not map_status:
+        assert get64(u, 0x4002508) == 0x23456000
+        u.reg_write(UC_RISCV_REG_RA, STOP)
+        u.emu_start(0x1001106, STOP, count=50)
+        assert u.reg_read(UC_RISCV_REG_PC) == STOP
+        assert u.reg_read(UC_RISCV_REG_A0) == (0x200000000 if selector else 0x100000000)
+    return {"selector": selector, "map_status": map_status,
+            "original_entry_and_block_copy": True, "passed": True}
+
+
 def replay(init, rm, *, base, offset, length, map_status=0):
     u = init_machine(init)
     put64(u, WPR_SLOT, META)
@@ -156,6 +212,9 @@ def main():
     for name, data, digest in (("init", init, INIT_SHA256), ("rm", rm, ELF_SHA256)):
         if hashlib.sha256(data).hexdigest() != digest:
             p.error(f"Pinned {name} ELF hash mismatch")
+    startup = [startup_parameters(init, selector=0),
+               startup_parameters(init, selector=1),
+               startup_parameters(init, selector=1, map_status=5)]
     for flag, expected in ((0, 0x100000000), (1, 0x200000000), (255, 0x200000000)):
         u = init_machine(init)
         put64(u, 0x40023B0, 0x100000000)
@@ -171,8 +230,10 @@ def main():
                  (0, 0x12345000, 128, 5))]
     a.output.parent.mkdir(parents=True, exist_ok=True)
     a.output.write_text(json.dumps({"init_sha256": INIT_SHA256, "rm_sha256": ELF_SHA256,
-        "scope": __doc__, "base_selector_cases": 3, "cases": cases}, indent=2) + "\n")
-    print("PASS: 3 base selections, 5 FRTS cases, 3 original receive/ROM-copy paths")
+        "scope": __doc__, "startup_parameter_cases": startup,
+        "base_selector_cases": 3, "cases": cases}, indent=2) + "\n")
+    print("PASS: 3 startup parameter cases, 3 base selections, 5 FRTS cases, "
+          "3 original receive/ROM-copy paths")
 
 
 if __name__ == "__main__":

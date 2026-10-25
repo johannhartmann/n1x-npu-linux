@@ -512,6 +512,36 @@ provided board ROM bytes.
 
 ### FRTS supplies the GFWI startup buffer
 
+The platform bases themselves come from a separate **488-byte startup
+parameter block**, not from the GFWI container. The pinned init ELF enters
+at `0x100283e` and jumps to `0x1006d16`. When entry argument 4 is zero,
+that function maps 488 bytes at the address supplied in argument 5 through
+`0x1002412`, copies them with the original `0x1002b26` into `0x4002368`,
+then unmaps the temporary mapping. Argument numbering here is one-based
+(`a0` is argument 1); these are GSP task arguments, not a Linux syscall.
+
+| Startup-block offset | Copied global | Observed use |
+| --- | --- | --- |
+| `0x48` | `0x40023b0` | Base selected when the selector is zero |
+| `0x58` | `0x40023c0` | Base selected when the selector is nonzero |
+| `0x1a0` | `0x4002508` | WPR metadata offset added to the selected base |
+| `0x1e0` | `0x4002548` | Byte selecting the base |
+
+Three added `test_gsp_frts_handoff.py` cases execute the original ELF entry,
+startup-block copy and base selector with synthetic, unaligned input. Mapping
+and unmapping are stubbed. A mapping failure reaches the fatal-error boundary
+before any block copy. Successful cases stop before the next mapping setup;
+they do not bootstrap the complete task. The alternative nonzero-argument-4
+path receives a same-sized block through IPC and has only been inspected in
+assembly, not replayed here. Ghidra truncates that path at the LibOS trap,
+so its incomplete C output is not evidence that the IPC path is absent.
+
+The producer of this startup block and its live values remain unidentified.
+In particular, the selector has not been assigned a hardware-type name, and
+neither base has been established as a CPU physical address. Reading the host's
+cached FRTS offset alone must not be turned into an arbitrary physical-memory
+read by assuming a zero base.
+
 The packaged init-task ELF `embedded-8-1d1000.elf`, extracted from the same
 615.78.08 GSP payload, has SHA256
 `46b99be784a02ec8221b25d6cadaa6bf03eeadd45f5234de286eefa78213f028`.
