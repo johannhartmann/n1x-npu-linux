@@ -2,7 +2,7 @@
 """Replay original Windows HFRP startup/configuration offline in Unicorn.
 
 Mode setter, SRAM packet builder, CONFIG, VF decoder and tuning run unmodified.
-OS registry/MMIO, handshake/version, transport and a trailing callback are stubs.
+OS registry/MMIO, handshake/version and transport are stubs.
 All frequencies, tuning words and VF replies below are synthetic test inputs.
 """
 import hashlib
@@ -30,7 +30,7 @@ def run(pe, *, version=(1, 5), mode=None, dvfs=True, sram=True,
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     for page in (0xd41000, 0xd44000, 0xd45000, 0xd49000, 0xd3d000, 0xd39000,
                  0xd3b000, 0xd57000, 0xcd000, 0xce000, 0x108f000, 0x1512000,
-                 0x13ac000, 0xe3e000):
+                 0x13ac000, 0xe3e000, 0x194f000, 0x1950000):
         u.mem_map(BASE+page, 0x1000)
         u.mem_write(BASE+page, pe.get_data(page, 0x1000))
     for address in (OUTER, HAL, HFRP, PROVIDER, LINK, OWNER, GLOBAL, SETTINGS, STACK, STUB):
@@ -40,10 +40,18 @@ def run(pe, *, version=(1, 5), mode=None, dvfs=True, sram=True,
     def put(address, value, fmt='<I'):
         u.mem_write(address, struct.pack(fmt, value))
 
+    # Resolve callbacks by executing the actual profile-3 constructor.
+    put(OUTER+0x14e, 3, '<H')
+    u.reg_write(regs.UC_ARM64_REG_X0, OUTER)
+    u.reg_write(regs.UC_ARM64_REG_LR, STOP)
+    u.emu_start(BASE+0x194fb08, STOP, count=50000)
+    assert u.reg_read(regs.UC_ARM64_REG_PC) == STOP
+    for offset, target in ((0xb0, 0xd41b50), (0x110, 0xd414a0), (0x118, 0xd419f0)):
+        assert int.from_bytes(u.mem_read(OUTER+offset, 8), 'little') == BASE+target
     for address, value in ((OUTER+0x300, HFRP), (OUTER+0x170, HAL), (HFRP+0x60, PROVIDER),
                            (PROVIDER+0x18, LINK), (LINK, OWNER), (BASE+0x1512148, GLOBAL),
                            (GLOBAL+0x78, SETTINGS), (HAL+0x200, BASE+0xd456e0),
-                           (HAL+0x208, BASE+0xd49900), (BASE+0xe3eaf0, STUB), (OUTER+0x118, STUB+0x10)):
+                           (HAL+0x208, BASE+0xd49900), (BASE+0xe3eaf0, STUB)):
         put(address, value, '<Q')
     for address, value in ((LINK+8, 1), (HAL+0x490, int(dvfs)), (HAL+0x5a0, 1),
                            (HAL+0x5a4, 4), (HAL+0x5a8, 10), (SETTINGS+0xa8, 650000),
@@ -55,6 +63,7 @@ def run(pe, *, version=(1, 5), mode=None, dvfs=True, sram=True,
     for offset, value in ((0x31f, 1), (0x322, 3), (0x325, 15)):
         u.mem_write(OUTER+offset, bytes([value]))
     u.mem_write(SETTINGS+0xc0, struct.pack('<9I', *TUNING))
+    u.mem_write(OUTER+0x328, b'\xa5'*0x180)
     events = []
 
     def reg(index):
@@ -67,9 +76,6 @@ def run(pe, *, version=(1, 5), mode=None, dvfs=True, sram=True,
     def hook(_, address, size, user):
         if address == STUB:  # CFG validation must preserve argument registers.
             u.reg_write(regs.UC_ARM64_REG_PC, reg(30))
-        elif address == STUB+0x10:
-            events.append({'trailing_callback': True})
-            ret()
         elif address == BASE+0xd39160:
             assert reg(0) == GLOBAL
             ret(GLOBAL)
@@ -89,7 +95,7 @@ def run(pe, *, version=(1, 5), mode=None, dvfs=True, sram=True,
             events.append({'handshake_version_stub': True})
             ret()
         elif address == BASE+0xcd148:
-            assert reg(1) == 0 and reg(2) <= 40
+            assert reg(1) == 0 and (reg(2) <= 40 or (reg(0), reg(2)) == (OUTER+0x328, 0x180))
             u.mem_write(reg(0), bytes(reg(2)))
             ret()
         elif address == BASE+0xd3de30:
@@ -98,8 +104,8 @@ def run(pe, *, version=(1, 5), mode=None, dvfs=True, sram=True,
             packet = bytes(u.mem_read(reg(2), length)) if length else b''
             events.append({'command': command, 'payload': packet.hex()})
             response = (struct.pack('<H', len(curve))+b''.join(struct.pack('<HH', *pair) for pair in curve)
-                        if command == 428 else bytes(length))
-            assert len(response) <= (34 if command == 428 else length)
+                        if command == 428 else bytes(26 if command == 432 else length))
+            assert len(response) <= ({428: 34, 432: 26}.get(command, length))
             if response:
                 u.mem_write(reg(5), response)
             put(reg(4), 1 if firmware_failure == command else 0, '<H')
@@ -121,6 +127,7 @@ def run(pe, *, version=(1, 5), mode=None, dvfs=True, sram=True,
     assert u.reg_read(regs.UC_ARM64_REG_PC) == stop
     return {'status': reg(0), 'events': events,
             'mode': int.from_bytes(u.mem_read(LINK+8, 4), 'little'),
+            'statistics_cleared': bytes(u.mem_read(OUTER+0x328, 0x180)) == bytes(0x180),
             'delays': list(struct.unpack('<3I', u.mem_read(HAL+0x5a0, 12))),
             'vf_count': int.from_bytes(u.mem_read(HAL+0x528, 2), 'little'),
             'vf_limits': list(struct.unpack('<4I', u.mem_read(HAL+0x52c, 16))),
@@ -143,8 +150,11 @@ def main():
                 expected = [(412, '02' if sram else '01'), (401, config.hex()), (428, '')]
                 if dvfs:
                     expected += [(408, struct.pack('<9I', *TUNING).hex()), (407, '78563412')]
+                if minor >= 5:
+                    expected += [(432, '000001'), (432, '010001'), (432, '020001')]
                 assert [(e['command'], e['payload']) for e in commands] == expected, result
                 assert result['status'] == 0 and result['vf_count'] == 3
+                assert result['statistics_cleared']
                 assert result['vf_limits'] == [400000, 900000, 700, 850]
                 assert result['frequency_range_selected'] == ([400000, 900000, 650000] if dvfs else [0, 0, 0])
                 assert result['events'][:3] == [{'registry': 'RmSocDlaHfrpMode'},
@@ -156,13 +166,17 @@ def main():
         assert not any('command' in e or 'handshake_version_stub' in e for e in result['events'])
         assert sum('resource' in e for e in result['events']) == (mode != 0)
         rows.append({'mode_override': mode, **result})
-    for command in (401, 428, 408, 407):
+    for command in (401, 428, 408, 407, 432):
         for error in ('transport_failure', 'firmware_failure'):
             direct = run(pe, entry=0xd456e0, **{error: command})
             parent = run(pe, **{error: command})
             # Windows parent discards configuration errors; SET_TUNING's caller
             # also discards its failure. Linux must not copy this behavior.
             assert parent['status'] == 0
+            assert parent['statistics_cleared']
+            if command == 432:
+                assert [e['payload'] for e in parent['events'] if e.get('command') == 432] == [
+                    '000001', '010001', '020001']
             expected = (0x65 if error == 'transport_failure' else 0xffff) if command == 407 else (
                 0x65 if error == 'transport_failure' and command in (401, 428) else 0)
             assert direct['status'] == expected, (command, error, direct)
@@ -177,7 +191,7 @@ def main():
     print(json.dumps({'passed': True, 'hardware_access': False, 'kmd_sha256': KMD_SHA256,
                       'cases': rows, 'limitations': [
                           'Synthetic DVFS settings, tuning words and curve; no calibrated defaults',
-                          'OS, resource writer, handshake/version, transport and trailing callback stubbed',
+                          'OS, resource writer, handshake/version and transport stubbed',
                           'Delay slice starts with w22=1 as observed earlier in its caller',
                           'No physical HFRP configuration or firmware boot attempted']}, indent=2))
 

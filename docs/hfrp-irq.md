@@ -621,8 +621,9 @@ decompiler's prototypes are unreliable around shared stack-cookie helpers and
 tail calls; the executable replay below supplies stronger evidence.
 
 `scripts/test_hfrp_config.py` executes the original startup parent, mode setter,
-SRAM builder, configuration function, VF decoder and tuning function. Registry,
-resource writes, handshake/version, HFRP transport and the final callback are
+SRAM builder, configuration function, VF decoder, tuning function and final
+statistics callback. The original profile-3 constructor resolves the outer
+callbacks. Registry, resource writes, handshake/version and HFRP transport are
 stubbed and recorded. No device is accessed. The default tested order is:
 
 1. Read `RmSocDlaHfrpMode`, default 1; the original setter writes resource 2,
@@ -635,6 +636,14 @@ stubbed and recorded. No device is accessed. The default tested order is:
    command 408 (`SET_POWER_CONTROL_TUNING`) followed by command 407
    (`GET_POWER_DRAW_CAP`). Both names match NVIDIA's L4T command table; the
    four-byte request to 407 does **not** establish that it sets a power cap.
+7. For major 1/minor >= 5, the final callback at `0xd419f0` invokes
+   `0xd414a0` three times. It sends command 432 with payloads `00 00 01`,
+   `01 00 01`, `02 00 01` and a 26-byte response buffer, then zeros the local
+   `outer+0x328..0x4a7` area. The three selectors and final flag are proven;
+   treating the flag as a firmware-side statistics reset remains an inference.
+   The callback logs individual errors and continues, returning zero even when
+   every query fails. All three requests are tested under transport and firmware
+   failure, and the local buffer is confirmed cleared in both cases.
 
 Command 401 has 14 bytes for the older branch and 26 for major 1/minor >= 5:
 
@@ -665,12 +674,13 @@ second is multiplied by 1000 into a frequency field. With a synthetic curve
 
 Command 408 copies nine consecutive u32 words from settings+`0xc0..0xe0`
 into a 36-byte payload. Command 407 copies settings+`0xbc` into a four-byte
-payload. Their real producers/defaults and any override policy still need
-tracing before Linux can choose hardware values. The test uses deliberately
-distinct synthetic words to establish field order only.
+payload. Their producers are now traced to the VBIOS BIT `l` directory; see
+[the VBIOS parser and Linux decoder](hfrp-vbios.md). The actual board's values
+and any applicable override policy remain to be obtained. The test uses
+deliberately distinct synthetic words to establish field order only.
 
 The replay covers 12 version/policy/SRAM combinations, mode overrides 0 and 2,
-eight injected command failures and two delay-default/override cases. It also
+ten injected command failures and two delay-default/override cases. It also
 establishes error-propagation defects: the parent discards configuration return
 codes, CONFIG firmware errors can be logged and ignored, and tuning command
 408 can fail while the next command still runs. These are observed Windows
@@ -684,9 +694,11 @@ CC='cc -fsanitize=undefined -fno-sanitize-recover=undefined' \
   venv/bin/python scripts/test_hfrp_startup.py
 ```
 
-Platform binding, the trailing startup callback, full policy initialization
-and cold-start ordering relative to SROOT remain unresolved. The retained DMA
+Platform binding, full policy initialization and cold-start ordering relative
+to SROOT remain unresolved. The trailing startup callback is now replayed above.
+The retained DMA
 from the failed physical upload was not released or reused. No reset, new
 firmware upload, module reload, boot change or reboot was performed for this
-work. The next step is to trace the settings producers and remaining callbacks,
-then review the complete startup sequence before a separate hardware attempt.
+work. The next step is to obtain the actual VBIOS policy and finish tracing
+cold-start ordering, then review the complete startup sequence before a
+separate hardware attempt.
