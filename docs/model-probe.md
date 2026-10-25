@@ -361,3 +361,44 @@ kinds have equal values. The manifest retains the raw maps without claiming
 universal count/alignment semantics. `mtl-common.bin` contains live pointers;
 they must be relocated and any nested references audited before replay in a
 different process or emulator. Raw captured buffers remain ignored artifacts.
+
+### Original Windows collector accepts the captured operation buffers
+
+```sh
+venv/bin/python scripts/probe_native_graph.py --target t254 --capture-mtl
+venv/bin/python scripts/inspect_windows_mtl_collector.py
+```
+
+Windows backend pre-translation `0x624630` first calls `0x756740`, which
+invokes input collector `0x756630`. The collector consumes a count at input
++8 and three pointers at +16, +24 and +32. These point to per-operation
+regions of **236, 34816 and 4376 bytes**, respectively. Those strides exactly
+match the captured native kind-2, kind-3 and kind-1 buffers. Wrapper
+`0x4cab40` reconstructs this argument from the common MTL structure; its
+network pointer is at +0 of the reconstructed argument.
+
+The verifier checks every captured file against its manifest digest and
+length, relocates its pointers into Unicorn memory and executes the original
+collector with count 1 and a preallocated output vector. It also executes
+the original stack-cookie and stack-probe helper instructions with modeled
+TEB/stack memory. Only memcpy is shimmed; vector growth and allocation are
+not used by this path.
+
+The resulting record stride is **0x9f60 / 40800 bytes**:
+
+| Record offset | Bytes | Verified source |
+| --- | --- | --- |
+| 0x0000 | 236 | Native captured kind 2 |
+| 0x00ec | 4 | Unwritten poisoned stack padding |
+| 0x00f0 | 34816 | Native captured kind 3 |
+| 0x88f0 | 4376 | Native captured kind 1 |
+| 0x9a08 | 1368 | Unwritten poisoned stack remainder |
+
+All three data regions match byte-for-byte. The whole record copy also
+copies the unwritten regions: this verifier deliberately poisons the stack
+to expose them and does not assign a semantic meaning to those bytes.
+Their presence is not permission to treat them as initialized data in a
+future adapter. Neither the captured kind-0 network nor kind-4 buffer is
+read by this collector. Its acceptance establishes this copying/layout step
+only; it is not validation of every operation field, backend configuration,
+IR lowering, an executable loadable or physical firmware compatibility.
