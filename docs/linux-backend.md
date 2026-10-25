@@ -404,3 +404,23 @@ menu write is atomic; its error path restores the previous bytes if the written
 proposal is still present. The original boot entry remains the default and is
 the recovery route. Successful boot, graphics/input and NPU DMA qualification
 still require explicit observation after manually selecting the test entry.
+
+The test installation has now completed successfully. The privileged installer
+reported **ready-for-manual-boot**, after validating the old default EFI hash,
+the new on-disk EFI hash, installed module dependencies and unchanged menu
+prefix/default/timeout. Kernel/header packages are registered, the installed
+Image/config match the build pins, and all eight copied module hashes and
+vermagics match their verified artifacts. The root-owned checkpoint remains at
+`/var/lib/n1x-npu-test/npu1/state.json`.
+
+The original `7.2.8-23-omarchy-p16-asus` kernel is still running. Select
+**N1X NPU test** manually on the next boot; an ordinary unattended boot keeps
+the old default. Confirm `uname -r` is
+`7.2.8-23-omarchy-p16-asus-npu1` before attempting domain/allocation qualification.
+No reboot has been initiated by the installer or agent. Boot, graphics/input,
+successful DMA allocation, firmware start and inference remain unverified.
+Build manifests describe their generation-time state; the root-owned installation
+checkpoint and actual package/filesystem state are authoritative for deployment.
+An unprivileged `pacman -Qk` can check headers/root files but cannot inspect the
+EFI mount's DTB paths because `/boot` is restricted; those permission errors
+must not be reported as proof that files are missing.

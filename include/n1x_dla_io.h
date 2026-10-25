@@ -4,7 +4,8 @@
 #include "n1x_dla_firmware.h"
 /* All offsets are logical. A physical backend must translate and bounds-check
  * them, and establish device power/reset state before invoking these helpers.
- * Read/write callbacks return zero or a negative errno. No backend is provided.
+ * Read/write callbacks return zero or a negative errno. The observation module
+ * supplies guarded status reads; writable bring-up callbacks are not connected.
  */
 struct n1x_dla_io {
     void *context;
