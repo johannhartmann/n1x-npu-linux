@@ -24,6 +24,9 @@ one-attempt experiment requiring retained DMA storage/reboot, and does not
 complete IRQ/configuration initialization or inference. An additional opt-in
 DMA-word ping phase and command-22 configuration export are implemented but
 also remain untested on hardware. Configuration import is not exposed.
+The auxiliary HFRP register/IRQ capture and shared Windows dispatch are now
+cross-checked against L4T; physical IRQ roles remain unverified. See
+[HFRP/IRQ evidence](docs/hfrp-irq.md).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
 device nor write hardware registers.
 
@@ -88,7 +91,8 @@ authentication semantics have not been established.
 ## Hardware and inputs
 
 - ACPI `NVDA200A`, compatible ID `NVDA2042`, hardware revision `0x34`, `DLA0`.
-- P16 BIOS H7607BA.300; device present/enabled and unbound on Linux.
+- P16 BIOS H7607BA.300; device present/enabled. The explicit observation
+  driver can bind it; bootstrap/IRQ behavior remains unqualified.
 - Historical DSDT resources: MMIO `0x19000000/0x40000`,
   `0x31380000/0x10000`, GSIs 463/800. The live full-table audit confirms these resources.
 - Official NVIDIA 617.42 Windows ARM64 package; ASUS INF explicitly maps the

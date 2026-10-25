@@ -1768,3 +1768,13 @@ and send/response timeouts, delayed readiness, firmware-error and mismatched
 reply cases are also checked. These are software contracts under explicit fake
 MMIO/FIFO/DMA/IRQ effects, not proof of live coherency, opaque-image identity,
 full initialization, task completion, whole-device quiescence or inference.
+
+
+## Auxiliary HFRP IRQ protocol
+
+The original Windows mode-0 HFRP initializer now matches eight compiled L4T
+register definitions. Original capture, MMIO resource-id-2 wrappers and shared
+HFRP-first parent dispatch are exercised, with a separate minimal C capture
+component. Physical GSIs and power behavior remain unverified. Full hashes,
+addresses, error-policy differences and reproduction commands are in
+[HFRP/IRQ evidence](hfrp-irq.md).
