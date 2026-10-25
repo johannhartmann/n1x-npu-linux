@@ -455,3 +455,46 @@ not a measured P16 calibration. No live firmware boot or inference is implied.
 ```sh
 venv/bin/python scripts/test_profile1_lpwr_consumer.py
 ```
+
+### Connected initial SROOT upload phase
+
+`driver/n1x_dla_boot.c` now connects the verified callback components for the
+initial method-2 upload: `n1x_sroot_exchange(command=0x18, three words)`, check
+both decoded firmware status and detail, then `n1x_dla_wait_idle`. It never
+calls the direct-loader CPUCTL start function. The separate SROOT and DLA I/O
+objects preserve their distinct apertures/device ownership.
+
+`n1x_dla_sroot_upload` requires a request produced by `n1x_sroot_stage_image`
+from validated firmware and an appropriately mapped/visible SROOT DMA buffer.
+It does not allocate, synchronize, publish a Linux mapping or free anything.
+The caller exclusively owns endpoints and storage, provides ordered callbacks,
+and serializes the entire operation. Invalid callback/poll parameters cause no
+I/O and leave the result unchanged. Once preflight passes, `upload_attempted`
+is set **before** calling the mailbox transport and remains set on every return.
+This conservative indicator requires retention of upload storage even when a
+preparation error occurred before its address was sent. It is not a completion
+or quiescence indicator and must not clear ownership of earlier transactions.
+
+A received reply is preserved with `reply_valid=1`, including firmware failures.
+Nonzero status/detail returns `-EREMOTEIO` without reading DLA idle. Transport
+errors preserve `reply_valid=0`. A subsequent idle error leaves the received
+reply available but `idle_observed=0`. A zero return requires both a zero
+firmware status/detail and an observed zero IDLESTATE. It proves neither full
+boot/readiness nor that freeing upload memory is safe. In line with the observed
+Windows wrapper, the helper preserves rather than imposes reply-command echo
+identity; its actual live response still needs qualification.
+
+The API deliberately stops before route capture, IRQ-mask changes, ping,
+region/configuration setup, task queues and inference. It has separate bounded
+budgets per polling stage, not a reconstructed Windows global timeout. It is
+compiled as a kernel component but is **not linked into the observation module**
+and has not been connected to writable Linux MMIO callbacks or invoked on the
+machine. Installed test-kernel/observation artifacts are unchanged.
+
+`test_sroot_upload_phase.py` checks 24 transport traces against the original
+Windows wrapper, injects failure at all 22 I/O positions, verifies timeout/busy
+and firmware-rejection stop paths, and rejects 14 invalid callback/poll inputs
+before I/O. Its DLA interface has no write callback, so an accidental core-start
+write cannot silently pass. All readiness, replies and DMA addresses are
+synthetic. The original method-2 orchestration, SROOT exchange and core-control
+regressions also pass, as does `make kernel-check`.

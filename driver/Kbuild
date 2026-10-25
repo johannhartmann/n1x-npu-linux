@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Verified callback components plus an explicit-load observation module.
 ccflags-y += -I$(src)/../include
-obj-y += n1x_dla_firmware.o n1x_dla_transfer.o n1x_dla_registers.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o n1x_sroot.o
+obj-y += n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_transfer.o n1x_dla_registers.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o n1x_sroot.o
 
 obj-m += n1x_npu_observe.o
 n1x_npu_observe-y := n1x_npu_linux.o n1x_dla_registers.o

@@ -15,6 +15,10 @@ counter handling; report/recovery boundaries remain synthetic.
 An explicit-load Linux observation module now validates the audited P16
 resources and exposes DMA/IOMMU state. It has no write path; optional status
 reads require a load-time flag. Firmware boot and inference are still absent.
+A callback-only initial method-2 upload phase now connects SROOT exchange,
+firmware status checking and the write-free DLA idle wait. It preserves error
+progress for DMA retention; it is not connected to writable Linux MMIO and does
+not implement the subsequent IRQ/ping/configuration steps.
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
 device nor write hardware registers.
 
