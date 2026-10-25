@@ -65,10 +65,11 @@ lists `tensorrt_cu13_libs-11.4.0.106-py3-none-win_arm64.whl`, advertised SHA-256
 `a3231fed4887bed48c1da0c2f7a1b88ca39a5021e80870ab8b86ab99ce9b7391`.
 Its remote ZIP directory was inspected: it contains `nvinfer_11.dll`,
 `nvonnxparser_11.dll`, `nvinfer_plugin_11.dll` and a builder-resource DLL. No
-separate DLA compiler DLL is listed. The complete download and code inspection
-are pending; the archive's advertised hash is not yet a locally verified hash.
+separate DLA compiler DLL is listed. The complete archive has now downloaded;
+its locally calculated SHA-256 matches the advertised value above. Code
+inspection remains incomplete.
 Windows binaries are not installed into the Linux Python environment. No
-compiler execution, generated DLA binary or physical inference is claimed.
+successful compilation, generated DLA binary or physical inference is claimed.
 
 ### Compiler dependency and parser audit
 
@@ -120,7 +121,7 @@ loading or establish that compilation never queries hardware.
 Exported APIs include `NvDlaCreateNetwork`, `NvDlaNetworkAddInput`,
 `NvDlaNetworkAddActivation`, `NvDlaNetworkMarkOutput`, wisdom/profile/target
 configuration, `NvDlaCompilerCompile` and loadable-image size/data retrieval.
-Their network-building ABI still needs reconstruction before use. Profile
+A subset of their network-building ABI is exercised below. Profile
 exports mention RVV controls; names alone do not establish target capabilities.
 
 The Windows `nvinfer_11.dll` ZIP entry has downloaded completely, although the
@@ -153,7 +154,7 @@ bubblewrap child with isolated namespaces, no network, a private `/dev`, no
 `/sys`, read-only source/interpreter mounts and a temporary `/tmp`. There are
 no host GPU/NPU device nodes in that child. This is native ARM64 execution,
 including library initialization and graph object allocation, unlike the leaf
-version emulation above. It does not invoke `NvDlaCompilerCompile`.
+version emulation above. By default it does not invoke `NvDlaCompilerCompile`.
 
 ```sh
 venv/bin/python scripts/probe_native_graph.py
@@ -181,9 +182,59 @@ provides the reference definitions `RELU=0`, `HALF=2` and dimension order
 `n,c,h,w`. The probe now also checks activation-code retrieval, sets both
 tensor types to 2, and verifies their getter roundtrips. Those names come
 from this C API counterpart, rather than TensorRT's different enum. No tensor
-data is evaluated; target/profile/compile setup and numerical validation remain
+data is evaluated; successful compilation and numerical validation remain
 open, and matching enum values do not establish full versioned ABI equivalence.
 
 Library strings expose target names `t234`, `t254` and `t256`. These are
 investigation leads only, not proof that a named target matches the N1X or
 that this package can compile for it. No target is silently selected.
+
+### Offline compilation attempt
+
+```sh
+venv/bin/python scripts/probe_native_graph.py --target t254
+```
+
+This optional path opens an ephemeral wisdom directory, assigns the graph
+with `NvDlaWisdomSetNetworkTransient(H wisdom, H network)`, creates a named
+profile, sets HALF precision and NCxHWx formats, and retrieves the explicit
+target. The transient function's second argument is a network handle, not a
+boolean; this was verified in its native factory lookups. The sandbox exposes
+only its dedicated result directory for persistent output.
+
+All setup calls returned zero, but `NvDlaCompilerCompile` returned **4**.
+No loadable was generated. A sandboxed GDB trace confirmed that
+`Network::verifyNetworkParams(TargetConfig const*, Profile*)` was reached and
+returned **0**; the failure occurs later in compilation. The traced cause is recorded below. A previous call to regular `WisdomSetNetwork` without first
+opening wisdom crashed on a null container; the current path opens wisdom
+before assignment. These results establish neither target compatibility nor
+physical NPU execution.
+
+### Backend 3 is absent from this Linux MTL factory
+
+The native `t254` attempt reaches `Compiler::emit`, then
+`MTL::preTranslate` at ELF `0x58d3c0`. GDB captured
+`nvdla_mtl_create` arguments `{1,7,0x30000,3}` and later a null first
+argument to `nvdla_mtl_pre_translate`. The latter explicitly returns 4 for a
+null context. This is a compiler context, not a device handle.
+
+The original factory at `0x648150` allocates a zeroed 24-byte object. For
+backend 1 or 2 it calls legacy `mtl_init` and stores its result at +16.
+For backend 3 it skips initialization, tests the still-zero +16 pointer,
+frees the object and returns null. There is no dynamic loader or callback
+on this branch. Changing graph dimensions or adding hardware access cannot
+make this factory branch initialize its missing backend.
+
+```sh
+venv/bin/python scripts/inspect_mtl_factory.py
+```
+
+The verifier executes the pinned factory instructions in Unicorn for backend
+values 0 through 4. Allocator/free and legacy `mtl_init` are explicit shims;
+the latter returns a synthetic success pointer only to test branch routing.
+Backends 1/2 retain that pointer; 0/3/4 return null without calling it.
+This proves the missing initialization for this exact ELF, not that legacy
+backends compile valid models or that another compiler version behaves alike.
+Do not change the backend to 1/2 and label the resulting format N1X-compatible.
+The Windows compiler dependency remains the route to investigate for the
+missing backend implementation. No machine code has been patched.
