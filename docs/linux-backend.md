@@ -131,3 +131,82 @@ This verifies the resource fix on hardware. SROOT DMA remains unconfigured;
 the missing-CCA kernel patch is not installed. No firmware boot, DMA transfer,
 IRQ handling or inference has been attempted. The observation module remains
 loaded for inspection, with no persistent autoload configuration.
+
+## Identity-domain prerequisite
+
+The live value `iommu_domain=4` is **IOMMU_DOMAIN_IDENTITY**, not a translated
+DMA domain. `/sys/kernel/iommu_groups/19/type` and group 34 (SCP0) both report
+`identity`. The running configuration has `CONFIG_IOMMU_DEFAULT_PASSTHROUGH=y`;
+there is no command-line override. A DMA mask limits addressability; it does
+not by itself allocate IOVAs in the Windows 0xe0000000..0xffffffff window.
+
+The missing-CCA patch enables SROOT's normal ACPI DMA setup but does not change
+this default policy. A physical upload backend must additionally establish and
+check the intended domain before allocating. Do not infer translated DMA from
+an IOMMU link or a non-NULL domain. Require `iommu_is_dma_domain(domain)` for a
+backend relying on the kernel IOVA allocator and reject identity/unmanaged/
+missing domains before publishing a firmware DMA address.
+
+Linux 7.2.8 supports a per-group `type` sysfs control accepting `DMA`. It
+requires all drivers in the group to be unbound for an identity -> DMA switch.
+The actual group membership and device-to-SMMU links must first be checked;
+group numbers are not stable. Only groups containing the explicitly audited
+NPU/SROOT devices may be considered. A future test-kernel setup can select
+those groups individually before loading the NPU backend, rather than changing
+the global IOMMU policy for the GPU and unrelated devices. No group type has
+been changed during this analysis. Actual domain switching, allocation and
+hardware DMA remain pending.
+
+## Isolated test-kernel build
+
+`scripts/build_sroot_kernel.py` builds a new experimental release named
+`7.2.8-23-omarchy-p16-asus-npu1`. It requires an already-built source tree whose
+configuration and ARM64 Image match the installed running 7.2.8-23 package
+byte-for-byte. It copies that tree into a new directory, applies the SROOT
+patch without fuzz, adds a localversion suffix, and builds Image/modules.
+A copied-source observation module is then built against the new kernel, so
+its different vermagic does not overwrite the running-kernel module artifact.
+The manifest records base/patch/output hashes and the build stage.
+
+```sh
+python3 scripts/build_sroot_kernel.py \
+  /home/johann/p16rtx_linux/kernel/src/linux-7.2.8 \
+  /home/johann/n1x-lab/npu/results/linux-7.2.8-p16-npu1 --jobs 8
+```
+
+The destination must be new. Do not rerun an interrupted build blindly; inspect
+its actual process/log first. The script neither installs modules/packages nor
+changes initramfs/UKIs, boot entries or the boot default. A completed build is
+not proof of successful boot. Deployment still needs a separate entry retaining
+the known-working 7.2.8-23 kernel, the same audited ACPI overrides, and compatible
+NVIDIA/other external modules for the new release. Firmware boot/inference
+remain separate tests after the kernel and DMA setup are established.
+
+The first isolated build completed successfully. Its Image SHA-256 is
+`b7814a84b13d146b712555de9e4c6ad341d53895d7147282e20e186a3f22ee32`.
+The base configuration SHA-256 remains
+`d114b788fbe20195ec6f37b473a7533c04f315033ec3b56b144d0681040fc939`;
+the original source tree's Image/config remain unchanged. The observation
+module also compiled against the new release with matching vermagic. The
+running-kernel module artifact still targets the original 7.2.8-23 release.
+
+To prepare the same installed external-driver versions in copied sources:
+
+```sh
+python3 scripts/build_sroot_external_modules.py \
+  results/linux-7.2.8-p16-npu1 results/npu1-external-modules --jobs 8
+```
+
+This completed for NVIDIA 615.78.08 (`nvidia`, `nvidia-drm`, `nvidia-modeset`,
+`nvidia-uvm`, `nvidia-peermem`), spark_hwmon `spbm` 0.3.0.rtxspark.5 and cpuid
+0.8.2. All seven output modules have the expected test-kernel vermagic. The
+script preserves `/usr/src` and the live DKMS database, refuses an existing
+output directory, verifies the completed kernel Image, and records module
+hashes. No external modules were installed or loaded. These are build checks;
+GPU/display/hwmon operation under the new kernel is untested.
+
+`test_sroot_kernel_build.py` verifies six failure guards: invalid job count,
+nested/same source destination, mismatched running configuration/Image, and
+an existing output directory. Its fixtures perform no copy/build/install.
+Both builders intentionally refuse implicit resumption; inspect a failed or
+interrupted process and its exact output before choosing how to resume.
