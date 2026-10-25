@@ -63,7 +63,8 @@ The entire positive blob therefore cannot yet serve as an unquestioned
 byte-for-byte numerical oracle for a future statistics buffer.
 
 In particular, an initially zero 32-byte sdl_out buffer is not a successful
-health result. Its field layout and pass/fail encoding remain unknown. Neither
+health result. The two output-writing IL blocks below now establish a raw LE-u32 write;
+the full result schema and hardware comparison meaning remain unknown. Neither
 its name nor an accepted task/fence alone establishes numerical correctness.
 
 ## Official API correspondence and remaining execution work
@@ -76,8 +77,9 @@ Linux driver support or this binary's precise output layout. See the official
 [cuDLA module and task APIs](https://docs.nvidia.com/cuda/archive/13.4.2/cudla-api/cudla_api/group__CUDLA__API.html).
 
 The existing original-firmware fixture reaches its first engine wait, rather
-than completing accelerator work. Next requirements are reconstruction of the
-actual diagnostic output writer/comparison, verified engine IRQ/readiness and
+than completing accelerator work. The raw output writer/software assertions are now reconstructed below. Next
+requirements are the hardware comparator meaning, actual block selection,
+verified engine IRQ/readiness and
 physical execution after test-kernel/DMA qualification. Numerical results must
 be checked independently of transport completion. This audit does not write
 registers, bind a driver, change boot configuration or submit a hardware task.
@@ -85,3 +87,58 @@ registers, bind a driver, change boot configuration or submit a hardware task.
 ```sh
 venv/bin/python scripts/inspect_diagnostic_contract.py
 ```
+
+
+## Original result assertions and output writer
+
+The instruction blob contains two seven-instruction (112-byte) blocks at
+**0x1e500** and **0x1e700**. Both read internal register offset **0x13124**,
+assert a predicate and copy that register to address-list entry **8**, byte
+offset zero. This maps to the projected sdl_out allocation. Internal register
+offsets here are the firmware's engine aperture, not a host DLA remapper API
+or permission to access a physical register from Linux.
+
+The first block writes 0 to internal offset 0x12004 and uses opcode 4,
+predicate 1, full mask 0xffffffff, shift 0, expected 0. The second writes 1
+to 0x12004 and uses predicate 4 with the same mask/shift/expected. Both copy
+instructions are exactly `23 00 08 00 00 00 00 00 24 31 01 00 00 00 00 00`.
+No physical meaning is assigned to selector 0/1 yet.
+
+`scripts/test_diagnostic_output.py` runs each exact seven-instruction block
+through original HAL-1 dispatcher **0x102abe**, assertion handler **0x102a26**,
+predicate **0x102800** and output handler **0x1029b0**. Original reset/trap/ping
+initialization precedes it; original address-list setup and DMA functions
+remain unchanged, with no firmware function stubs. Test context, register
+values and DMA device effects are synthetic. Blocks are invoked directly;
+the full diagnostic scheduler has not selected or completed them in this test.
+
+Seven cases establish:
+
+| Block | Predicate recovered by execution | Modeled register values | Result |
+| --- | --- | --- | --- |
+| 0x1e500 | actual == 0 | 0 | success, writes zero |
+| 0x1e500 | actual == 0 | 1, UINT32_MAX | -16, no output write |
+| 0x1e700 | unsigned actual > 0 | 1, 0x80000000, UINT32_MAX | success, writes actual |
+| 0x1e700 | unsigned actual > 0 | 0 | -16, no output write |
+
+The original output handler resolves entry 8 and emits exactly one four-byte
+write through the original DMA register path. A 32-byte poisoned output
+allocation proves the other **28 bytes remain unchanged** by these blocks.
+There is no evidence here for eight meaningful result words. Both blocks write
+the same first word, so it is not a separate immutable result slot per block.
+A final first word must be interpreted with the actual execution sequence;
+zero/nonzero alone cannot establish that all diagnostic stages succeeded.
+
+Each block first saves the value read at 0x13004 into its local slot and writes
+its selector to 0x12004. On success it copies the result, writes the saved
+value to 0x12004 and performs the trailing writes `(0x1703c,0)` and
+`(0x18038,1)`. On assertion failure, the dispatcher returns -16 immediately,
+records that status at its context+48 and skips the output write **and** these
+restore/trailing instructions. This is concrete failure-state evidence, not a
+completed reset/recovery. The Linux task path must retain state/backing and
+require recovery after errors rather than assuming those actions occurred.
+
+The source of register 0x13124, its relationship to the positive/negative
+buffers, hardware comparison/CRC semantics, actual branch selection and
+physical diagnostic correctness are still unresolved. These software predicates
+alone do not define a golden numerical inference result.

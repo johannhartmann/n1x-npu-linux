@@ -1895,3 +1895,16 @@ first differ at 17688; no unverified whole-buffer equality or zero-output
 pass criterion is introduced. See [diagnostic contract](diagnostic-contract.md)
 for exact limits, primary API correspondence and remaining output-comparison
 reverse engineering. No real diagnostic completes in this evidence.
+
+
+## Original diagnostic output-writing IL blocks
+
+The two exact seven-instruction diagnostic blocks at IB offsets 0x1e500 and
+0x1e700 now execute through the original HAL-1 dispatcher/assert/copy and DMA
+paths. Seven controls prove predicates actual==0 and unsigned actual>0 for
+internal register 0x13124. Successful blocks write only the first four bytes
+of address-list entry 8; trailing 28 bytes remain untouched. Failed assertions
+return -16 before output and restore/trailing writes, so error does not mean
+recovered state. See [precise instruction paths and limits](diagnostic-contract.md#original-result-assertions-and-output-writer).
+Hardware comparator meaning, full diagnostic scheduling and numerical
+correctness remain unverified; no physical register was accessed by the test.

@@ -62,6 +62,7 @@ test-vendor: test
 	venv/bin/python scripts/emulate_postinit_commands.py
 	venv/bin/python scripts/test_profile1_config.py
 	venv/bin/python scripts/inspect_diagnostic_contract.py
+	venv/bin/python scripts/test_diagnostic_output.py
 	venv/bin/python scripts/test_command23_builder.py
 	venv/bin/python scripts/test_command23_provider.py
 	venv/bin/python scripts/test_profile1_lpwr_consumer.py

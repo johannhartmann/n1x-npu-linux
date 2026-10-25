@@ -242,6 +242,7 @@ retained DMA backing. It accepts no arbitrary model/task pointers.
 
 The [builtin Windows diagnostic audit](docs/diagnostic-contract.md) executes
 its original runtime selector, verifies the actual embedded pointer/hash, and
-maps the observed named buffers. The 32-byte diagnostic result layout and
-numerical comparison are still unresolved; neither a zero result buffer nor
+maps the observed named buffers. Two original diagnostic IL blocks now prove a four-byte register copy and
+zero/nonzero software predicates. The remaining result layout and hardware
+comparison meaning are still unresolved; neither a zero result buffer nor
 whole-buffer comparison with the blob named positive is treated as success.
