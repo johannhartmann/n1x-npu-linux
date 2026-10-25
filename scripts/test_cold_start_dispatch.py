@@ -15,7 +15,8 @@ OUTER, HAL, STACK, STUB = (0x39000000+i*0x10000 for i in range(4))
 STOP = STUB+0xff0
 
 
-def run(pe, entry, *, phase=0, fail=None, runtime=True):
+def run(pe, entry, *, phase=0, fail=None, runtime=True, target=None,
+        policy_mask=0, notify=False):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     for start, size in ((0xd38000, 0x13000), (0x194f000, 0xf000),
                         (0x108e000, 0x2000), (0xe3e000, 0x1000),
@@ -52,6 +53,11 @@ def run(pe, entry, *, phase=0, fail=None, runtime=True):
     put(OUTER+0x170, HAL)
     put(OUTER+0x178, HAL+8 if runtime else 0)
     put(OUTER+0x310, phase, '<I')
+    put(OUTER+0x314, 0x12345678, '<I')
+    put(OUTER+0x318, 0xabcdef01, '<I')
+    put(OUTER+0x4b0, policy_mask, '<I')
+    put(OUTER+0x14a, int(notify), '<B')
+    assert int.from_bytes(u.mem_read(OUTER+0xf8, 8), 'little') == BASE+0xd40d50
     put(BASE+0xe3eaf0, STUB)
     u.mem_write(STUB, bytes.fromhex('c0035fd6'))
     boundaries = {0xd440d0: 'registry', 0xd41b50: 'hfrp_startup',
@@ -60,7 +66,11 @@ def run(pe, entry, *, phase=0, fail=None, runtime=True):
     cleanup = int.from_bytes(u.mem_read(HAL+0xd0, 8), 'little')-BASE
     assert cleanup not in boundaries
     boundaries[cleanup] = 'cleanup'
-    events = []
+    if target is not None:
+        # Stop/notification internals are outside this transition replay.
+        boundaries[0xd39de0] = 'stop'
+        boundaries[0xd40e90] = 'notify'
+    events, observations = [], []
 
     def hook(_, address, size, user):
         rva = address-BASE
@@ -70,7 +80,9 @@ def run(pe, entry, *, phase=0, fail=None, runtime=True):
             if name in ('registry', 'gating_policy', 'resume_setup', 'loader', 'cleanup'):
                 assert reg(1) == HAL, (name, hex(reg(1)))
             if name == 'power_on':
-                assert (reg(1), reg(2)) == (0, 7)
+                assert reg(1) == 0 and reg(2) in ((7,) if target is None else (1, 7, 16))
+            observations.append({'event': name, 'state': list(struct.unpack('<III', u.mem_read(OUTER+0x310, 12))),
+                                 'power_mask': reg(2) if name == 'power_on' else None})
             events.append(name)
             u.reg_write(regs.UC_ARM64_REG_X0, 0x65 if name == fail else 0)
             u.reg_write(regs.UC_ARM64_REG_PC, reg(30))
@@ -80,9 +92,14 @@ def run(pe, entry, *, phase=0, fail=None, runtime=True):
 
     u.hook_add(UC_HOOK_CODE, hook)
     u.reg_write(regs.UC_ARM64_REG_X0, OUTER)
+    if target is not None:
+        assert entry == 0xd40d50
+        u.reg_write(regs.UC_ARM64_REG_X1, target)
     execute(entry)
     return {'entry': hex(entry), 'phase': phase, 'runtime': runtime,
             'fail': fail, 'status': reg(0), 'events': events,
+            'state': list(struct.unpack('<III', u.mem_read(OUTER+0x310, 12))),
+            'observations': observations,
             'loader_stage': int.from_bytes(u.mem_read(HAL+0x524, 4), 'little')}
 
 
@@ -116,7 +133,7 @@ def main():
                       'limitations': [
                           'Object bookkeeping is reconstructed; callback constructors and dispatch execute unchanged',
                           'Registry, HFRP setup, gating/resume policy, power command, loader and cleanup bodies are stubbed',
-                          'Global initializer and actual outer+0x310 producer are not replayed',
+                          'Global initializer is not replayed; the state writer has a separate test_dla_power_state replay',
                           'No physical firmware boot, DMA or power transition is tested']}, indent=2))
 
 

@@ -751,8 +751,9 @@ through the main table:
 `0xd39d38` first invokes `outer+0xb0`, the HFRP startup at `0xd41b50`,
 then gating initialization. `0xd39c08` normally invokes the profile-3 no-op
 at `outer+0xb8`, then the start target. When field `outer+0x310` equals 3,
-it first invokes HFRP startup again and `0xd43730`. That field's actual cold
-value/producer has not been replayed; the conditional branch must not be
+it first invokes HFRP startup again and `0xd43730`. A producer is now replayed
+in [the power-state transition path](#power-state-transition-producer); the
+actual complete cold-start baseline remains unverified. This state must not be
 confused with the separately established device-profile value 3.
 
 For HAL 1, `0xd44640` calls HAL+`0x3d8` (a no-op), then HAL+`0xc8`
@@ -771,6 +772,18 @@ values of the conditional branch and error propagation, including suppression
 of the loader after power failure. Registry, HFRP startup, gating/additional
 setup, power command, common loader and cleanup bodies are explicit recording
 stubs. This complements their separate tests; it is not an integrated boot.
+
+The additional setup body is independently covered by
+[`emulate_region5_setup.py`](../scripts/emulate_region5_setup.py), which executes
+`0xd43730` and its actual allocation callbacks. HAL slot `+0x150` resolves to
+`0xd45250` (clear an allocation), `+0x430` to `0xd45390` (prepare the low-power
+configuration page), and `+0xa8` to `0xd45300` (prepare a zeroed configuration
+page). Constructor defaults allocate the 1-MiB region-5 buffer and two 4-KiB
+pages. The low-power record has a separate Windows/C comparison; see
+[region-5 setup](region5.md) and
+[command-23 construction](contract.md#original-command-23-payload-construction).
+These existing tests establish the additional setup body's role without
+assuming the three allocations are new or unexplained firmware requirements.
 
 The global initializer `0xd38a88` calls `0xd39b98`, `0xd39d38`, then
 `0xd39c08`. ARM64 instructions at `0xd38e14` show that the return from
@@ -904,4 +917,60 @@ venv/bin/python scripts/test_hfrp_setup.py
 CC='cc -fsanitize=undefined -fno-sanitize-recover=undefined' \
   venv/bin/python scripts/test_hfrp_setup.py
 make kernel-check
+```
+
+## Power-state transition producer
+
+The profile-3 callback constructor installs `0xd40d50` at `outer+0xf8`.
+Ghidra and radare2 show that this function writes `outer+0x310`; executable
+replay confirms the following fields and ordering:
+
+| Field | Observed role |
+| --- | --- |
+| `outer+0x310` | current numeric state, read by the start branch |
+| `outer+0x314` | previous state, copied when a transition finishes |
+| `outer+0x318` | requested state, stored before the transition callback |
+
+Equal-state requests return `0x3f` without modifying these fields. A positive
+old state also rejects any nonzero target. The comparison is signed and does
+not validate an enum; negative synthetic values expose that distinction.
+
+For a target of zero, policy-mask bit 5 calls the actual start wrapper
+`0xd39c08`. It still sees the **old** state. Thus a transition **3 -> 0**
+executes HFRP startup, additional buffer preparation, power request 7 and the
+common loader, subject to the existing runtime-object checks. Other old
+states omit the first two steps. If bit 5 is clear and bit 4 is set, the
+function instead calls the outer power callback with guard 0 / request 1.
+Bit 5 takes precedence when both are set.
+
+For zero -> nonzero, bit 5 calls stop wrapper `0xd39de0`; otherwise bit 4
+issues power request 16. The stop wrapper separately tests requested state
+`outer+0x318 == 3` for an additional teardown callback. Its internal teardown
+is not exercised by this transition test. After storing current/previous
+state, a nonzero target optionally invokes `outer+0x120` / `0xd40e90` when
+byte `outer+0x14a` is set. This notification's return value is discarded.
+
+**Windows updates current/previous state even when a start or stop operation
+returns an error.** The tested 3 -> 0 path therefore leaves current state 0
+after HFRP startup, allocation-setup, power or loader failure. This is evidence
+about the Windows implementation, not a recovery rule for Linux: software
+must not mark failed hardware transitions successful or retry retained DMA.
+
+`scripts/test_dla_power_state.py` runs the original state writer, actual
+callback constructors and start dispatch for 400 state/mask/runtime/notification
+combinations plus 11 failure cases. It checks callback-visible state, final
+state, power masks and suppressed downstream operations. HFRP, allocation
+setup, power, loader, cleanup, stop and notification bodies remain explicit
+stubs. The existing 16-case cold-start dispatch replay still passes.
+
+This resolves one producer of the formerly unexplained branch condition and
+supports a resume interpretation. It does not independently identify numeric
+state 3 as a Windows or ACPI enum, prove the complete cold-start state, or
+establish safe suspend/resume on the P16. The outer allocation constructor
+clears its 0x4d0-byte object, but later callbacks still need to be included in
+a complete cold-start replay before relying on a zero baseline.
+
+```sh
+venv/bin/python scripts/test_cold_start_dispatch.py
+venv/bin/python scripts/test_dla_power_state.py
 ```

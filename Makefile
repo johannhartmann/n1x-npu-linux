@@ -48,6 +48,8 @@ test-vendor: test
 	venv/bin/python scripts/test_hfrp_startup.py
 	venv/bin/python scripts/test_hfrp_config.py
 	venv/bin/python scripts/test_hfrp_setup.py
+	venv/bin/python scripts/test_cold_start_dispatch.py
+	venv/bin/python scripts/test_dla_power_state.py
 	venv/bin/python scripts/test_hfrp_vbios.py
 	venv/bin/python scripts/emulate_windows_ping.py
 	venv/bin/python scripts/test_npu_dma_domains.py

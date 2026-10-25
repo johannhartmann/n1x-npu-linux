@@ -52,6 +52,9 @@ and tuning, with synthetic policy inputs. The native configuration sequence
 now reproduces those packets and stops on failed exchanges; its reply-length
 contracts remain inferred and are tested with a simulated peer only.
 See [native policy setup](docs/hfrp-irq.md#native-policy-setup).
+The state writer also explains the repeated HFRP setup on a numeric 3-to-0
+transition; [offline replay](docs/hfrp-irq.md#power-state-transition-producer)
+checks its ordering and Windows' state updates after failed transitions.
 The physical startup configuration,
 IRQ roles, live handshake and power-on remain unverified. See
 [HFRP/IRQ evidence](docs/hfrp-irq.md).
