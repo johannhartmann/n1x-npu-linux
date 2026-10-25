@@ -98,13 +98,17 @@ def check_noop(pe):
     assert u.reg_read(regs.UC_ARM64_REG_PC) == STOP
     target = struct.unpack('<Q', u.mem_read(HAL+0x3d8, 8))[0]
     assert target == BASE+0x5be0
+    parent_entries = {hex(slot): hex(struct.unpack('<Q', u.mem_read(HAL+slot, 8))[0]-BASE)
+                      for slot in (0xc8, 0x210)}
+    assert parent_entries == {'0xc8': '0xd47700', '0x210': '0xd48b30'}
     assert bytes(u.mem_read(target, 8)) == bytes.fromhex('00008052c0035fd6')
     u.reg_write(regs.UC_ARM64_REG_X0, HAL)
     u.reg_write(regs.UC_ARM64_REG_X1, 1)
     u.emu_start(target, STOP, count=10)
     assert u.reg_read(regs.UC_ARM64_REG_PC) == STOP
     assert u.reg_read(regs.UC_ARM64_REG_X0) == 0
-    return {'slot': '0x3d8', 'target_rva': '0x5be0', 'instructions': ['mov w0, 0', 'ret']}
+    return {'slot': '0x3d8', 'target_rva': '0x5be0', 'instructions': ['mov w0, 0', 'ret'],
+            'parent_entries': parent_entries}
 
 
 def main():

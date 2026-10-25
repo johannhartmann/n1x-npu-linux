@@ -259,8 +259,8 @@ the original initializer `0x1951238` assigns HAL +0x3d8 to `0x5be0`, whose
 entire implementation is `mov w0, 0; ret`. Parent `0xd40060` calls this slot
 with argument 1 before the common loader. The test executes both initializer
 and target. Parent `0xd47700` instead calls outer +0xc8 with `(outer, 0, 7)`;
-that outer callback's implementation and the actual parent selection still
-need tracing. Do not equate outer +0xc8 with a primary HAL slot.
+the outer callback is decoded below. Actual parent selection still needs
+tracing. Do not equate outer +0xc8 with a primary HAL slot.
 
 Reproduce offline:
 
@@ -277,3 +277,113 @@ addresses are already verified; use `140d41740`, `140d3f120`, `140d3de30`
 and `140d47700`. Export paths must be new. Shared stack-cookie helpers can
 confuse inferred prototypes, so check assembly and original-code execution.
 Projects, exports and vendor code stay in ignored `results/`, outside Git.
+
+## Outer power callback and protocol-dependent encoding
+
+The original device initializer `0x194fb08`, executed with profile 3 (the
+existing REV_0034 classifier/profile chain), assigns **outer +0xc8** to
+`0xd405f0`. Profiles 4 and 6 also assign that address in a separate exploratory
+initializer run. The DLA selector-1 initializer instead assigns **HAL +0xc8**
+to `0xd47700` and **HAL +0x210** to `0xd48b30`. These are different objects.
+
+`0xd47700` calls outer +0xc8 with `(outer, 0, 7)` and only invokes the common
+loader on success. `0xd48b30` takes the alternate path through `0xd41740`: it
+passes byte 1 of its third argument as the reset mode, bracketed by provider
+mask operations on bit `0x80`. This identifies how that reset mode reaches the
+previously decoded sequence; it does not prove that either entry is the P16
+cold-start callback. Reset should not be prepended to every upload based on
+the reset-capable entry alone.
+
+`scripts/test_hfrp_power_policy.py` executes the original profile-3 initializer
+and **complete power callback `0xd405f0`**. HFRP send functions `0xd3dd40` and
+`0xd3de30`, OS/timing/logging helpers, and notification function `0xd39ef0`
+are recording stubs. The test supplies capability and version fields; it does
+not run power hardware or transport. There are 48 cases.
+
+The callback's primary command is **400 (`0x190`, POWER_CONTROL)**. Its request
+mask is policy input, not a directly transferable wire value. With enable mask
+`0x777` and no existing pending-state bits, the original code produces:
+
+| Windows request | Effective operation correspondence | HFRP action bits |
+| --- | --- | --- |
+| `0x001` | clock on | `0x080` |
+| `0x002` | power domain on | `0x004` |
+| `0x004` | rail on, also power domain on | `0x00c` |
+| `0x007` | clock, power domain and rail on | `0x08c` |
+| `0x010` | clock off | `0x040` |
+| `0x020` | power domain off | `0x001` |
+| `0x040` | rail off, also power domain off | `0x003` |
+| `0x100` | delayed clock off | `0x100` |
+| `0x200` | delayed power-domain off | `0x010` |
+| `0x400` | delayed rail off, also delayed power-domain off | `0x030` |
+
+The names come from the NVIDIA-authored v1.3 implementation, not from guessed
+meanings of Windows masks. The test compiles that original function, with only
+transport/event stubs, and compares all ten v1.3 payloads byte-for-byte.
+Windows and L4T agree on the nine action bits and third-byte PPS layout.
+The test's PPS values are synthetic, not recommended settings or measured
+frequencies. Windows chooses PPS using its current value and three policy
+bytes at outer +0x31f/+0x322/+0x325; physical units remain unestablished here.
+
+For link version **1.3**, Windows sends three bytes: little-endian action bits
+followed by PPS. For major 1 and minor **at least 5** (tested 5 and 6), it sends
+**two bytes**, omitting PPS. When outer +0x14d is set, delayed-action flags
+also populate additional bits 9..14. Major 2 and versions 1.2 and 1.4 are
+rejected with `0x40`. With version exactly 1.5, outer +0x14c can additionally
+enable command `0x1a1` with byte `01` after clock-on; the L4T command table names
+this SLCG_OVERRIDE. This flag does not establish that the P16 requires it.
+
+The callback rejects a nonzero second argument (`0x56`) and conflicting
+on/off request pairs (`0x3f`). Outer +0x4b0 gates permitted operations;
+zero skips the power operation. Original initializer `0xd44710` normally
+starts that mask at 7, adds optional gating capabilities from policy bytes,
+and has a separate global disable branch. It has been disassembled, not yet
+fully replayed together with its policy producers. Existing pending state
+can suppress redundant operations. A transport error propagates; a nonzero
+firmware status becomes `0xffff`. Those errors must prevent the loader when
+this parent path is used.
+
+## HFRP version discovery before power commands
+
+Original function **`0xd3da30`** starts with HFRP handshake `0xd4af88`, then
+reads **resource id 2, offset 0** through the original resource accessor
+`0xd39878`. The returned u32 selects a fixed version or a version query:
+
+| Register value | Windows action |
+| --- | --- |
+| Below `0x20250211` | reject with `0x56` |
+| `0x20250211..0x20250424` | store major 1, minor 3 |
+| `0x20250425..0x2025fffe` | store major 1, minor 5 |
+| At least `0x2025ffff` | send command **999 (`0x3e7`)**, no request payload |
+
+On transport success, command 999's four-byte response supplies major in bits
+16..23 and minor in bits 8..15. The bytes are stored at link +0xc/+0xd, exactly
+where the power callback reads them. The date-like constants above are exact
+numeric comparisons; no build-date interpretation is required for the decoder.
+
+`scripts/test_hfrp_version.py` runs the complete original discovery function
+in 21 cases, including boundary values, response extraction and injected
+failures. It stubs the handshake, register accessor, query transport and OS
+helpers. **No live stamp or protocol version has been read from the P16.**
+The handshake itself writes HFRP control registers, so running discovery is
+not merely a read-only hardware query and is not enabled by this work.
+
+The replay exposes error handling which a Linux implementation must improve:
+Windows propagates handshake failure, but ignores the register accessor's
+return status. Query transport failure leaves the prior version bytes while
+the outer function returns success; firmware status and reported response
+length do not gate extraction. Linux must reject failed/truncated responses
+and avoid treating stale or zero-filled version bytes as an established ABI.
+
+Reproduce the two additional tests without hardware access:
+
+```sh
+venv/bin/python scripts/test_hfrp_power_policy.py
+venv/bin/python scripts/test_hfrp_version.py
+```
+
+These findings identify missing bootstrap dependencies, not a working power
+backend. The remaining immediate work is the HFRP handshake, bounded command
+ring and reply parser, followed by correct parent-path selection. The Linux
+bootstrap still sends no HFRP power/reset commands. Neither observed SROOT
+upload rejection is explained or repaired by these offline results alone.
