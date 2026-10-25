@@ -4,6 +4,60 @@ The current `n1x_npu_observe.ko` is an observation module, not a working NPU
 inference driver. It builds against the running P16 kernel. It is not installed
 or auto-loaded and has no register-write implementation. Loading is explicit.
 
+## Latest hardware result: variant 1 rejected
+
+After the user's reboot, the same test kernel
+**7.2.8-23-omarchy-p16-asus-npu1** ran with boot ID
+`413b4af3-8df3-4859-bf42-07eb6b7f0263`. Both devices were initially unbound and
+neither observer nor bootstrap was loaded. The graphical target was active and
+NVIDIA 615.78.08 responded. The platform profile had reverted to `balanced`;
+the requested `performance` profile was restored before this test.
+
+The procedure verified the exact machine/BIOS, dedicated groups and SMMU
+suppliers, then selected DMA domains for groups 19 and 24. It installed the
+unmodified 67508-byte variant-1 input, SHA-256
+`6b1e8192fc1e61944e9b2a84251b7d18f305025ffb2cfa1de8677f8f98b59ad4`.
+The loaded bootstrap SHA-256 was
+`adf2f918969e0b30d5fcdce8cf92c198a1e943c57273cce81cace94663437bbb`,
+with `enable_upload=1`, `firmware_variant=1` and **all later phases disabled**.
+Initial status had no attempted operations or retained allocations. Runtime PM
+was enabled for both devices.
+
+At **2026-10-25 18:29:30 +01:00**, one unbuffered upload trigger produced:
+
+```text
+upload variant 1 phase returned -121: reply_valid=1 raw=0x253ff018
+idle=0; DMA 0x00000000fffe0000 retained until reboot
+```
+
+| Field | Variant 0, previous boot | Variant 1, this boot |
+| --- | --- | --- |
+| Raw reply | `0x2a006018` | `0x253ff018` |
+| Command | `0x18` | `0x18` |
+| Status | `6` | `1023` (`0x3ff`) |
+| Additional/detail byte | `42` (`0x2a`) | `37` (`0x25`) |
+| Payload words | `0` | `0` |
+| Upload result | `-EREMOTEIO` | `-EREMOTEIO` |
+| DLA idle wait reached | no | no |
+
+The original Windows decoder and complete upload-handler replay confirm the
+second reply's fields too. The combined Windows status word is `0x253ff` and
+its outer handler returns `0xc0000229`. The meanings of status 1023/detail 37
+are unknown. Different replies across different boots/images do not prove
+signature failure, trusted-key selection, successful DMA reading or partial
+firmware execution. The comparison is not a controlled single-variable test;
+the platform profile before the first attempt was not recorded.
+
+The live sysfs state preserves `error=-121`, `attempted=1`, `reply_valid=1`,
+`dma_retained=1`; the unbuffered trigger returned errno 121. Both endpoints
+remain runtime-active. No second write, ping, configuration, inference, unload,
+reset or reboot followed this attempt. Graphical target and NVIDIA queries
+still respond, and the profile remains `performance`.
+
+The local execution record is `results/npu1-variant1-live.jsonl`. The live
+bootstrap and its retained allocation must remain until reboot. **Neither
+vendor variant has achieved verified firmware boot or numerical inference.**
+
 ## Live test-kernel and allocation result
 
 On 2026-10-25 the machine booted **7.2.8-23-omarchy-p16-asus-npu1**,
@@ -124,9 +178,10 @@ handler also preserves the original published operation's error when a later
 call is rejected. Seven userspace trigger cases and the compiled sysfs handler
 tests cover failure, short-write handling and first-result preservation.
 
-The first-result-preservation change is built and tested but **not loaded**:
-the live module and firmware buffer remain pinned after the real attempt.
-No ping, config import, bypass task, retry, unload, reset or reboot followed it.
+The first-result-preservation change was built and tested but not loaded into
+this first test boot: its module and firmware buffer remained pinned until
+the user's subsequent reboot. The corrected handler is now present in the
+variant-1 test above and preserves its original `-121` result.
 
 ## Scope and operation
 
@@ -681,8 +736,8 @@ also rejected when it does not match the selection. No automatic fallback,
 mutable filename, relaxed hash check or userspace signature policy is added.
 The [offline fallback audit](sroot-envelope.md#windows-fallback-contains-the-complete-raw-hal-1-firmware)
 proves that variant 1 contains the raw HAL-1 image; hardware acceptance is
-unverified for both variants. The new module is built but **not loaded** into
-the boot that retains the failed variant-0 allocation.
+unverified for both variants. The new module was loaded only after reboot for
+the variant-1 attempt above, never into the boot retaining variant 0's buffer.
 The SROOT-owned coherent allocation must be 256-byte aligned, entirely in
 `0xe0000000..0xffffffff`, and fit the 32-bit DMA mask. Rejected unpublished
 allocations are freed. No CPU physical-address substitution, alternate device,
@@ -788,7 +843,11 @@ system stability before deciding the next bring-up step. The test kernel has
 booted and variant 0 returned `0x2a006018`; the live module retains its DMA
 buffer. The installed test UKI/menu/defaults remain unchanged.
 
-#### Prepared variant-1 qualification — not executed
+#### Variant-1 qualification procedure
+
+The first execution and failure are recorded at the top of this document.
+The following commands document the procedure, not authorization to repeat
+it in the boot currently retaining the variant-1 allocation.
 
 After a fresh boot of **N1X NPU test**, verify kernel
 `7.2.8-23-omarchy-p16-asus-npu1`, graphics/input and a changed boot ID. Neither
@@ -816,14 +875,14 @@ sudo cat /sys/bus/platform/devices/NVDA200A:00/status
 sudo journalctl -k -b --no-pager
 ```
 
-Extraction and the local build are already complete; installation, loading
-and the upload remain unexecuted. All later phases stay disabled in this
-sequence. The same retention rule applies to variant 1 on every outcome.
+Extraction, build, installation, loading and one upload have completed. The
+upload was rejected as recorded above; all later phases stayed disabled.
+The same retention rule applies to variant 1 on every outcome.
 The compiled lifecycle harness passes 30 cases per selected variant, including
 cross-image rejection, invalid selections, failure cleanup and retained
 allocations. The full original Windows-handler comparison covers both actual
-images, each with recorded error/synthetic success and zero/poison allocator
-contents (eight offline cases). None establishes physical success.
+images, each with both recorded errors/synthetic success and zero/poison
+allocator contents (twelve offline cases). None establishes physical success.
 
 ### Opt-in DMA-word ping phase (built, not yet run)
 

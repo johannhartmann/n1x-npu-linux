@@ -135,6 +135,9 @@ def main():
     live_trace, live_decoded = windows(pe, 16, 0x2a006018, [])
     assert live_decoded == (0x18, 6, 0x2a, 0, [])
     assert linux(16, 0x2a006018, []) == (0, live_trace, live_decoded)
+    fallback_trace, fallback_decoded = windows(pe, 16, 0x253ff018, [])
+    assert fallback_decoded == (0x18, 0x3ff, 0x25, 0, [])
+    assert linux(16, 0x253ff018, []) == (0, fallback_trace, fallback_decoded)
     header, words = 0x12300318, [0, 0xffffffff, 0x80000000]
     trace, _ = windows(pe, 4, header, words)
     for i in range(len(trace)):
@@ -150,6 +153,7 @@ def main():
                       'decoder_rva': '0x4f70', 'matching_reply_traces': cases,
                       'callback_failure_positions': len(trace),
                       'first_live_reply': {'header': '0x2a006018', 'decoded': live_decoded},
+                      'fallback_live_reply': {'header': '0x253ff018', 'decoded': fallback_decoded},
                       'limitations': ['Synthetic reply data and register spacing',
                                       'Status meaning and request correlation remain caller responsibilities',
                                       'No DMA ownership, bus preparation or hardware firmware boot']}, indent=2))

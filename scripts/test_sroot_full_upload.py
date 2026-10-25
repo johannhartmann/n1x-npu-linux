@@ -29,6 +29,7 @@ CTX, DEVICE, REQUEST, MEMORY, INPUT, BUFFER, ADAPTER, OPS, TABLE, STUB, STACK, M
 STOP = STUB+0xff0
 DMA = 0xfffe0000
 LIVE_REPLY = 0x2a006018
+FALLBACK_LIVE_REPLY = 0x253ff018
 IMAGE_HASH = '0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4'
 
 
@@ -213,7 +214,7 @@ def main():
         ctypes.c_uint32, ctypes.c_uint32]
     rows = []
     for variant, blob in enumerate(images):
-        for header, fill in product((LIVE_REPLY, 0x18), (0, 0xa5)):
+        for header, fill in product((LIVE_REPLY, FALLBACK_LIVE_REPLY, 0x18), (0, 0xa5)):
             original, candidate = Bus(16, header, []), Bus(16, header, [])
             observed = windows(pe, blob, original, fill)
             staged, words, reply = linux(lib, blob, candidate)
@@ -222,11 +223,12 @@ def main():
             assert staged == blob[4:]+bytes(4)
             assert observed['status'] == reply.status | reply.detail << 12
             assert reply.header == header and reply.command == 0x18 and reply.count == 0
-            assert observed['return'] == (0xc0000229 if header == LIVE_REPLY else 0)
+            assert observed['return'] == (0 if header == 0x18 else 0xc0000229)
             assert original.tx == candidate.tx == [0x318, *words]
             assert original.trace == [item for item in candidate.trace if item[0] != 'd']
             rows.append({'variant': variant, 'image_sha256': hashes[variant],
                 'reply': hex(header), 'allocation_fill': hex(fill),
+                'image_reply_pair_observed_on_hardware': header == (LIVE_REPLY, FALLBACK_LIVE_REPLY)[variant],
                 'windows_return': hex(observed['return']), 'decoded_status': hex(observed['status']),
                 'transmitted_words': [hex(word) for word in original.tx],
                 'matching_mmio_events': len(original.trace),

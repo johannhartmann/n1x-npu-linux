@@ -118,9 +118,9 @@ physical address checks that this value is not substituted into the request.
 The reconstructed INF bounds are `0xe0000000..0xffffffff`; stride is 16.
 The same replay also checks the 67508-byte remapper-1 fallback, SHA-256
 `6b1e8192fc1e61944e9b2a84251b7d18f305025ffb2cfa1de8677f8f98b59ad4`, for
-eight cases total (two images, two replies, two allocation fills). Only the
-default image has a recorded physical attempt; replaying that error header
-against the fallback is an offline control.
+twelve cases total (two images, three replies, two allocation fills). The
+recorded replies are `0x2a006018` for variant 0 and `0x253ff018` for variant 1;
+the success reply and crossed image/reply combinations remain offline controls.
 
 Both the complete Windows handler and compiled Linux staging/exchange helpers
 produce these FIFO words:
@@ -137,6 +137,9 @@ recorded header `0x2a006018`, both decode combined status `0x2a006`; the
 original outer Windows handler returns `0xc0000229`. With a synthetic
 zero-error header `0x18`, it returns zero. This success control does not
 represent a physical firmware success.
+The second physical reply `0x253ff018` decodes as status `0x3ff`, detail `0x25`,
+zero payload words and combined status `0x253ff`; the original outer handler
+also rejects it with `0xc0000229`.
 
 Two allocator initializations, zero and `0xa5`, independently confirm that
 the original copy stages exactly `image[4:]` and leaves its final four bytes

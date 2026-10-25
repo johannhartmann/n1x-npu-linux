@@ -29,6 +29,9 @@ for the isolated test kernel. Its first physical upload received SROOT reply
 `0x2a006018`: command `0x18`, status `6`, additional byte `0x2a`, no payload.
 The original Windows decoder confirms those fields; their error meanings
 remain unresolved. The DMA buffer is retained, with no automatic retry.
+After reboot, one variant-1 upload was also rejected, with reply `0x253ff018`
+(status `1023`, detail `37`, no payload). Its meanings remain unknown too.
+The current bootstrap retains that allocation, and no later NPU phase ran.
 The initial host runtime-PM preflight defect was corrected before that attempt.
 This remains a one-attempt experiment requiring retained DMA storage/reboot, and does not
 complete IRQ/configuration initialization or inference. An additional opt-in
@@ -312,7 +315,8 @@ now provides a direct link to that raw code: remapper-1 variant 1 contains the
 complete unmodified HAL-1 image at offset 692. All four vendor upload signatures
 and body digests verify offline. A rebuilt bootstrap can explicitly select
 this separately hash-pinned image with `firmware_variant=1`; it still permits
-only one upload per boot. The fallback has **not** been tried on hardware.
+only one upload per boot. Its first physical attempt was rejected; see the
+[latest hardware result](docs/linux-backend.md#latest-hardware-result-variant-1-rejected).
 
 
 The diagnostic scheduler audit exposes an unresolved [network-extension
