@@ -325,3 +325,8 @@ raw firmware reads IRQ fields beyond the blob's 128 initialized network bytes.
 The fixture's zero extension does not make progress under original-handler IRQ
 injections. Runtime materialization/ABI compatibility must be resolved before
 this fixture can establish a completed diagnostic; no guessed suffix is used.
+
+A [DGX Spark OSROOT research input](docs/spark-osroot-research.md) now provides
+manufacturer-distributed RISC-V mailbox/authentication code with a verified
+internal signature and component hashes. It is an offline reference for the
+unresolved SROOT replies; no P16 compatibility or error-code mapping is claimed.
