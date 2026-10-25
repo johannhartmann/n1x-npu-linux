@@ -969,5 +969,41 @@ initial saved/ownership masks, IRQ routing and the eventual unmask/rearm
 lifecycle are not yet established on hardware. This does not justify enabling
 all interrupts, treating `0xc0` alone as a complete setup, or adding a
 CPU-control start write to the SROOT boot path. The response ACK helper clears
-SWGEN1 in the same 0xd24 mask register; receiving subsequent responses therefore
-still requires a verified rearm policy. No physical backend is enabled.
+SWGEN1 in the same 0xd24 mask register. Firmware-side rearming for basic
+HAL-1 mailbox replies is now established below; physical routing and the
+complete host IRQ lifecycle remain unverified. No physical backend is enabled.
+
+## HAL-1 firmware rearms each mailbox response
+
+The earlier inference that masking SWGEN1 on ACK necessarily requires an extra
+host unmask operation was incomplete. Original RV32 mailbox routine `0x1021b2`
+saves mailbox0/1, writes the reply, then executes:
+
+- `0x1021d6`: write `0x80` to internal `0x01400d20` (mask set);
+- `0x1021da`: write `0x80` to internal `0x01400000` (IRQ set);
+- wait for mailbox0 ACK `0xd1a0cafe`, then restore both mailboxes.
+
+These are internal firmware addresses; they do not establish host physical
+resource addresses. The instruction sequence and exact operand values are
+observed from the matching HAL-1 raw image, not inferred from Jetson alone.
+
+`emulate_profile1_commands.py` now models mask-set/mask-clear and IRQ-set/clear
+state in RAM, delivering a synthetic SWGEN1 only when pending AND enabled.
+`test_response.py` runs four commands through the Linux C method sender, original
+RV32 command/ping/mailbox routines and Linux C response helper **without resetting
+firmware RAM or interrupt masks between commands**. Challenges 1, 0x11111111,
+0x40000000 and 3 yield 4, 0x44444444, overflow-error response and 12. Each command
+writes method data before method ID, and each reply executes mask-set before
+IRQ-set. After every C ACK, the modeled SWGEN1 mask and pending bit are zero;
+the following original firmware invocation sets the mask again. The four
+responses and original mailbox restoration are checked.
+
+A counterfactual model that ignores mask-set side effects delivers no interrupt:
+the original firmware remains in its ACK wait within the instruction budget.
+This negative control verifies that the test no longer calls the host handler
+unconditionally on IRQ-set. It is not a physical device test. DMA, interrupt
+routing, scheduler entry, method-register hardware delivery and platform
+coherency remain synthetic; firmware bookkeeping/logging/hang queries remain
+stubbed. The mailbox protocol now supports repeated offline commands without
+an invented host rearm write. This does not establish complete Linux IRQ setup,
+task execution, inference or firmware boot.

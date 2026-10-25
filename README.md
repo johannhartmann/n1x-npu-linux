@@ -23,7 +23,9 @@ commands, task ABI, engine registers or instruction opcodes. Those must now be
 rechecked against HAL 1. Opaque firmware/boot variants and the live ACPI audit
 remain unresolved; no hardware backend is enabled. Basic HAL-1 ping and
 mailbox/ACK handling have now been independently revalidated in an RV32 emulator,
-including round trips through the Linux C response handler. The HAL-1 word uploader
+including round trips through the Linux C response handler. Four consecutive
+commands now use both Linux C method submission and response ACK in one
+RV32 emulator instance: the firmware rearms SWGEN1 before each reply. The HAL-1 word uploader
 also matches Windows across 16,839 callback writes, and its shared core-selection
 routine and 78 accessor cases are verified. Physical boot remains unverified. Auxiliary-driver selection is traced below.
 HAL-1 common task headers and UMD version strides are now revalidated;

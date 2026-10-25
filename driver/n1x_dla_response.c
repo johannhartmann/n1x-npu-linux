@@ -28,7 +28,9 @@ int n1x_dla_take_response(const struct n1x_dla_io *io,
     err = io->read32(io->context, MAILBOX1, &captured.data);
     if (err)
         return err;
-    /* L4T R38.4 ISR ordering; the actual t35x firmware waits for this ACK. */
+    /* L4T R38.4 ISR ordering; HAL-1 RV32 and T35x RV64 wait for this ACK.
+     * HAL-1 firmware sets SWGEN1 in IRQMSET before each mailbox response.
+     */
     err = io->write32(io->context, IRQMCLR, SWGEN1);
     if (err)
         return err;

@@ -11,7 +11,8 @@ from emulate_firmware_commands import ROOT, MMIO, HOST, STACK, STOP, ACK
 CTX = 0x20010000
 
 
-def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=True, host_handler=None):
+def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=True,
+        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None):
     u = Uc(UC_ARCH_RISCV, UC_MODE_RISCV32)
     for address, size in ((0x100000, 0x9000), (0x180000, 0x10000),
                           (MMIO, 0x2000), (CTX, 0x4000), (HOST & ~4095, 0x1000),
@@ -24,7 +25,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
         u.mem_write(address, bytes.fromhex('67800000'))
     u.mem_write(HOST, struct.pack('<I', challenge))
     u.mem_write(MMIO+0x40, struct.pack('<II', 0x11223344, 0x55667788))
-    transfers, interrupts = [], []
+    transfers, interrupts, register_writes, completed = [], [], [], []
 
     def reg(n):
         return u.reg_read(getattr(regs, f'UC_RISCV_REG_A{n}'))
@@ -47,24 +48,59 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             u.reg_write(regs.UC_RISCV_REG_A0, 0xfffffffc if direction == dma_error else 0)
 
     def write(_, access, address, size, value, user):
-        if address == MMIO and value == 128:
+        offset = address-MMIO
+        if offset not in (0, 4, 0x40, 0x44, 0xd20, 0xd24):
+            return
+        assert size == 4
+        register_writes.append((offset, value))
+        if offset in (0xd20, 0xd24):
+            mask = struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0]
+            if offset == 0xd20 and not suppress_mask_set:
+                mask |= value
+            elif offset == 0xd24:
+                mask &= ~value
+            u.mem_write(MMIO+0xd28, struct.pack('<I', mask))
+        elif offset == 0:
+            pending = struct.unpack('<I', u.mem_read(MMIO+8, 4))[0] | value
+            u.mem_write(MMIO+8, struct.pack('<I', pending))
+            mask = struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0]
+            if not (pending & mask & 128):
+                return
             interrupts.append(struct.unpack('<II', u.mem_read(MMIO+0x40, 8)))
             if host_handler is not None:
                 host_handler(u)
             elif acknowledge:
                 u.mem_write(MMIO+0x40, struct.pack('<I', ACK))
+        elif offset == 4:
+            pending = struct.unpack('<I', u.mem_read(MMIO+8, 4))[0] & ~value
+            u.mem_write(MMIO+8, struct.pack('<I', pending))
 
     u.hook_add(UC_HOOK_CODE, hook)
     u.hook_add(UC_HOOK_MEM_WRITE, write)
-    u.reg_write(regs.UC_RISCV_REG_A0, method)
-    u.reg_write(regs.UC_RISCV_REG_A1, HOST >> 8)
-    u.reg_write(regs.UC_RISCV_REG_SP, STACK+0x8000)
-    u.reg_write(regs.UC_RISCV_REG_RA, STOP)
-    u.emu_start(0x102232, STOP, count=2000)
+    # Re-enter the real dispatcher without resetting firmware RAM or IRQ masks.
+    # Only the synthetic host input and CPU entry registers change per command.
+    for item in ([challenge] if sequence is None else sequence):
+        u.mem_write(HOST, struct.pack('<I', item))
+        if host_submit is not None:
+            host_submit(u)
+            submitted_method, submitted_data = struct.unpack('<II', u.mem_read(MMIO+0x68, 8))
+        else:
+            submitted_method, submitted_data = method, HOST >> 8
+        u.reg_write(regs.UC_RISCV_REG_A0, submitted_method)
+        u.reg_write(regs.UC_RISCV_REG_A1, submitted_data)
+        u.reg_write(regs.UC_RISCV_REG_SP, STACK+0x8000)
+        u.reg_write(regs.UC_RISCV_REG_RA, STOP)
+        u.emu_start(0x102232, STOP, count=2000)
+        if u.reg_read(regs.UC_RISCV_REG_PC) != STOP:
+            break
+        completed.append(struct.unpack('<I', u.mem_read(HOST, 4))[0])
     return {'returned': u.reg_read(regs.UC_RISCV_REG_PC) == STOP,
             'pc': hex(u.reg_read(regs.UC_RISCV_REG_PC)),
             'host_word': struct.unpack('<I', u.mem_read(HOST, 4))[0],
             'transfers': transfers, 'interrupts': interrupts,
+            'register_writes': register_writes, 'completed': completed,
+            'final_irq_mask': struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0],
+            'final_irq_pending': struct.unpack('<I', u.mem_read(MMIO+8, 4))[0],
             'final_mailboxes': struct.unpack('<II', u.mem_read(MMIO+0x40, 8))}
 
 

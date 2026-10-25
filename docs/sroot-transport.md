@@ -466,8 +466,9 @@ flags zero, its observed order is:
 2. If the request succeeds, wait via original `0xd4ce48` on the subobject at
    HAL +0x68. Its accessor slot +0x1d0 is the already decoded IDLESTATE 0x4c.
 3. If the wait succeeds, invoke HAL +0xd8 with the u32 from subobject +0x50.
-   HAL 1 assigns this to `0xd49800`; the lower register/accessor behavior of
-   this final callback is separate from the orchestration experiment.
+   HAL 1 assigns this to `0xd49800`; its mask set/read/clear policy is now
+   independently emulated. See the interrupt-mask and firmware-rearm sections
+   in [the contract](contract.md).
 
 Twelve cases cover both selections, immediate/delayed idle, request error,
 read error, persistent busy and a failure returned from the final callback.

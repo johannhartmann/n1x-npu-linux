@@ -10,7 +10,7 @@ import struct
 import subprocess
 import tempfile
 from pathlib import Path
-from emulate_firmware_commands import run as firmware, BLOB_HASH, MMIO, ACK
+from emulate_firmware_commands import run as firmware, BLOB_HASH, MMIO, HOST, ACK
 from emulate_profile1_commands import run as firmware_profile1, PROFILE1_HASH
 from test_core_control import IO, WRITE, READ, DELAY
 
@@ -28,13 +28,15 @@ def main():
         library = Path(tmp)/'response.so'
         subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
             '-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-Werror',
-            '-I'+str(ROOT/'include'), str(ROOT/'driver/n1x_dla_response.c'),
+            '-I'+str(ROOT/'include'), str(ROOT/'driver/n1x_dla_response.c'), str(ROOT/'driver/n1x_dla_command.c'),
             '-o', str(library)], check=True)
         lib = ctypes.CDLL(str(library))
     take = lib.n1x_dla_take_response
     take.argtypes = [ctypes.POINTER(IO), ctypes.POINTER(Response)]
+    send = lib.n1x_dla_send_method
+    send.argtypes = [ctypes.POINTER(IO)]+[ctypes.c_uint32]*4
 
-    def host(uc=None, word=0x102, data=0x200010, pending=True, fail_at=None):
+    def host(uc=None, word=0x102, data=0x200010, pending=True, fail_at=None, modeled_irq=False):
         trace = []
         values = {8: 0x80 if pending else 0, 0x40: word, 0x44: data}
 
@@ -43,7 +45,7 @@ def main():
             trace.append(('read', offset))
             if len(trace)-1 == fail_at:
                 return -errno.EIO
-            out[0] = struct.unpack('<I', uc.mem_read(MMIO+offset, 4))[0] if uc and offset != 8 else values[offset]
+            out[0] = struct.unpack('<I', uc.mem_read(MMIO+offset, 4))[0] if uc and (offset != 8 or modeled_irq) else values[offset]
             return 0
 
         @WRITE
@@ -51,6 +53,10 @@ def main():
             trace.append(('write', offset, value))
             if len(trace)-1 == fail_at:
                 return -errno.EIO
+            if uc and modeled_irq and offset in (0xd24, 4):
+                target = 0xd28 if offset == 0xd24 else 8
+                previous = struct.unpack('<I', uc.mem_read(MMIO+target, 4))[0]
+                uc.mem_write(MMIO+target, struct.pack('<I', previous & ~value))
             if uc and offset == 0x40:
                 uc.mem_write(MMIO+offset, struct.pack('<I', value))
             return 0
@@ -89,8 +95,59 @@ def main():
             assert result['final_mailboxes'] == (0x11223344, 0x55667788)
             integrated.append({'image': label, 'challenge': hex(challenge), 'response': hex(word),
                                'firmware_returned_after_linux_ack': True})
+    submissions = []
+
+    def submit(uc):
+        trace = []
+
+        @READ
+        def read(_, offset, out):
+            assert offset == 0x68
+            out[0] = struct.unpack('<I', uc.mem_read(MMIO+offset, 4))[0]
+            trace.append(('read', offset))
+            return 0
+
+        @WRITE
+        def write(_, offset, value):
+            assert offset in (0x68, 0x6c)
+            uc.mem_write(MMIO+offset, struct.pack('<I', value))
+            trace.append(('write', offset, value))
+            return 0
+
+        io = IO(None, write, read, DELAY())
+        assert send(ctypes.byref(io), 0x301, HOST >> 8, 1, 0) == 0
+        assert trace == [('read', 0x68), ('write', 0x6c, HOST >> 8), ('write', 0x68, 0x301)]
+        submissions.append(trace)
+
+    sequence = [1, 0x11111111, 0x40000000, 3]
+    captured = []
+
+    def masked_interrupt(uc):
+        assert struct.unpack('<I', uc.mem_read(MMIO+0xd28, 4))[0] & 0x80
+        captured.append(host(uc, modeled_irq=True))
+        assert struct.unpack('<I', uc.mem_read(MMIO+0xd28, 4))[0] == 0
+        assert struct.unpack('<I', uc.mem_read(MMIO+8, 4))[0] == 0
+
+    result = firmware_profile1(profile1, sequence=sequence, host_handler=masked_interrupt, host_submit=submit)
+    assert len(submissions) == 4
+    assert result['returned'] and result['completed'] == [4, 0x44444444, 0x40000000, 12]
+    assert len(captured) == 4 and all(row[0] == 0 and row[1] == expected for row in captured)
+    assert [row[2][0] for row in captured] == [0x102, 0x102, 0x110101, 0x102]
+    assert result['final_irq_mask'] == result['final_irq_pending'] == 0
+    assert result['final_mailboxes'] == (0x11223344, 0x55667788)
+    irq_writes = [row for row in result['register_writes'] if row[0] in (0xd20, 0)]
+    assert irq_writes == [(0xd20, 0x80), (0, 0x80)]*4
+    negative = firmware_profile1(profile1, sequence=sequence, suppress_mask_set=True,
+                                 host_handler=masked_interrupt)
+    assert not negative['returned'] and not negative['interrupts'] and not negative['completed']
+    assert len(captured) == 4  # Masked request cannot reach the host handler.
+    assert negative['final_irq_mask'] == 0 and negative['final_irq_pending'] == 0x80
     print(json.dumps({'scope': 'Linux C response capture/clear/ACK with synthetic IRQSTAT and real FW mailbox code',
-                      'ordered_callback_count': len(expected), 'error_prefixes_checked': 6,
+                      'ordered_callback_count': len(expected),
+                      'persistent_hal1_commands': len(sequence),
+                      'firmware_rearms_swgen1_before_each_reply': True,
+                      'persistent_commands_use_linux_method_sender': True,
+                      'suppressed_mask_set_blocks_delivery': True, 'error_prefixes_checked': 6,
                       'spurious_irq_has_no_writes': True, 'integrated_firmware_cases': integrated,
                       'limitations': ['IRQSTAT and routing are synthetic',
                                       'No kernel IRQ registration, physical MMIO or DMA was used',
