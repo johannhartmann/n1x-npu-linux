@@ -25,7 +25,7 @@ remain unresolved; no hardware backend is enabled. Basic HAL-1 ping and
 mailbox/ACK handling have now been independently revalidated in an RV32 emulator,
 including round trips through the Linux C response handler. The HAL-1 word uploader
 also matches Windows across 16,839 callback writes, and its shared core-selection
-routine and 78 accessor cases are verified. Physical boot, auxiliary-driver boot selection,
+routine and 78 accessor cases are verified. Physical boot remains unverified. Auxiliary-driver selection is traced below.
 HAL-1 common task headers and UMD version strides are now revalidated;
 Terminal WRITE_SEM actions are also revalidated, with 256-byte backing required
 for HAL-1 cache fetches. Full task/model semantics and instruction execution

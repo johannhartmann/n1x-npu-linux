@@ -935,3 +935,39 @@ power methods or references were found there. Live identity still needs checking
 See [the detailed audit](acpi-audit.md).
 The read-only live-table copy currently awaits system authentication. No module
 has been bound, no NPU MMIO read/write issued, and no firmware boot attempted.
+
+## HAL-1 interrupt-mask policy after method-2 idle
+
+`emulate_irq_mask.py` executes the complete original KMD callback at RVA
+`0xd49800`, its three original subobject forwarding thunks, and HAL-1 register
+accessors. Only logging, compiler guard/prologue helpers and generic register
+I/O are stubbed. The test pins the KMD hash and checks 144 combinations of
+enable argument, saved mask, current mask, ownership mask and accessor errors.
+All accesses occur in emulator RAM; no device registers are read or written.
+
+The independent constructor/thunk/accessor join in
+`decode_transfer_registers.py` now includes:
+
+| Subobject slot | HAL slot | Access | Resource-relative offset | Role inferred from operations |
+| --- | --- | --- | --- | --- |
+| 0xb8 | 0x298 | write | 0xd20 | interrupt mask set |
+| 0xc0 | 0x2a0 | read | 0xd28 | current interrupt mask |
+| 0xc8 | 0x2b0 | write | 0xd24 | interrupt mask clear |
+
+The enable argument is truncated to eight bits. If nonzero, the callback
+ORs `0xc0` into HAL+0x49c and writes the resulting saved mask to 0xd20. If
+zero, it reads 0xd28, intersects with subobject+0x54, replaces the saved mask
+only if that intersection is nonzero, then writes the intersection to 0xd24
+even when it is zero. A read error skips that write. The callback always
+returns zero, suppressing both read and write errors. Any future Linux
+implementation must propagate callback failures rather than copying this
+Windows error policy.
+
+The method-2 start orchestrator supplies subobject+0x50 as this argument
+after the successful upload/reinit request and idle wait. Those flags, the
+initial saved/ownership masks, IRQ routing and the eventual unmask/rearm
+lifecycle are not yet established on hardware. This does not justify enabling
+all interrupts, treating `0xc0` alone as a complete setup, or adding a
+CPU-control start write to the SROOT boot path. The response ACK helper clears
+SWGEN1 in the same 0xd24 mask register; receiving subsequent responses therefore
+still requires a verified rearm policy. No physical backend is enabled.

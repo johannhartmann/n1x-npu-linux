@@ -36,6 +36,7 @@ test-vendor: test
 	venv/bin/python scripts/test_sroot_exchange.py
 	venv/bin/python scripts/test_sroot_reinit.py
 	venv/bin/python scripts/emulate_method2_start.py
+	venv/bin/python scripts/emulate_irq_mask.py
 	venv/bin/python scripts/emulate_bitbang_transfer.py
 	venv/bin/python scripts/emulate_dma_transfer.py
 	venv/bin/python scripts/emulate_core_control.py
