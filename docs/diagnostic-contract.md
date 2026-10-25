@@ -314,3 +314,30 @@ backing+0x124 → provider DWORD output → low byte → runtime selector. The K
 producer of private+0xec, its semantic meaning and its physical N1X value
 remain to be recovered. No Linux register or protocol setting is derived from
 an assumed value here.
+
+### KMD private-field producer candidate
+
+In the pinned `nvlddmkm.sys`, function **0x19dfd58** accepts the private buffer
+through query+0x18 and requires query+0x20 to equal exactly 0xc5b8. Null buffers
+or a different size return 0xc000000d before writing the private buffer. Its
+success prefix writes the header, clears private+0x14 through the buffer end,
+sets private+0x10 to 1, invokes another field builder with private+0x20, then
+copies **object+0x4648 → private+0xec** and the adjacent DWORD
+**object+0x464c → private+0xf0**. At 0x19d9a28 the local dispatcher reads a
+query type and uses the table at 0x19d9cc4. Table entry 0 targets 0x19d9a8c,
+whose call at 0x19d9a94 invokes this producer.
+
+`scripts/inspect_kmd_private_selector.py` executes six original producer
+prefixes through 0x19dfe04, including poisoned/high-byte source words, and four
+complete rejection paths (three sizes and a null buffer). The zeroing helper
+and other-field builder are modeled. Successful runs stop after the two field
+stores; they do not execute the later producer calls or prove that a final
+response cannot subsequently change those fields. Static instruction and
+table checks establish the local type-0 edge.
+
+This identifies a matching KMD producer candidate. It does **not** yet connect
+the physical N1X adapter's OS callback to this dispatcher, identify the source
+of object+0x4648, or show its physical value. Other 0xc5b8-size query producers
+exist in this driver (including 0x1a7b348), so size matching alone is not
+sufficient to assign a hardware class. No numerical architecture/chip name is
+assigned to 0x23/0x25/0x26 from this evidence.
