@@ -60,6 +60,9 @@ def run(pe, selector, override=None, remapper_initial=None):
     if remapper_initial is not None:
         u.mem_write(CTX+0x478, struct.pack('<I', remapper_initial))
     initial = struct.unpack('<I', u.mem_read(CTX+0x478, 4))[0]
+    u.emu_start(BASE+0xd44130, BASE+0xd44168, count=1000)
+    assert u.reg_read(regs.UC_ARM64_REG_PC) == BASE+0xd44168
+    vbios_enabled = struct.unpack('<I', u.mem_read(CTX+0x490, 4))[0]
     u.emu_start(BASE+0xd4419c, BASE+0xd44208, count=1000)
     assert u.reg_read(regs.UC_ARM64_REG_PC) == BASE+0xd44208
     method = struct.unpack('<I', u.mem_read(CTX+0x460, 4))[0]
@@ -70,6 +73,7 @@ def run(pe, selector, override=None, remapper_initial=None):
     assert u.reg_read(regs.UC_ARM64_REG_PC) == BASE+0xd44350
     remapper = struct.unpack('<I', u.mem_read(CTX+0x478, 4))[0]
     return {'selector': selector, 'override': override, 'method': method,
+            'vbios_enabled': vbios_enabled,
             'sroot_reinit_mode_byte': reinit_mode, 'constructor_defaults': defaults, 'initial_remapper': initial, 'remapper': remapper, 'queries': queried}
 
 
@@ -84,7 +88,9 @@ def main():
             assert result['method'] == (2 if override is None else override if override in (1, 2) else 0)
             assert result['remapper'] == (1 if override is None else override if override in (0, 2) else 1)
             assert result['sroot_reinit_mode_byte'] == int(override == 1)
-            assert result['queries'] == ['RmSocDlaFwLoadMethod', 'RmSocDlaSrootReinitMode', 'RmSocDlaRemapper']
+            assert result['vbios_enabled'] == int(override is None or override == 1)
+            assert result['queries'] == ['RmSocDlaEnableVbios', 'RmSocDlaFwLoadMethod',
+                                         'RmSocDlaSrootReinitMode', 'RmSocDlaRemapper']
             cases.append(result)
     for initial in (0, 2, 0x77):
         result = run(pe, 1, remapper_initial=initial)

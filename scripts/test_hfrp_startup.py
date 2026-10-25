@@ -79,7 +79,7 @@ def main():
         assert not peer.errors, peer.errors
         return code, result
 
-    for stamp in (0, 0x20250210, 0x20250211, 0x20250424, 0x20250425, 0x2025fffe,
+    for stamp in (0, 0x20250210, 0x20250211, 0x20250424, 0x20250425, 0x20251722, 0x2025fffe,
                   0x2025ffff, 0x20260101, 0xffffffff):
         for response in (0x00010300, 0x000105ab, 0x00010600, 0x99020733):
             peer, channel = start(stamp, response)

@@ -12,6 +12,16 @@ initialization path at `0xd38d1c` calls constructor `0x195d6d8`, then stores its
 result at that offset. The constructor allocates and clears 0x250 bytes and
 sets object bookkeeping; it supplies no nonzero frequency/tuning defaults.
 
+HAL+`0x490` is specifically **`RmSocDlaEnableVbios`**, not a generic DVFS
+switch. The original constructor sets it to 1. Replay of registry slice
+`0xd44130..0xd44168` confirms that a missing value preserves 1, an explicit
+value of 1 enables it, and every other successfully read u32 disables it.
+`scripts/emulate_boot_policy.py` covers this alongside boot-method/remapper
+defaults. This does not identify overrides on an actual Windows installation.
+The global initializer gates settings allocation and VBIOS parsing on this
+field. Disabling it to avoid acquiring the board policy is not a validated
+Linux startup configuration.
+
 The initializer checks for a `vbios` property through `0xd3b6b0`. If present,
 `0xd3bab0` builds a buffer from that property and any numbered continuations.
 Otherwise `0xd3d2c0` follows a mapped-memory fallback. Both call `0xd3d010` to

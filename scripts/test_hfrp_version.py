@@ -93,7 +93,7 @@ def main():
         check(stamp, [0xaa, 0xbb], 0x56)
     for stamp in (0x20250211, 0x20250424):
         check(stamp, [1, 3])
-    for stamp in (0x20250425, 0x2025fffe):
+    for stamp in (0x20250425, 0x20251722, 0x2025fffe):
         check(stamp, [1, 5])
     for stamp in (0x2025ffff, 0x20260101, 0xffffffff):
         for response in (0x00010300, 0x000105ab, 0x99020733):
@@ -107,7 +107,7 @@ def main():
     print(json.dumps({'passed': True, 'hardware_access': False, 'kmd_sha256': KMD_SHA256,
                       'original_function': '0xd3da30', 'cases': rows,
                       'limitations': ['Handshake, resource read, query transport, locks, logging and memset are stubbed',
-                                      'Actual HFRP stamp and version are not read from this machine',
+                                      'Stamp 0x20251722 is a captured P16 input; this test performs no physical read or handshake',
                                       'Windows ignores some errors; this is evidence, not recommended Linux behavior']}, indent=2))
 
 

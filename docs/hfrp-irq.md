@@ -363,9 +363,10 @@ where the power callback reads them. The date-like constants above are exact
 numeric comparisons; no build-date interpretation is required for the decoder.
 
 `scripts/test_hfrp_version.py` runs the complete original discovery function
-in 21 cases, including boundary values, response extraction and injected
+in 22 cases, including boundary values, the captured P16 stamp, response extraction and injected
 failures. It stubs the handshake, register accessor, query transport and OS
-helpers. **No live stamp or protocol version has been read from the P16.**
+helpers. A separate read-only capture now supplies the real P16 stamp below;
+the test itself performs no hardware access.
 The handshake itself writes HFRP control registers, so running discovery is
 not merely a read-only hardware query and is not enabled by this work.
 
@@ -605,7 +606,7 @@ Windows. Other versions are rejected. This helper neither chooses a PPS value
 nor installs the required startup configuration. Completion is not proof of
 physical power state. These functions remain outside the live module lists.
 
-`scripts/test_hfrp_startup.py` checks 36 stamp/response combinations through
+`scripts/test_hfrp_startup.py` checks 40 stamp/response combinations through
 the actual C rings and synthetic peer against original ARM64 version discovery.
 For valid versions it compares power packets at four PPS inputs against the
 original Windows policy. Additional checks cover unsupported versions, invalid
@@ -632,7 +633,7 @@ stubbed and recorded. No device is accessed. The default tested order is:
 3. Send command 412 (`SRAM_HOLD`), one byte: 2 for nonzero HAL+`0x474`, else 1.
 4. Invoke HAL+`0x200`, resolved to `0xd456e0`, which sends command 401 (`CONFIG`).
 5. Query command 428 (`GET_VF_CURVE`) and decode its response.
-6. If HAL+`0x490` enables the policy, invoke HAL+`0x208` (`0xd49900`) to send
+6. If HAL+`0x490` (`RmSocDlaEnableVbios`) enables the policy, invoke HAL+`0x208` (`0xd49900`) to send
    command 408 (`SET_POWER_CONTROL_TUNING`) followed by command 407
    (`GET_POWER_DRAW_CAP`). Both names match NVIDIA's L4T command table; the
    four-byte request to 407 does **not** establish that it sets a power cap.
@@ -702,3 +703,85 @@ firmware upload, module reload, boot change or reboot was performed for this
 work. The next step is to obtain the actual VBIOS policy and finish tracing
 cold-start ordering, then review the complete startup sequence before a
 separate hardware attempt.
+
+## Live P16 stamp, read-only capture
+
+On 2026-10-25, `scripts/read_hfrp_stamp.c` read the two u32 registers at
+physical `0x31380000` and `0x31380004`:
+
+```json
+{"physical_base":"0x31380000","stamp":"0x20251722","mode":"0x00000001","register_reads":2,"register_writes":0}
+```
+
+The captured machine was ProArt P16 H7607BA, BIOS H7607BA.300, kernel
+`7.2.8-23-omarchy-p16-asus-npu1`, boot ID
+`413b4af3-8df3-4859-bf42-07eb6b7f0263`. The existing bootstrap driver owned
+NVDA200A:00 and runtime PM reported active. This capture occurred **after**
+the failed variant-1 SROOT attempt; it is not a pristine post-boot baseline.
+The program requires that exact kernel/platform/BIOS, owner, active state and
+ACPI resource range. It maps one page read-only through `/dev/mem` and performs
+exactly two volatile u32 loads. It does not bypass `/dev/mem` protections,
+change runtime PM, reset, handshake or write registers. It is a fixed research
+diagnostic, not a generic discovery tool or an installed service.
+
+The Windows numeric selector maps `0x20251722` to **1.5**, without command 999.
+This is version selection from a real stamp, not a successful transport
+exchange. The value is not interpreted as a calendar date. Both the original
+selector test and the native Linux startup test now include this captured
+input; their handshake/reply peers remain synthetic. The read does not show
+whether the HFRP controller has completed its startup sequence or whether the
+NPU firmware is running. No retained DMA was freed or reused.
+
+## Cold-start dispatch chain
+
+Ghidra and radare2 resolve the previously opaque `outer+0x178` object. The
+HAL allocation constructor `0x195d038` places an interface at `HAL+8`, stores
+that address at `HAL+0x68`, and installs vtables at RVAs `0x108e9a0` and
+`0x108e9b8`. The resource initializer copies `HAL+0x68` to `outer+0x178`.
+The interface thunks subtract eight from their HAL argument and dispatch
+through the main table:
+
+| Outer caller | Interface slot | Thunk RVA | Main slot | Target RVA / role |
+| --- | --- | --- | --- | --- |
+| `0xd39b98` | `0x1d8` | `0x5eee00` | `0x258` | `0xd440d0`, registry/default initialization |
+| `0xd39d38` | `0x1e0` | `0xd3c1b0` | `0x260` | `0xd44710`, gating policy initialization |
+| `0xd39c08` | `0x1f0` | `0x142380` | `0x270` | `0xd44640`, start through HAL callbacks |
+| `0xd39c08`, field `outer+0x310 == 3` | `0x200` | `0x142410` | `0x288` | `0xd43730`, additional setup branch |
+
+`0xd39d38` first invokes `outer+0xb0`, the HFRP startup at `0xd41b50`,
+then gating initialization. `0xd39c08` normally invokes the profile-3 no-op
+at `outer+0xb8`, then the start target. When field `outer+0x310` equals 3,
+it first invokes HFRP startup again and `0xd43730`. That field's actual cold
+value/producer has not been replayed; the conditional branch must not be
+confused with the separately established device-profile value 3.
+
+For HAL 1, `0xd44640` calls HAL+`0x3d8` (a no-op), then HAL+`0xc8`
+(`0xd47700`). The latter invokes the outer power callback `0xd405f0` with
+request mask 7 and guard 0, and only after success enters common loader
+`0xd439c0`. Power failure prevents the loader. Either power or loader failure
+causes `0xd44640` to invoke HAL+`0xd0` (`0xd4a4f0`) and preserve the original
+error. Its cleanup body is not validated by this dispatch test and must not
+be copied as a safe Linux recovery operation.
+
+`scripts/test_cold_start_dispatch.py` executes the original profile/HAL
+callback constructors, wrappers, interface thunks, start target and HAL-1
+loader wrapper. It uses the original vtable bytes and reconstructed object
+bookkeeping. Sixteen cases verify ordering, missing runtime objects, both
+values of the conditional branch and error propagation, including suppression
+of the loader after power failure. Registry, HFRP startup, gating/additional
+setup, power command, common loader and cleanup bodies are explicit recording
+stubs. This complements their separate tests; it is not an integrated boot.
+
+The global initializer `0xd38a88` calls `0xd39b98`, `0xd39d38`, then
+`0xd39c08`. ARM64 instructions at `0xd38e14` show that the return from
+`0xd39d38` is discarded before calling `0xd39c08`. This outer error handling
+is static evidence, not covered by the dispatch replay. A Linux sequence must
+check required startup/policy operations rather than reproduce that omission.
+
+```sh
+venv/bin/python scripts/test_cold_start_dispatch.py
+venv/bin/python scripts/emulate_boot_policy.py
+```
+
+Board VBIOS values, full gating-policy initialization, the conditional setup
+producer and a complete reviewed physical startup path remain outstanding.

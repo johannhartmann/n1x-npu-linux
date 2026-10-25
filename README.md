@@ -51,6 +51,11 @@ replay also recovers mode selection, SRAM/configuration packets, VF decoding
 and tuning, with synthetic policy inputs. The physical startup configuration,
 IRQ roles, live handshake and power-on remain unverified. See
 [HFRP/IRQ evidence](docs/hfrp-irq.md).
+A read-only P16 capture returned HFRP stamp `0x20251722` and mode 1. The
+original Windows selector maps that stamp to protocol 1.5; a live handshake
+and physical NPU firmware boot remain unverified. The cold-start callback
+chain through power-on and the loader is now replayed offline; see
+[cold-start ordering](docs/hfrp-irq.md#cold-start-dispatch-chain).
 The power-policy source is now traced to VBIOS BIT token `l`. A bounded Linux
 table locator and decoder match the original Windows parser on synthetic images;
 the actual machine's policy values still require a matching VBIOS capture.

@@ -24,7 +24,7 @@ TUNING = tuple(0x10203000+i for i in range(9))
 CURVE = ((700, 400), (850, 900), (800, 600))
 
 
-def run(pe, *, version=(1, 5), mode=None, dvfs=True, sram=True,
+def run(pe, *, version=(1, 5), mode=None, vbios_enabled=True, sram=True,
         transport_failure=None, firmware_failure=None, entry=0xd41b50,
         curve=CURVE, override_delays=None):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
@@ -53,7 +53,7 @@ def run(pe, *, version=(1, 5), mode=None, dvfs=True, sram=True,
                            (GLOBAL+0x78, SETTINGS), (HAL+0x200, BASE+0xd456e0),
                            (HAL+0x208, BASE+0xd49900), (BASE+0xe3eaf0, STUB)):
         put(address, value, '<Q')
-    for address, value in ((LINK+8, 1), (HAL+0x490, int(dvfs)), (HAL+0x5a0, 1),
+    for address, value in ((LINK+8, 1), (HAL+0x490, int(vbios_enabled)), (HAL+0x5a0, 1),
                            (HAL+0x5a4, 4), (HAL+0x5a8, 10), (SETTINGS+0xa8, 650000),
                            (SETTINGS+0xac, 500000), (SETTINGS+0xb0, 600000),
                            (SETTINGS+0xbc, 0x12345678), (BASE+0x13ac13c, 7)):
@@ -140,15 +140,15 @@ def main():
     pe = pefile.PE(str(path), fast_load=True)
     rows = []
     for minor in (3, 5, 6):
-        for dvfs in (False, True):
+        for vbios_enabled in (False, True):
             for sram in (False, True):
-                result = run(pe, version=(1, minor), dvfs=dvfs, sram=sram)
+                result = run(pe, version=(1, minor), vbios_enabled=vbios_enabled, sram=sram)
                 commands = [e for e in result['events'] if 'command' in e]
-                config = struct.pack('<HHIIH', 4, 10, 500000 if dvfs else 0, 600000 if dvfs else 0, 1)
+                config = struct.pack('<HHIIH', 4, 10, 500000 if vbios_enabled else 0, 600000 if vbios_enabled else 0, 1)
                 if minor >= 5:
                     config += struct.pack('<6H', 0, 0, 1, 1, 3, 15)
                 expected = [(412, '02' if sram else '01'), (401, config.hex()), (428, '')]
-                if dvfs:
+                if vbios_enabled:
                     expected += [(408, struct.pack('<9I', *TUNING).hex()), (407, '78563412')]
                 if minor >= 5:
                     expected += [(432, '000001'), (432, '010001'), (432, '020001')]
@@ -156,10 +156,10 @@ def main():
                 assert result['status'] == 0 and result['vf_count'] == 3
                 assert result['statistics_cleared']
                 assert result['vf_limits'] == [400000, 900000, 700, 850]
-                assert result['frequency_range_selected'] == ([400000, 900000, 650000] if dvfs else [0, 0, 0])
+                assert result['frequency_range_selected'] == ([400000, 900000, 650000] if vbios_enabled else [0, 0, 0])
                 assert result['events'][:3] == [{'registry': 'RmSocDlaHfrpMode'},
                     {'resource': 2, 'offset': 4, 'value': 1}, {'handshake_version_stub': True}]
-                rows.append({'minor': minor, 'dvfs': dvfs, 'sram': sram, **result})
+                rows.append({'minor': minor, 'vbios_enabled': vbios_enabled, 'sram': sram, **result})
     for mode in (0, 2):
         result = run(pe, mode=mode)
         assert result['mode'] == mode and result['status'] == 0
@@ -190,7 +190,7 @@ def main():
         rows.append({'delay_defaults_slice': True, 'overrides': overrides, **result})
     print(json.dumps({'passed': True, 'hardware_access': False, 'kmd_sha256': KMD_SHA256,
                       'cases': rows, 'limitations': [
-                          'Synthetic DVFS settings, tuning words and curve; no calibrated defaults',
+                          'Synthetic VBIOS settings, tuning words and curve; no calibrated defaults',
                           'OS, resource writer, handshake/version and transport stubbed',
                           'Delay slice starts with w22=1 as observed earlier in its caller',
                           'No physical HFRP configuration or firmware boot attempted']}, indent=2))
