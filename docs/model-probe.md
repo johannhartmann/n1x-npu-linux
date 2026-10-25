@@ -424,8 +424,8 @@ from kind 4, matching the dispatcher load. Contexts and the caller's scratch
 frame are modeled storage because execution stops before the builder uses
 them. No builder or constructor executes in this dispatch slice. The same script
 now probes construction separately below; no instruction generator or
-physical NPU executes. The graph's complete Windows translation
-remains the next unresolved step.
+physical NPU executes. Complete IR construction is checked separately below;
+instruction lowering and firmware output remain unresolved.
 
 ### Original SDP construction and initial builder execution
 
@@ -433,8 +433,8 @@ The same `inspect_windows_mtl_collector.py` now continues beyond the dispatch
 check. It executes original ID-registry constructor `0xb7f40`, the full SDP
 constructor `0x6e34e8`, original object-registry constructor `0x6152e8`, and
 the required IR/graph container constructors. It then enters SDP builder
-`0x6f9928` with the previously verified captured-buffer arguments and stops
-at **`0x6f9a38`**, before subsequent operand/graph translation.
+`0x6f9928` with the previously verified captured-buffer arguments and pauses
+at **`0x6f9a38`** to verify input transfer before continuing below.
 
 The full SDP constructor returns its original object pointer and installs
 final vtable **`0x11664d8`**. The early builder allocates a separate SDP
@@ -458,10 +458,56 @@ Additional runtime modeling is explicit in the JSON output:
   deterministic counter path. No random seed or counter return is fabricated.
 - Atexit registration returns success; teardown callbacks are not executed.
 
-Only the needed registry constructors are called, not the complete Windows
-DLL initializer list. No backend configuration or compiler algorithm is
-replaced with a success stub. Continuing beyond the recorded builder stop in
-an exploratory run reached additional graph processing and a CRT
-`LoadLibraryExW` dependency while emitting diagnostics; that path is not
-part of the passing test and remains unresolved. The early builder result
-must not be described as a successfully translated model or a loadable.
+Only the needed registry and CRT initializers are called, not the complete
+Windows DLL initializer list. No backend configuration or compiler algorithm
+is replaced with a success stub.
+
+### Complete SDP builder and IR graph construction
+
+The verifier now continues the original builder through its return at
+`0x6fa024`, with return value **0**. It then uses fresh IR/graph storage to
+execute the complete original IR construction routine **`0x70e910`**, including
+its dispatch and postprocessing. That routine returns the supplied graph
+pointer. Both paths produce the same checked topology:
+
+```text
+0_0 (input operand) -> layer-anon-0 (SDP) -> 1_0 (output operand)
+```
+
+Checks cover the three pointers in the graph's vector at +0xe0, node/edge
+map counts (3/2), successful original edge insertion, and original node lookup
+`0x622bf0`. The two operand objects have vtable RVA `0x11c56c0`. Their 248-byte
+descriptors at +0x1b8 match captured kind-3 data at offsets 0 and 0x2e8 exactly.
+The SDP's four operand ID fields at +0x18e8 are input ID, 0, 0, output ID;
+the recorded edges are input-to-SDP and SDP-to-output. Node names are generated
+by the original C++ string/stream code and checked, not supplied by a shim.
+The SDP surface and common-operation copies remain byte-exact after completion.
+
+The runtime obstacle was incomplete CRT initialization. Original initializer
+`0xf190e0` installs the existing static C-locale object `0x18ac930` into global
+`0x1a19138`. Without it, locale updater `0xf26f98` reaches abort `0xf11b30`;
+this is not evidence of an unsupported NPU operation. Original heap initializer
+`0xf267d0` and FLS initializers `0xf1dce0` / `0xf2fa98` also execute. The earlier
+description of the dependency as merely diagnostic output was inaccurate:
+the stringstream builds operand names needed in the graph.
+
+The additional Windows API model is deliberately limited:
+
+- Import slots are bound by their actual PE import names. Heap allocations
+  require the modeled process-heap handle; freed addresses are checked and
+  retained without reuse. FLS access requires an allocated slot.
+- Library handles are synthetic. Only the enumerated optional CRT capability
+  queries are allowed. Optional extended locale APIs and `FlsGetValue2` return
+  unavailable (error 127), so original fallback code executes. The recorded
+  `AreFileApisANSI` address is supplied but not called in this probe.
+- Critical sections and SRW operations use a single-thread model; pointer
+  encoding is identity. VirtualProtect is modeled against the already RWX PE
+  mapping. No host library, filesystem, driver, or Windows API is invoked.
+- Atexit/FLS cleanup callbacks are not executed. This is not a complete Windows
+  process model. Unicorn's ARM64 MAX CPU model supports the original LDADD
+  instruction used in the CRT path.
+
+This establishes **IR construction for the one captured FP16 ReLU graph**.
+It does not establish full backend pretranslation (`0x624630`), instruction
+lowering/translation (`0x624eb0`), a serialized N1X loadable, firmware acceptance,
+or physical inference. Those are separate remaining boundaries.

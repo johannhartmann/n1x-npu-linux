@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Replay original Windows MTL input collection using captured ReLU buffers.
 
-Original collector, dispatch, SDP constructor and early builder execute with
-explicit allocator, memcpy, single-thread synchronization and CRT shims.
-No host OS call, complete graph translation or device operation executes.
+Original collector, SDP builder and IR graph construction execute with explicit
+Windows/CRT models. This is an IR check, not instruction lowering, a loadable,
+or device execution. No host DLL or host OS call is dispatched.
 """
 import hashlib,json,struct
+from collections import Counter
 import pefile
 from unicorn import Uc,UC_ARCH_ARM64,UC_MODE_ARM,UC_HOOK_CODE
 from unicorn import arm64_const as r
@@ -28,6 +29,7 @@ def main():
         buffers[kind]=data
     pe=pefile.PE(str(path));base=pe.OPTIONAL_HEADER.ImageBase
     image=pe.get_memory_mapped_image();u=Uc(UC_ARCH_ARM64,UC_MODE_ARM)
+    u.ctl_set_cpu_model(r.UC_CPU_ARM64_MAX)
     u.mem_map(base,(len(image)+4095)&~4095);u.mem_write(base,image)
     heap,stack,stop,teb=0x40000000,0x41000000,0x42000000,0x43000000
     u.mem_map(heap,0x100000);u.mem_map(stack,0x40000)
@@ -51,45 +53,126 @@ def main():
     struct.pack_into('<Q',descriptor,48,pointers[4])
     u.mem_write(common,bytes(descriptor))
     u.mem_write(vector,struct.pack('<3Q',output,output,output+0x9f60))
-    for i,rva in enumerate((0x1052088,0x1052090,0x1052098)):
-        u.mem_write(base+rva,struct.pack('<Q',stop+0x100+i*4))
-    u.mem_write(base+0x10520c8,struct.pack('<Q',stop+0x114))
-    copies=[]
+    import_names = (
+        'ReleaseSRWLockExclusive', 'AcquireSRWLockExclusive', 'WakeAllConditionVariable',
+        'GetCurrentThreadId', 'LoadLibraryExW', 'GetProcAddress', 'FreeLibrary',
+        'EnterCriticalSection', 'LeaveCriticalSection', 'VirtualProtect',
+        'HeapAlloc', 'HeapFree', 'EncodePointer', 'GetLastError', 'SetLastError',
+        'FlsAlloc', 'FlsGetValue', 'FlsSetValue', 'FlsFree', 'GetProcessHeap',
+    )
+    import_stubs={name:stop+0x100+4*i for i,name in enumerate(import_names)}
+    import_stubs['AreFileApisANSI']=stop+0x200
+    found=set()
+    for dll in pe.DIRECTORY_ENTRY_IMPORT:
+        for entry in dll.imports:
+            name=entry.name.decode() if entry.name else ''
+            if name in import_stubs:
+                u.mem_write(entry.address,struct.pack('<Q',import_stubs[name]));found.add(name)
+    assert found==set(import_stubs)
+    stub_names={address:name for name,address in import_stubs.items()}
+    optional_functions={
+        'api-ms-win-core-fibers-l1-1-2': {'FlsGetValue2'},
+        'api-ms-win-core-string-l1-1-0': {'CompareStringEx'},
+        'api-ms-win-core-localization-l1-2-1': {
+            'EnumSystemLocalesEx','GetLocaleInfoEx','GetUserDefaultLocaleName',
+            'IsValidLocaleName','LCMapStringEx','LocaleNameToLCID'},
+        'api-ms-win-core-datetime-l1-1-1': {'GetDateFormatEx','GetTimeFormatEx'},
+        'api-ms-win-core-localization-obsolete-l1-2-0': {'LCIDToLocaleName','LocaleNameToLCID'},
+        'kernel32': {'AreFileApisANSI'},
+    }
+    modules={};fls={};fls_callbacks={};last_error=0
     allocation_cursor=heap+0x60000
-    shims={}
-    def observed(name):shims[name]=shims.get(name,0)+1
-    def hook(uc,address,size,user):
+    allocations={};retired=set();copies=[];shims=Counter();queries=[]
+    graph_edges=[]
+    process_heap=0x12340000  # An opaque handle, never dereferenced.
+    def allocate(n,zero=False):
         nonlocal allocation_cursor
-        if address==stop+0x114:
-            observed('GetCurrentThreadId=1')
-            uc.reg_write(r.UC_ARM64_REG_X0,1)
-            uc.reg_write(r.UC_ARM64_REG_PC,uc.reg_read(r.UC_ARM64_REG_LR));return
-        if address in (stop+0x100,stop+0x104,stop+0x108):
-            observed('single-thread SRW synchronization')
-            uc.reg_write(r.UC_ARM64_REG_PC,uc.reg_read(r.UC_ARM64_REG_LR));return
-        if address==base+0xf02e08:
-            observed('atexit registration; callbacks not executed')
+        assert 0<n<0x10000 and allocation_cursor+n<heap+0x100000
+        ptr=allocation_cursor;allocation_cursor+=(n+15)&~15
+        u.mem_write(ptr,(b'\0' if zero else b'\xa5')*n)
+        allocations[ptr]=n
+        return ptr
+    def retire(ptr):
+        if ptr:
+            assert ptr in allocations and ptr not in retired,hex(ptr)
+            retired.add(ptr)  # No reuse; emulator exit releases all storage.
+    def cstring(ptr,wide=False):
+        width=2 if wide else 1;value=bytearray()
+        for i in range(256):
+            char=bytes(u.mem_read(ptr+i*width,width))
+            if char==b'\0'*width:return value.decode('utf-16-le' if wide else 'ascii')
+            value.extend(char)
+        raise AssertionError('Unterminated runtime API name')
+    def hook(uc,address,size,user):
+        nonlocal last_error
+        if address==base+0x61e1b0:
+            graph_edges.append(struct.unpack('<2I',uc.mem_read(uc.reg_read(r.UC_ARM64_REG_X1),8)))
+        if address==base+0x61e298:
+            assert uc.reg_read(r.UC_ARM64_REG_W23)==0,'Original edge insertion failed'
+        name=stub_names.get(address)
+        if name:
+            shims[name]+=1
+            x0,x1,x2,x3=(uc.reg_read(reg) for reg in (r.UC_ARM64_REG_X0,r.UC_ARM64_REG_X1,r.UC_ARM64_REG_X2,r.UC_ARM64_REG_X3))
+            result=x0
+            if name in ('ReleaseSRWLockExclusive','AcquireSRWLockExclusive',
+                        'WakeAllConditionVariable','EnterCriticalSection','LeaveCriticalSection'):
+                pass  # Explicit single-thread model; not a Windows lock implementation.
+            elif name=='GetCurrentThreadId':result=1
+            elif name=='GetProcessHeap':result=process_heap
+            elif name=='LoadLibraryExW':
+                module=cstring(x0,wide=True)
+                assert module in optional_functions and x1==0
+                if module not in modules:modules[module]=0x1234+len(modules)
+                result=modules[module]
+            elif name=='GetProcAddress':
+                module=next(key for key,value in modules.items() if value==x0)
+                function=cstring(x1);assert function in optional_functions[module],(module,function)
+                queries.append(dict(module=module,function=function))
+                result=import_stubs['AreFileApisANSI'] if function=='AreFileApisANSI' else 0
+                if not result:last_error=127  # ERROR_PROC_NOT_FOUND: original fallback executes.
+            elif name=='AreFileApisANSI':result=1
+            elif name=='FreeLibrary':
+                assert x0 in modules.values();result=1
+            elif name=='VirtualProtect':
+                assert base<=x0 and 0<x1 and x0+x1<=base+len(image)
+                uc.mem_write(x3,struct.pack('<I',4));result=1  # PE mapping is already RWX.
+            elif name=='HeapAlloc':
+                assert x0==process_heap and x1 in (0,8)
+                result=allocate(x2,zero=bool(x1&8))
+            elif name=='HeapFree':
+                assert x0==process_heap and x1==0
+                retire(x2);result=1
+            elif name=='EncodePointer':pass  # Identity encoding in this isolated model.
+            elif name=='GetLastError':result=last_error
+            elif name=='SetLastError':last_error=x0&0xffffffff
+            elif name=='FlsAlloc':
+                assert base<=x0<base+len(image)
+                result=max(fls,default=0)+1;fls[result]=0;fls_callbacks[result]=x0-base
+            elif name in ('FlsGetValue','FlsSetValue','FlsFree'):
+                assert x0 in fls,('Uninitialized FLS slot',x0)
+                if name=='FlsGetValue':result=fls[x0];last_error=0
+                elif name=='FlsSetValue':fls[x0]=x1;result=1
+                else:del fls[x0];result=1
+            else:raise AssertionError(name)
+            uc.reg_write(r.UC_ARM64_REG_X0,result)
+        elif address==base+0xf02e08:
+            shims['atexit registration; callbacks not executed']+=1
             uc.reg_write(r.UC_ARM64_REG_X0,0)
-            uc.reg_write(r.UC_ARM64_REG_PC,uc.reg_read(r.UC_ARM64_REG_LR));return
-        if address==base+0xf0c6b8:
-            observed('getenv URID_RANDOM unset')
-            assert bytes(uc.mem_read(uc.reg_read(r.UC_ARM64_REG_X0),12))==b'URID_RANDOM\0'
+        elif address==base+0xf0c6b8:
+            shims['getenv URID_RANDOM unset']+=1
+            assert cstring(uc.reg_read(r.UC_ARM64_REG_X0))=='URID_RANDOM'
             uc.reg_write(r.UC_ARM64_REG_X0,0)
-            uc.reg_write(r.UC_ARM64_REG_PC,uc.reg_read(r.UC_ARM64_REG_LR));return
-        if address in (base+0xf028b0,base+0xf02908):
-            observed('operator new' if address==base+0xf028b0 else 'operator delete; retained until emulator exit')
-            if address==base+0xf028b0:
-                n=uc.reg_read(r.UC_ARM64_REG_X0);assert 0<n<0x10000,n
-                assert allocation_cursor+n<heap+0x100000
-                ptr=allocation_cursor;allocation_cursor+=(n+15)&~15
-                uc.mem_write(ptr,b'\xa5'*n);uc.reg_write(r.UC_ARM64_REG_X0,ptr)
-            uc.reg_write(r.UC_ARM64_REG_PC,uc.reg_read(r.UC_ARM64_REG_LR));return
-        if address!=base+0x1200:return
-        dst,src,n=(uc.reg_read(reg) for reg in (r.UC_ARM64_REG_X0,r.UC_ARM64_REG_X1,r.UC_ARM64_REG_X2))
-        assert 0<=n<=0x9f60
-        if n:uc.mem_write(dst,bytes(uc.mem_read(src,n)))
-        copies.append(n)
-        uc.reg_write(r.UC_ARM64_REG_X0,dst)
+        elif address in (base+0xf028b0,base+0xf02908):
+            shims['operator new' if address==base+0xf028b0 else 'operator delete; no reuse']+=1
+            ptr=uc.reg_read(r.UC_ARM64_REG_X0)
+            if address==base+0xf028b0:uc.reg_write(r.UC_ARM64_REG_X0,allocate(ptr))
+            else:retire(ptr)
+        elif address==base+0x1200:
+            dst,src,n=(uc.reg_read(reg) for reg in (r.UC_ARM64_REG_X0,r.UC_ARM64_REG_X1,r.UC_ARM64_REG_X2))
+            assert 0<=n<=0x9f60
+            if n:uc.mem_write(dst,bytes(uc.mem_read(src,n)))
+            copies.append(n);uc.reg_write(r.UC_ARM64_REG_X0,dst)
+        else:return
         uc.reg_write(r.UC_ARM64_REG_PC,uc.reg_read(r.UC_ARM64_REG_LR))
     u.hook_add(UC_HOOK_CODE,hook)
     for reg,value in ((r.UC_ARM64_REG_X0,0),(r.UC_ARM64_REG_X1,common),(r.UC_ARM64_REG_X2,vector),
@@ -121,10 +204,15 @@ def main():
         for reg,value in zip((r.UC_ARM64_REG_X0,r.UC_ARM64_REG_X1,r.UC_ARM64_REG_X2,r.UC_ARM64_REG_X3,
                               r.UC_ARM64_REG_X4,r.UC_ARM64_REG_X5,r.UC_ARM64_REG_X6),args):u.reg_write(reg,value)
         u.reg_write(r.UC_ARM64_REG_SP,stack+0x40000);u.reg_write(r.UC_ARM64_REG_LR,stop)
-        u.emu_start(base+address,until,count=200000)
+        u.emu_start(base+address,until,count=2000000)
         assert u.reg_read(r.UC_ARM64_REG_PC)==until
         return u.reg_read(r.UC_ARM64_REG_X0)
     # Call actual registry constructors, not the whole DLL/CRT initializer list.
+    assert invoke(0xf267d0)==1
+    assert invoke(0xf190e0)==1
+    assert struct.unpack('<Q',u.mem_read(base+0x1a19138,8))[0]==base+0x18ac930
+    assert invoke(0xf1dce0)==1
+    assert invoke(0xf2fa98)==1
     invoke(0xb7f40,base+0x18cb7d0)
     assert invoke(0x6e34e8,heap+0x50000)==heap+0x50000
     assert struct.unpack('<Q',u.mem_read(heap+0x50000,8))[0]==base+0x11664d8
@@ -141,21 +229,67 @@ def main():
     assert bytes(u.mem_read(builder_object+0x12f0,156))==buffers[2][:156]
     assert struct.unpack('<Q',u.mem_read(builder_object,8))[0]==base+0x11664d8
 
+    u.emu_start(base+0x6f9a38,stop,count=1000000)
+    assert u.reg_read(r.UC_ARM64_REG_PC)==stop
+    assert u.reg_read(r.UC_ARM64_REG_X0)==0
+
+    def qword(ptr):return struct.unpack('<Q',u.mem_read(ptr,8))[0]
+    def dword(ptr):return struct.unpack('<I',u.mem_read(ptr,4))[0]
+    def node_name(ptr):
+        n,capacity=struct.unpack('<2Q',u.mem_read(ptr+0x90,16))
+        assert n<256
+        return bytes(u.mem_read(qword(ptr+0x80) if capacity>=16 else ptr+0x80,n)).decode('ascii')
+    def verify_graph(graph,edges):
+        begin,end,capacity=struct.unpack('<3Q',u.mem_read(graph+0xe0,24))
+        assert end-begin==24 and end<=capacity
+        sdp,source,dest=struct.unpack('<3Q',u.mem_read(begin,24))
+        assert qword(sdp)==base+0x11664d8
+        assert qword(source)==qword(dest)==base+0x11c56c0
+        assert bytes(u.mem_read(sdp+0x1b8,4376))==buffers[1]
+        assert bytes(u.mem_read(sdp+0x12f0,156))==buffers[2][:156]
+        for ptr,offset in ((source,0),(dest,0x2e8)):
+            assert bytes(u.mem_read(ptr+0x1b8,248))==buffers[3][offset:offset+248]
+        source_id,sdp_id,dest_id=[dword(ptr+8) for ptr in (source,sdp,dest)]
+        assert edges==[(source_id,sdp_id),(sdp_id,dest_id)]
+        assert struct.unpack('<4I',u.mem_read(sdp+0x18e8,16))==(source_id,0,0,dest_id)
+        assert [node_name(ptr) for ptr in (source,sdp,dest)]==['0_0','layer-anon-0','1_0']
+        for ptr in (source,sdp,dest):
+            assert invoke(0x622bf0,graph,dword(ptr+8))==ptr  # Original graph lookup.
+        assert qword(graph+0x18)==3 and qword(graph+0x58)==2
+        return dict(nodes=[dict(id=dword(ptr+8),name=node_name(ptr),vtable_rva=hex(qword(ptr)-base))
+                           for ptr in (source,sdp,dest)],edges=edges,
+                    operand_bytes_verified=248,operand_source_offsets=[0,0x2e8])
+    builder_graph=verify_graph(graph_object,list(graph_edges))
+    # Re-enter through the complete original IR routine with fresh contexts.
+    # This also exercises its original graph constructor and postprocessing.
+    ir2,graph2=heap+0xa00,heap+0xc00
+    invoke(0x614da8,ir2+8)
+    invoke(0x614f68,ir2+0x48)
+    invoke(0x614f68,ir2+0x88)
+    u.mem_write(ir2,struct.pack('<Q',base+0x114e968))
+    graph_edges.clear()
+    assert invoke(0x70e910,ir2,graph2,common)==graph2
+    ir_graph=verify_graph(graph2,list(graph_edges))
     print(json.dumps(dict(passed=True,hardware_access=False,windows_sha256=digest,
         collector_rva='0x756630',operation_count=1,record_bytes=len(record),
         dispatch=dict(surface_type_offset='0x1004',surface_type=2,builder_rva='0x6f9928',
                       constructor_rva='0x6e34e8',constructor_label='MtlEngineSdp',
                       original_dispatch_executed=True,original_constructor_completed=True,
-                      builder_stopped_at_rva="0x6f9a38",builder_completed=False,
+                      builder_checkpoint_rva="0x6f9a38",builder_completed=True,builder_return=0,
                       verified_object_regions=[dict(offset="0x1b8",bytes=4376,source_kind=1),
                                                dict(offset="0x12f0",bytes=156,source_kind=2)],
                       verified_argument_source_kinds=[None,2,1,3,0,4,None]),
-        original_stack_helpers_executed=True,memcpy_shim_sizes=copies,runtime_shims=shims,
+        original_stack_helpers_executed=True,memcpy_size_counts=dict(Counter(copies)),runtime_shims=shims,
+        crt_initializers=["0xf267d0","0xf190e0","0xf1dce0","0xf2fa98"],
+        optional_api_queries=queries,fls_cleanup_callbacks_not_executed=fls_callbacks,
+        builder_graph=builder_graph,ir_graph=dict(rva="0x70e910",completed=True,**ir_graph),
         verified_regions=[dict(offset=0,bytes=236,source_kind=2),dict(offset=240,bytes=34816,source_kind=3),
                           dict(offset=35056,bytes=4376,source_kind=1)],
         untouched_regions=[dict(offset=236,bytes=4),dict(offset=39432,bytes=1368)],
         limitations=['Collector uses a preallocated record; builder graph vectors execute original growth with modeled allocation',
                      'Copied buffers match the captured native input, not translated firmware output',
+                     'Windows APIs use a single-thread C-locale model; optional locale APIs are unavailable',
+                     'CRT teardown is not executed and freed storage is not reused',
                      'No backend configuration, instruction lowering, loadable or inference is established']),indent=2))
 
 
