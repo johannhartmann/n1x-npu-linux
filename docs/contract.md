@@ -1832,3 +1832,15 @@ payload after erasing host memory. See [native phase and qualification
 limits](linux-backend.md#optional-windows-fallback-lpwr-configuration-import-built-not-yet-run).
 No physical units, live Windows provider value, native readback, working IRQ
 path, full initialization or numerical inference is established by this step.
+
+
+## HAL-1 successful bypass-task completion path
+
+The original raw HAL-1 executor implements byte-41 flag bit 0 as BYPASS_EXEC,
+matching the independently compiled L4T descriptor field. A new single-task
+C serializer reaches original postactions, dequeue and SWGEN0 after command-7
+acceptance under modeled reset/FIFO/DMA/IRQ. Four fence values and three error
+controls establish that acceptance and even a written fence alone do not mean
+successful task completion. See [bypass path, exact instruction addresses,
+DMA sequence and qualification limits](bypass-task.md). This runs no network
+or accelerator computation and does not establish physical DMA quiescence.

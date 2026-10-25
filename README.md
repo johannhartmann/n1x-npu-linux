@@ -229,3 +229,10 @@ after default config import. Its payload matches the original Windows builder
 and roundtrips through unmodified raw HAL-1 code under modeled DMA/IRQ effects.
 It remains off by default and physically untested; this is not a working
 inference or power-management driver.
+
+
+A [single-task bypass descriptor](docs/bypass-task.md) now exercises the original
+raw HAL-1 scheduler's successful fence/dequeue/SWGEN0 path in emulation, alongside
+execution-error, postaction-error and descriptor-rejection controls. It is a
+completion-transport qualification primitive; it performs no inference and is
+not yet exposed as a native Linux task-submission interface.

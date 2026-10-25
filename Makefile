@@ -76,6 +76,7 @@ test-vendor: test
 	venv/bin/python scripts/test_command.py
 	venv/bin/python scripts/emulate_task_header_checks.py
 	venv/bin/python scripts/test_task_descriptor.py
+	venv/bin/python scripts/test_bypass_task.py
 	venv/bin/python scripts/emulate_firmware_commands.py
 	venv/bin/python scripts/test_response.py
 	venv/bin/python scripts/test_response_decode.py

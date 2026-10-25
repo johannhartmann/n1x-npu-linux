@@ -70,6 +70,27 @@ int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
     return 0;
 }
 
+int n1x_dla_build_bypass_fenced_task_v2(__u8 *out, size_t out_size,
+                                       const struct n1x_dla_task_args *args,
+                                       __u64 fence_address, __u32 fence_value)
+{
+    __u8 descriptor[N1X_DLA_FENCED_TASK_V2_BYTES];
+    unsigned int i;
+    int err;
+
+    /* Restrict this qualification helper to a single task, not a chain. */
+    if (!out || !args || out_size < sizeof(descriptor) || args->next)
+        return -EINVAL;
+    err = n1x_dla_build_fenced_task_v2(descriptor, sizeof(descriptor), args,
+                                     fence_address, fence_value);
+    if (err)
+        return err;
+    descriptor[41] = 1; /* Recovered HAL-1 flag / L4T DLA_DESC_FLAGS_BYPASS_EXEC. */
+    for (i = 0; i < sizeof(descriptor); i++)
+        out[i] = descriptor[i];
+    return 0;
+}
+
 size_t n1x_dla_address_list_bytes(__u16 count)
 {
     if (!count || count > 512)

@@ -845,3 +845,17 @@ or proof that the opaque SROOT image executes identical code.
 Both kernel module builds pass; the npu1 artifact and source manifest are in
 `results/npu1-bootstrap-lpwr-build/`. No module or firmware has been installed
 by this addition, and no LPWR command has been sent to hardware.
+
+
+### Single-task bypass descriptor for completion qualification
+
+`n1x_dla_build_bypass_fenced_task_v2()` adds the recovered byte-41 flag bit 0
+to the fenced descriptor and rejects task chains. Original raw HAL-1 firmware
+now runs this descriptor from reset/trap through scheduler success, terminal
+fence write, dequeue and SWGEN0 in emulation. The same invalid zero network
+fails with the flag removed. A malformed postaction writes the fence but
+subsequently reports failure without SWGEN0, preventing the inference that
+fence equality alone means success. See [exact path and tests](bypass-task.md).
+This serializer is not a native submission UAPI; the bootstrap module still
+sends no task. Physical IRQ association, error/recovery ownership and numerical
+execution remain open.

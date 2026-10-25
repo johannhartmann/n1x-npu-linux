@@ -31,6 +31,21 @@ int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
 int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
                                 const struct n1x_dla_task_args *args,
                                 __u64 fence_address, __u32 fence_value);
+/* Single-task transport qualification descriptor: same fenced v2 layout,
+ * with flags bit 0 at byte 41 set (BYPASS_EXEC). The raw HAL-1 executor skips
+ * network/instruction execution, but still runs scheduler/postactions and can
+ * touch control registers. This does not calculate an inference result.
+ * No chains are accepted; all basic address/alignment rules still apply even
+ * though the recovered bypass path does not fetch the network/address list.
+ * Fence change alone is insufficient: malformed postactions can write it and
+ * then fail. Capture execution errors and SWGEN0/deadline as well. This neither
+ * submits a task nor authorizes freeing buffers; caller owns visibility,
+ * complete DMA lifetime and physical completion/quiescence qualification.
+ * Output unchanged on invalid input, including overlapping args/output.
+ */
+int n1x_dla_build_bypass_fenced_task_v2(__u8 *out, size_t out_size,
+                                       const struct n1x_dla_task_args *args,
+                                       __u64 fence_address, __u32 fence_value);
 /* Cached-path address list (1..512 entries), padded for T35x DMA reads;
  * the same layout also passes HAL-1, which requests exactly count*8 bytes.
  * Source and output must not overlap. DMA mapping/alignment, model index bounds
