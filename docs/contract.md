@@ -1920,3 +1920,17 @@ controls fail as expected. See [structure, digest boundaries and trust
 limits](sroot-envelope.md). Embedded-key consistency does not prove a device
 trust root, transport acceptance or raw HAL-1 executable equivalence. No
 production authentication policy or kernel parser is changed.
+
+
+## Diagnostic scheduler's missing network-extension contract
+
+Five DB records link the original diagnostic setup/trigger/result IL blocks,
+including result records 2/4. The full fixture's raw HAL-1 network fetch reads
+256 bytes from a blob initialized for only 128; its engine IRQ field words
++cc/+d0/+d4/+d8 come from the fixture's synthetic zero tail. Two original-trap
+IRQ injections reach the real engine handler and mret, clear the IRQ and return
+to the same active wait without progress. See [record linkage, evidence and
+unresolved explanations](diagnostic-contract.md#scheduler-record-order-and-zero-extension-boundary).
+This tightens the qualification limit: all nine projected allocations plus
+modeled IRQ notification are not proof of a complete valid runtime network.
+No replacement suffix or firmware state has been invented to force completion.

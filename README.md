@@ -254,3 +254,11 @@ The default SROOT image now has an [offline signed-envelope audit](docs/sroot-en
 its embedded-key signature and both complete body digests verify. Chip trust,
 physical loading and equivalence to the separately emulated raw HAL-1 code
 remain unproved; the bootstrap's exact whole-image hash policy is unchanged.
+
+
+The diagnostic scheduler audit exposes an unresolved [network-extension
+contract](docs/diagnostic-contract.md#scheduler-record-order-and-zero-extension-boundary):
+raw firmware reads IRQ fields beyond the blob's 128 initialized network bytes.
+The fixture's zero extension does not make progress under original-handler IRQ
+injections. Runtime materialization/ABI compatibility must be resolved before
+this fixture can establish a completed diagnostic; no guessed suffix is used.

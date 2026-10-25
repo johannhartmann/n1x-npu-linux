@@ -142,3 +142,55 @@ The source of register 0x13124, its relationship to the positive/negative
 buffers, hardware comparison/CRC semantics, actual branch selection and
 physical diagnostic correctness are still unresolved. These software predicates
 alone do not define a golden numerical inference result.
+
+
+## Scheduler record order and zero-extension boundary
+
+The DB blob contains five 64-byte records at offset 256. Their IDs and first
+IL slices are observed directly:
+
+| Record ID | DB byte offset | IL address-list index | IL byte offset | Instructions |
+| --- | --- | --- | --- | --- |
+| 0 | 256 | 1 | 0x1e200 | 18 |
+| 1 | 320 | 1 | 0x1e400 | 1 |
+| 2 | 384 | 1 | 0x1e500 | 7 |
+| 3 | 448 | 1 | 0x1e600 | 1 |
+| 4 | 512 | 1 | 0x1e700 | 7 |
+
+Thus the result blocks studied above are referenced by records 2 and 4. This
+establishes their table linkage, not that a completed normal execution has
+reached them. The existing full nine-buffer fixture still stops after fetching
+record 0 and its configuration data, at engine wait return 0x101424.
+
+`scripts/test_diagnostic_scheduler_boundary.py` now checks the limitation more
+directly. It builds the real C fenced descriptor, starts the original firmware
+from reset/trap and runs the full existing fixture to that wait. Its original
+network fetch reads **256 bytes**, although task0-addr0 supplies only **128
+initialized bytes**. The fixture intentionally supplies zero padding for the
+rest. Original firmware uses the same local network buffer at 0x185740, and
+its engine IRQ handler reads offset/mask words at **+0xcc/+0xd0/+0xd4/+0xd8**.
+Those four words all originate in that synthetic zero extension.
+
+Two separate cases inject modeled firmware IRQ bits 0x400 and 0x800 through the
+**original trap**, rather than directly calling an engine handler or changing
+firmware state counters. Both enter original handler 0x1025e6, clear the pending
+IRQ, return through original mret and resume at 0x101424. Both return to the
+same wait with engine state 1, five remaining records, an active queue, an
+unchanged fence and no completion/error mailbox beyond initial 0x702. No code
+or counter is patched. Injecting a notification alone therefore does not make
+this fixture a complete executable diagnostic. The zero masks prevent those
+modeled reads from reporting the expected completion condition; other missing
+conditions have not been excluded.
+
+This is **not** evidence that the real Windows diagnostic is malformed. Runtime
+network materialization/patching, format/version compatibility, or a difference
+between the opaque SROOT executable and the raw research image remain possible
+explanations. A guessed register/mask suffix must not be silently appended to
+claim successful inference. The next reverse-engineering work must identify
+that missing contract or qualify the actual SROOT-loaded executable's ABI.
+The fixed Linux bypass phase does not rely on these diagnostic network fields;
+it still does not establish model execution.
+
+The two IRQ bits in this test are firmware-local modeled sources. They neither
+identify GSI 463/800 nor prove physical GIC delivery or hardware completion.
+No real IRQ, engine register or boot configuration is changed by this test.
