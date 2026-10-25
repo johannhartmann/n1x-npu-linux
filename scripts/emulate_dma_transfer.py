@@ -8,6 +8,7 @@ from pathlib import Path
 import pefile
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE
 from unicorn import arm64_const as regs
+from arm64_stack_cookie import install as install_stack_cookie
 from extract_firmware import KMD_SHA256
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +32,7 @@ def run(pe, blob, fail_slot=None, busy=False):
                        (STACK, 0x10000), (STUBS, 0x1000), (DMA, 0x20000)):
         uc.mem_map(addr, size)
     uc.mem_write(BASE+0xd4bf80, pe.get_data(0xd4bf80, 0x6bc))
-    helpers = (0xd57b60, 0xd57b80, 0xce4b0, 0xd39160, 0xd3b0f8,
+    helpers = (0xce4b0, 0xd39160, 0xd3b0f8,
                0xcd148, 0xccee8, 0xd3b298, 0xd3b328, 0xd4cad8)
     for rva in helpers:
         uc.mem_write(BASE+rva, RET)
@@ -88,6 +89,7 @@ def run(pe, blob, fail_slot=None, busy=False):
             tail.append((reg(1), reg(2), reg(3), reg(4)))
             result()
 
+    install_stack_cookie(uc, pe)
     uc.hook_add(UC_HOOK_CODE, hook)
     for i, value in enumerate((0, OBJ, FW, HEADER)):
         uc.reg_write(getattr(regs, f'UC_ARM64_REG_X{i}'), value)

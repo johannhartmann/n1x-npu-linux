@@ -6,6 +6,7 @@ import struct
 import pefile
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE
 from unicorn import arm64_const as regs
+from arm64_stack_cookie import install as install_stack_cookie
 from extract_firmware import KMD_SHA256
 from emulate_firmware_commands import ROOT
 
@@ -24,7 +25,7 @@ def run(pe, hardware_id, property_error=False):
     for address, size in ((CTX, 0x1000), (IDS, 0x1000), (STACK, 0x10000), (STUB, 0x1000)):
         u.mem_map(address, size)
     ret = bytes.fromhex('c0035fd6')
-    for rva in (0xd57b60, 0xd57b80, 0xed2d0, 0xed4e0, 0xcd148):
+    for rva in (0xed2d0, 0xed4e0, 0xcd148):
         u.mem_write(BASE+rva, ret)
     for address in (STUB, STUB+0x10):
         u.mem_write(address, ret)
@@ -65,6 +66,7 @@ def run(pe, hardware_id, property_error=False):
             at = haystack.find(needle)
             u.reg_write(regs.UC_ARM64_REG_X0, 0 if at < 0 else reg(0)+at*2)
 
+    install_stack_cookie(u, pe)
     u.hook_add(UC_HOOK_CODE, hook)
     u.reg_write(regs.UC_ARM64_REG_X1, CTX)
     u.reg_write(regs.UC_ARM64_REG_SP, STACK+0x8000)

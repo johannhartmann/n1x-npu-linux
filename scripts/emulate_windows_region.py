@@ -13,6 +13,7 @@ import struct
 import pefile
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE
 from unicorn import arm64_const as regs
+from arm64_stack_cookie import install as install_stack_cookie
 from extract_firmware import KMD_SHA256
 from emulate_firmware_commands import ROOT, HOST, BLOB_HASH, run as run_firmware
 
@@ -33,7 +34,7 @@ def build(pe, region, dma=HOST, offset=256, size=512, provider_error=0, send_err
                             (STACK, 0x10000), (STUB, 0x1000)):
         u.mem_map(address, length)
     ret = bytes.fromhex('c0035fd6')
-    calls = (0xd57b60, 0xd57b80, 0xd39160, 0xd38a38, 0xd3b298,
+    calls = (0xd39160, 0xd38a38, 0xd3b298,
              0xccee8, 0xce440, 0xce4b0, 0xd38758)
     for rva in calls:
         u.mem_write(BASE+rva, ret)
@@ -68,6 +69,7 @@ def build(pe, region, dma=HOST, offset=256, size=512, provider_error=0, send_err
         elif address in (BASE+0xd3b298, BASE+0xd38758, BASE+0xce440, BASE+0xce4b0):
             u.reg_write(regs.UC_ARM64_REG_X0, 0)
 
+    install_stack_cookie(u, pe)
     u.hook_add(UC_HOOK_CODE, hook)
     for register, value in ((regs.UC_ARM64_REG_X0, 0), (regs.UC_ARM64_REG_X1, CTX),
                             (regs.UC_ARM64_REG_X2, region), (regs.UC_ARM64_REG_SP, STACK+0x8000),

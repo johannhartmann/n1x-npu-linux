@@ -38,7 +38,7 @@ extents are also checked against the C serializers/validator. The diagnostic
 INIT-IL now passes the original HAL-1 network-prefix, slice decoder and opcode
 handlers in RAM; real register readiness and task execution remain untested.
 
-The HAL's default firmware-load method is **2**, which uses a separate Windows
+The constructor's default remapper is **1**, and the HAL's default firmware-load method is **2**, which uses a separate Windows
 driver through IOCTL 0x150214; subtype 1 uses 0x150218. The original policy and
 transport were traced up to the OS-call boundary. The word uploader is an
 alternate method, not this default. The auxiliary provider is now identified as **nvsrootmbx.sys / NVDA8600 (ROT0)**:
@@ -46,7 +46,9 @@ its original registration slice and both IOCTL table entries match. The
 callback-only implementation stages the image, builds the separate reinit
 request and performs mailbox preparation,
 TX/echo and RX. It matches 48 complete Windows wrapper traces, in addition to
-individual component and fault-injection checks. Physical boot orchestration, mapping and DMA lifetime remain pending. See [SROOT transport evidence](docs/sroot-transport.md) for hashes,
+individual component and fault-injection checks. The original selector now confirms which opaque variant it requests first under
+that default; installed Windows overrides and hardware acceptance remain unknown.
+Physical boot orchestration, mapping and DMA lifetime remain pending. See [SROOT transport evidence](docs/sroot-transport.md) for hashes,
 extraction, resource boundaries and verification limits. Blob signature and
 authentication semantics have not been established.
 
@@ -80,6 +82,11 @@ venv/bin/python scripts/extract_diagnostic.py \
   sources/nvidia/Display.Driver/nvdla_runtime.dll sources/diagnostic-verified.nvda
 venv/bin/python scripts/emulate_firmware_parser.py
 venv/bin/python scripts/emulate_bitbang_transfer.py
+# Extract the opaque default SROOT upload separately from the raw research image:
+venv/bin/python scripts/extract_profile1_firmware.py \
+  sources/nvidia/Display.Driver/nvlddmkm.sys sources/dla-p16-sroot-v0.bin \
+  --sroot-variant 0
+# This extracts bytes only; it does not install or boot firmware.
 # After extraction, run all vendor-backed differential checks:
 make test-vendor
 ```

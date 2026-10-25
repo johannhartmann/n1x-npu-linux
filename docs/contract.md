@@ -279,8 +279,12 @@ and absent/0/1/2/3/0xffffffff overrides. Actual Windows registry state is unknow
 
 The same cases execute RmSocDlaRemapper handling: an absent value preserves the
 previous +0x478 field, 0/2 store themselves, other values normalize to 1. The
-previous value is deliberately synthetic (0x77); this does **not** establish the
-full constructor's default or active P16 remapper mode.
+contiguous constructor default-field sequence `0x195d154..0x195d1ac` is now
+executed before these queries: it sets +0x478 to **1**. Thus an absent registry
+override preserves mode 1. Three extra preservation cases still inject initial
+values 0/2/0x77 to check the registry behavior independently. This establishes
+the static default, not the actual installed Windows registry or live Linux
+mapping. Earlier tests that supplied 0x77 did not establish that default.
 
 The loader at `0xd439c0` uses method 1 for word upload, 0 for the ordinary DMA
 branch, and 2 for HAL +0x408 (`0xd45cb0`) followed by an idle wait. Thus the raw
@@ -940,8 +944,8 @@ has been bound, no NPU MMIO read/write issued, and no firmware boot attempted.
 
 `emulate_irq_mask.py` executes the complete original KMD callback at RVA
 `0xd49800`, its three original subobject forwarding thunks, and HAL-1 register
-accessors. Only logging, compiler guard/prologue helpers and generic register
-I/O are stubbed. The test pins the KMD hash and checks 144 combinations of
+accessors. Only logging, the indirect-call guard and generic register I/O are stubbed.
+The original stack-cookie helpers now execute with a synthetic cookie. The test pins the KMD hash and checks 144 combinations of
 enable argument, saved mask, current mask, ownership mask and accessor errors.
 All accesses occur in emulator RAM; no device registers are read or written.
 
@@ -1056,3 +1060,43 @@ flag at subobject+0x50, the exact host/target routing semantics of 0xd2c/0xd30,
 and assignment of ACPI GSIs 463/800 remain open. The ACPI GSIs must not be
 chosen by analogy to a Jetson interrupt number. No Linux device binding,
 physical IRQ registration, MMIO access or firmware boot was performed.
+
+## Default opaque upload selection and corrected ARM64 stack modeling
+
+`emulate_boot_variants.py` now executes the original HAL-1 initializer, complete
+upload-selector function `0xd45cb0`, variant getter `0xd46780` and table provider
+`0xd46760`. It feeds the constructor-derived default remapper 1 from
+`emulate_boot_policy.py`. The chip-ID getter is stubbed to the independently
+classified P16 value 0x254; the auxiliary-request callback is the test boundary.
+
+For default mode 1, group 0 variant 0 is requested first: RVA 0x1405800,
+67,508 bytes, SHA-256
+`0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4`.
+This is an **opaque SROOT input**, not the 66,816-byte raw RV32 research image.
+Authentication/encryption/signature structure and physical acceptance are still
+unknown. Modes 0/2 select the other group with 77,492-byte inputs.
+
+Twenty-two cases verify first success, fallback to variant 1, exhaustion through
+null variant 2, a remembered successful variant, initial indices 1/2/3 and an
+invalid remapper. On a transport failure after a prior successful upload, Windows
+does **not** continue to another variant. On two transport failures with no prior
+success, null variant 2 changes the returned status to 0x1f, rather than preserving
+the last transport error. This behavior is recorded, not adopted as a Linux
+retry or firmware-security policy.
+
+The existing extractor now supports `--sroot-variant 0/1` with remapper 1 as its
+default (explicit `--remapper 0/1/2` is available). It verifies the exact KMD hash,
+0x254 record, pointer/length, full blob hash and leading 0xc0302 tag. Six extraction
+cases are compared to the original selector outputs, and existing outputs are
+never overwritten. No vendor binary is committed.
+
+This analysis exposed an error in the older ARM64 emulator setup: helpers
+`0xd57b60` and `0xd57b80` were replaced with RET, but they allocate/release a
+16-byte stack-cookie frame. A nested getter's output could consequently overwrite
+saved registers, corrupting later upload-error paths. The shared
+`arm64_stack_cookie.py` installs the **original** helper instructions and a
+synthetic process-global cookie. All nine affected existing emulators now use
+it, and their complete vendor-backed regression suite passes again. The new
+upload-selector test also uses the original helpers. Previous traces were
+isolated observations under stubbed helpers; the rerun with correct stack
+semantics is the current evidence. No OS security mechanism or device is invoked.

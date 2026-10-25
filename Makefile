@@ -23,6 +23,7 @@ test-vendor: test
 	venv/bin/python scripts/emulate_profile1_init_il.py
 	venv/bin/python scripts/test_profile1_loader.py
 	venv/bin/python scripts/emulate_boot_policy.py
+	venv/bin/python scripts/emulate_boot_variants.py
 	venv/bin/python scripts/emulate_boot_transport.py
 	venv/bin/python scripts/inspect_auxiliary_drivers.py
 	venv/bin/python scripts/emulate_sroot_resources.py

@@ -7,6 +7,7 @@ from pathlib import Path
 import pefile
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE
 from unicorn import arm64_const as regs
+from arm64_stack_cookie import install as install_stack_cookie
 from extract_firmware import KMD_SHA256
 from emulate_profile1_irq_init import run as firmware_init, PROFILE1_HASH
 
@@ -28,7 +29,7 @@ def run(pe, enable, saved, current, owned, read_error=0, write_error=0, capture_
                           (STACK, 0x10000), (STUB, 0x10000)):
         u.mem_map(address, size)
     ret = bytes.fromhex('c0035fd6')
-    for rva in (0xd57b60, 0xd57b80, 0xd38758, 0xd39878, 0xd39f38):
+    for rva in (0xd38758, 0xd39878, 0xd39f38):
         u.mem_write(BASE+rva, ret)
     u.mem_write(STUB, ret)
     for address, value in ((BASE+0xe3eaf0, STUB), (CTX+0x68, QUEUE),
@@ -61,6 +62,7 @@ def run(pe, enable, saved, current, owned, read_error=0, write_error=0, capture_
         elif address == BASE+0xd38758:
             u.reg_write(regs.UC_ARM64_REG_X0, 0)
 
+    install_stack_cookie(u, pe)
     u.hook_add(UC_HOOK_CODE, hook)
     for i, value in enumerate((0x12340000, CTX, enable)):
         u.reg_write(getattr(regs, f'UC_ARM64_REG_X{i}'), value)

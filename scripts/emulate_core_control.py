@@ -7,6 +7,7 @@ from pathlib import Path
 import pefile
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE
 from unicorn import arm64_const as regs
+from arm64_stack_cookie import install as install_stack_cookie
 from extract_firmware import KMD_SHA256
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +27,7 @@ def run(pe, entry, busy_reads=0, read_error=False, write_error=False):
     uc.mem_write(BASE+0xd48000, pe.get_data(0xd48000, 0x2000))
     uc.mem_write(BASE+0xd4c000, pe.get_data(0xd4c000, 0x1000))
     ret = bytes.fromhex('c0035fd6')
-    for rva in (0xd57b60, 0xd57b80, 0xd39878, 0xd39f38, 0xd82c0, 0xce4b0):
+    for rva in (0xd39878, 0xd39f38, 0xd82c0, 0xce4b0):
         uc.mem_write(BASE+rva, ret)
     uc.mem_write(STUB, ret)
     uc.mem_write(STUB+0x10, ret)
@@ -55,6 +56,7 @@ def run(pe, entry, busy_reads=0, read_error=False, write_error=False):
         elif address == BASE+0xd82c0:
             delays.append(reg(0))
 
+    install_stack_cookie(uc, pe)
     uc.hook_add(UC_HOOK_CODE, hook)
     for regno, value in enumerate((0, CTX+8 if entry == 0xd4ce48 else CTX)):
         uc.reg_write(getattr(regs, f'UC_ARM64_REG_X{regno}'), value)

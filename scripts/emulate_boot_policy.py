@@ -12,7 +12,7 @@ from emulate_firmware_commands import ROOT
 BASE, CTX, STACK, STUB = 0x140000000, 0x21000000, 0x21100000, 0x21200000
 
 
-def run(pe, selector, override=None, remapper_initial=0x77):
+def run(pe, selector, override=None, remapper_initial=None):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     for page, size in ((0x1951000, 0xd000), (0xd44000, 0x1000), (0xd3b000, 0x1000),
                        (0x1c000, 0x1000), (0xe3e000, 0x1000), (0x108f000, 0x1000)):
@@ -48,11 +48,18 @@ def run(pe, selector, override=None, remapper_initial=0x77):
                             (regs.UC_ARM64_REG_SP, STACK+0x8000)):
         u.reg_write(register, value)
     u.mem_write(CTX+0x460, struct.pack('<I', 0x77))
-    u.mem_write(CTX+0x478, struct.pack('<I', remapper_initial))
+    # Execute the complete contiguous default-field sequence, not just one STRB.
+    u.mem_write(CTX+0x478, struct.pack('<I', 0x77))
     u.mem_write(CTX+0x486, b'\x77')
-    # Original constructor's store, isolated from unrelated setup operations.
-    u.emu_start(BASE+0x195d194, BASE+0x195d198, count=10)
+    u.emu_start(BASE+0x195d154, BASE+0x195d1ac, count=100)
+    assert u.reg_read(regs.UC_ARM64_REG_PC) == BASE+0x195d1ac
+    defaults = {hex(offset): struct.unpack('<I', u.mem_read(CTX+offset, 4))[0]
+                for offset in (0x470, 0x478, 0x480, 0x488, 0x490)}
+    assert defaults == {'0x470': 1, '0x478': 1, '0x480': 1, '0x488': 0, '0x490': 1}
     assert bytes(u.mem_read(CTX+0x486, 1)) == b'\0'
+    if remapper_initial is not None:
+        u.mem_write(CTX+0x478, struct.pack('<I', remapper_initial))
+    initial = struct.unpack('<I', u.mem_read(CTX+0x478, 4))[0]
     u.emu_start(BASE+0xd4419c, BASE+0xd44208, count=1000)
     assert u.reg_read(regs.UC_ARM64_REG_PC) == BASE+0xd44208
     method = struct.unpack('<I', u.mem_read(CTX+0x460, 4))[0]
@@ -63,7 +70,7 @@ def run(pe, selector, override=None, remapper_initial=0x77):
     assert u.reg_read(regs.UC_ARM64_REG_PC) == BASE+0xd44350
     remapper = struct.unpack('<I', u.mem_read(CTX+0x478, 4))[0]
     return {'selector': selector, 'override': override, 'method': method,
-            'sroot_reinit_mode_byte': reinit_mode, 'initial_remapper': remapper_initial, 'remapper': remapper, 'queries': queried}
+            'sroot_reinit_mode_byte': reinit_mode, 'constructor_defaults': defaults, 'initial_remapper': initial, 'remapper': remapper, 'queries': queried}
 
 
 def main():
@@ -75,13 +82,17 @@ def main():
         for override in (None, 0, 1, 2, 3, 0xffffffff):
             result = run(pe, selector, override)
             assert result['method'] == (2 if override is None else override if override in (1, 2) else 0)
-            assert result['remapper'] == (0x77 if override is None else override if override in (0, 2) else 1)
+            assert result['remapper'] == (1 if override is None else override if override in (0, 2) else 1)
             assert result['sroot_reinit_mode_byte'] == int(override == 1)
             assert result['queries'] == ['RmSocDlaFwLoadMethod', 'RmSocDlaSrootReinitMode', 'RmSocDlaRemapper']
             cases.append(result)
+    for initial in (0, 2, 0x77):
+        result = run(pe, 1, remapper_initial=initial)
+        assert result['remapper'] == initial and result['method'] == 2
+        cases.append(result)
     print(json.dumps({'passed': True, 'hardware_access': False, 'kmd_sha256': KMD_SHA256,
                       'cases': cases, 'limitations': ['Registry reads are stubbed; actual installed Windows values are unknown',
-                                                     'Remapper initial value is supplied, not derived from the full constructor',
+                                                     'Default-field constructor slice executes; allocation and earlier object setup are not replayed',
                                                      'No loader, firmware transport or hardware boot is executed']}, indent=2))
 
 

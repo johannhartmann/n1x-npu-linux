@@ -9,6 +9,7 @@ import struct
 import pefile
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE
 from unicorn import arm64_const as regs
+from arm64_stack_cookie import install as install_stack_cookie
 from extract_firmware import KMD_SHA256
 from emulate_firmware_commands import ROOT
 
@@ -27,7 +28,7 @@ def run(pe, subtype=0, available=True, length=16):
     for address, size in ((CTX, 0x1000), (HANDLE, 0x1000), (DATA, 0x1000), (STACK, 0x10000), (STUB, 0x1000)):
         u.mem_map(address, size)
     ret = bytes.fromhex('c0035fd6')
-    for rva in (0xd57b60, 0xd57b80, 0xd39160):
+    for rva in (0xd39160,):
         u.mem_write(BASE+rva, ret)
     for address in (STUB, STUB+0x10):
         u.mem_write(address, ret)
@@ -53,6 +54,7 @@ def run(pe, subtype=0, available=True, length=16):
                           'output_pointer': reg(4), 'output_bytes': reg(5), 'internal': reg(6)})
             u.emu_stop()
 
+    install_stack_cookie(u, pe)
     u.hook_add(UC_HOOK_CODE, hook)
     for index, value in enumerate((CTX, CTX, DATA, length, subtype)):
         u.reg_write(getattr(regs, f'UC_ARM64_REG_X{index}'), value)
