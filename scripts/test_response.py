@@ -13,6 +13,7 @@ from pathlib import Path
 from emulate_firmware_commands import run as firmware, BLOB_HASH, MMIO, HOST, ACK
 from emulate_profile1_commands import run as firmware_profile1, PROFILE1_HASH
 from test_core_control import IO, WRITE, READ, DELAY
+from test_task_descriptor import Args as TaskArgs
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,13 +29,16 @@ def main():
         library = Path(tmp)/'response.so'
         subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
             '-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-Werror',
-            '-I'+str(ROOT/'include'), str(ROOT/'driver/n1x_dla_response.c'), str(ROOT/'driver/n1x_dla_command.c'),
+            '-I'+str(ROOT/'include'), str(ROOT/'driver/n1x_dla_response.c'), str(ROOT/'driver/n1x_dla_command.c'), str(ROOT/'driver/n1x_dla_task.c'),
             '-o', str(library)], check=True)
         lib = ctypes.CDLL(str(library))
     take = lib.n1x_dla_take_response
     take.argtypes = [ctypes.POINTER(IO), ctypes.POINTER(Response)]
     send = lib.n1x_dla_send_method
     send.argtypes = [ctypes.POINTER(IO)]+[ctypes.c_uint32]*4
+    build_task = lib.n1x_dla_build_task_v2
+    build_task.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(TaskArgs)]
+    active_method = 0x301
 
     def host(uc=None, word=0x102, data=0x200010, pending=True, fail_at=None, modeled_irq=False):
         trace = []
@@ -115,8 +119,8 @@ def main():
             return 0
 
         io = IO(None, write, read, DELAY())
-        assert send(ctypes.byref(io), 0x301, HOST >> 8, 1, 0) == 0
-        assert trace == [('read', 0x68), ('write', 0x6c, HOST >> 8), ('write', 0x68, 0x301)]
+        assert send(ctypes.byref(io), active_method, HOST >> 8, 1, 0) == 0
+        assert trace == [('read', 0x68), ('write', 0x6c, HOST >> 8), ('write', 0x68, active_method)]
         submissions.append(trace)
 
     sequence = [1, 0x11111111, 0x40000000, 3]
@@ -203,6 +207,45 @@ def main():
     assert not not_ready['dma_commands'] and not not_ready['interrupts']
     assert not_ready['host_word'] == 1 and len(captured) == 4
     assert not_ready['pc'] in ('0x100266', '0x10026a', '0x10026e')
+    active_method = 0x307
+    task = ctypes.create_string_buffer(256)
+    task_args = TaskArgs(0, HOST+256, 1000000, 1)
+    assert build_task(task, len(task), ctypes.byref(task_args)) == 0
+    captured.clear()
+    submissions.clear()
+    submitted = firmware_profile1(profile1, method=active_method, host_payload=task.raw,
+                                    host_handler=initialized_interrupt, host_submit=submit,
+                                    boot_from_reset=True, via_trap=True, dma_register_model=True)
+    assert submitted['returned'] and submitted['firmware_code_unmodified']
+    assert submitted['function_stubs'] == [] and len(submissions) == len(captured) == 1
+    assert captured[0][0:2] == (0, expected)
+    slot = bytes.fromhex(submitted['first_task_slot'])
+    assert captured[0][2] == (0x702, HOST >> 8)
+    assert slot[:60] == task.raw[:60]
+    assert struct.unpack_from('<I', slot, 124)[0] == 2
+    assert struct.unpack_from('<Q', slot, 128)[0] == HOST
+    queue = bytes.fromhex(submitted['queue0'])
+    assert struct.unpack_from('<I', queue, 8)[0] == 0x180200
+    assert struct.unpack_from('<II', queue, 16) == (2, 1)  # capacity, queued count
+    chunks = submitted['dma_commands']
+    assert [item['bytes'] for item in chunks] == [32, 16, 8, 4]
+    position = 0
+    for item in chunks:
+        assert item['direction'] == 'read'
+        assert item['source'] == HOST+position and item['destination'] == 0x180200+position
+        position += item['bytes']
+    assert position == 60 and submitted['trap_returns'] == [0x100324]
+    bad_task = bytearray(task.raw)
+    bad_task[8] = 255
+    captured.clear()
+    rejected = firmware_profile1(profile1, method=active_method, host_payload=bytes(bad_task),
+                                  host_handler=initialized_interrupt, host_submit=submit,
+                                  boot_from_reset=True, via_trap=True, dma_register_model=True)
+    assert rejected['returned'] and rejected['firmware_code_unmodified']
+    assert rejected['function_stubs'] == [] and captured[0][2] == (0x90701, HOST >> 8)
+    rejected_queue = bytes.fromhex(rejected['queue0'])
+    assert struct.unpack_from('<I', rejected_queue, 20)[0] == 0
+    assert struct.unpack_from('<I', bytes.fromhex(rejected['first_task_slot']), 124)[0] == 0
     print(json.dumps({'scope': 'Linux C response capture/clear/ACK with synthetic IRQSTAT and real FW mailbox code',
                       'ordered_callback_count': len(expected),
                       'persistent_hal1_commands': len(sequence),
@@ -213,6 +256,8 @@ def main():
                       'register_dma_command_stubs': register_dma['function_stubs'],
                       'original_dma_register_commands': len(register_dma['dma_commands']),
                       'missing_dma_idle_blocks_original_transfer': True,
+                      'linux_task_queued_through_original_dma_and_trap': True,
+                      'invalid_task_version_rejected_without_enqueue': True,
                       'firmware_rearms_swgen1_before_each_reply': True,
                       'persistent_commands_use_linux_method_sender': True,
                       'suppressed_mask_set_blocks_delivery': True, 'error_prefixes_checked': 6,

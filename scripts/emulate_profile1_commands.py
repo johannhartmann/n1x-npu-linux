@@ -13,7 +13,10 @@ CTX = 0x20010000
 
 
 def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=True,
-        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False, via_trap=False, trap_dma_ready=True, dma_register_model=False):
+        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False, via_trap=False, trap_dma_ready=True, dma_register_model=False, host_payload=None):
+    if host_payload is not None and (not 4 <= len(host_payload) <= 4096-(HOST & 4095)):
+        raise ValueError('Host payload must fit the mapped synthetic page')
+    host_bytes = 4 if host_payload is None else len(host_payload)
     if dma_register_model and (not boot_from_reset or dma_error is not None):
         raise ValueError('Register DMA model requires reset initialization and no high-level error injection')
     if via_trap and not boot_from_reset:
@@ -86,7 +89,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             external = (word(0x128) << 40) | (word(0x110) << 8)
             external += word(0x11c)
             local = 0x180000+word(0x114)
-            assert HOST <= external and external+length <= HOST+4
+            assert HOST <= external and external+length <= HOST+host_bytes
             assert 0x180000 <= local and local+length <= 0x190000
             direction = 'write' if value & 0x20 else 'read'
             source, destination = (local, external) if direction == 'write' else (external, local)
@@ -129,7 +132,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
     # Preserve firmware RAM and IRQ masks across commands. Enter either the
     # isolated dispatcher or the original trap under explicit synthetic IRQ state.
     for item in ([challenge] if sequence is None else sequence):
-        u.mem_write(HOST, struct.pack('<I', item))
+        u.mem_write(HOST, struct.pack('<I', item) if host_payload is None else bytes(host_payload))
         if host_submit is not None:
             host_submit(u)
             submitted_method, submitted_data = struct.unpack('<II', u.mem_read(MMIO+0x68, 8))
@@ -177,6 +180,8 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             'trap_entries': trap_entries, 'trap_returns': trap_returns, 'dispatches': dispatches,
             'dma_commands': dma_commands, 'function_stubs': [hex(address) for address in stubs],
             'firmware_code_unmodified': code_unmodified,
+            'first_task_slot': bytes(u.mem_read(0x180200, 256)).hex() if boot_from_reset else None,
+            'queue0': bytes(u.mem_read(0x180100, 32)).hex() if boot_from_reset else None,
             'final_irq_mask': struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0],
             'final_irq_pending': struct.unpack('<I', u.mem_read(MMIO+8, 4))[0],
             'final_mailboxes': struct.unpack('<II', u.mem_read(MMIO+0x40, 8))}

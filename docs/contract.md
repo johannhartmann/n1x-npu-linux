@@ -1212,7 +1212,8 @@ and uses the programmed registers rather than transfer-function arguments:
 - Observed read command: 0x2000; observed write command: 0x2020.
 
 The decoder accepts only the observed DMEM/context-2 command family and bounds
-transfers to the four-byte synthetic ping host buffer and mapped firmware RAM.
+transfers to the explicit synthetic host payload and mapped firmware RAM
+(four bytes for ping; the task test below supplies a larger backing buffer).
 It does not implement a general bus, IOMMU, other DMA contexts or instruction
 memory DMA. Unsupported commands/ranges fail the test rather than silently
 performing an arbitrary copy. Command size/direction interpretation agrees with
@@ -1242,3 +1243,46 @@ entry, DMA copies/status and host interrupt dispatch. Thus this is stronger
 software integration evidence, **not physical DMA, NPU bring-up or inference**.
 ACPI/IORT identity, DMA requester/coherency, SROOT boot acceptance and actual
 interrupt delivery remain prerequisites for the Linux hardware backend.
+
+## Linux task submission through reset, trap and original DMA
+
+`test_response.py` now also compiles the existing Linux C task serializer into
+its integration library. It builds a queue-0 v2 descriptor with next=0, one
+address entry, timeout=1000000 and address-list pointer HOST+256, within a
+zero-initialized 256-byte descriptor backing. That address-list target is a
+synthetic future-task reference; it is **not** fetched or executed by this test.
+
+The Linux C sender submits method **0x307** and descriptor address HOST>>8.
+After original reset initialization, the original machine trap reads the method,
+acknowledges its FIFO entry and executes the task-submit code. Original DMA
+functions program four host-to-DMEM transfers of **32, 16, 8 and 4 bytes**,
+copying the exact 60-byte C header from HOST into first task slot **0x180200**.
+All addresses, directions, lengths and cumulative offsets are checked.
+
+The task slot's header matches the Linux bytes. Its original metadata records
+state **2 at slot+124** and the host descriptor address at **slot+128**. The
+original enqueue helper at 0x103e6e stores the task pointer into queue0 and
+increments its count. In this reset-initialized model, queue0 at **0x180100**
+has capacity **2 at +16**, count **1 at +20** and slot pointer 0x180200 at +8.
+This is an observed initial firmware configuration; later host setup or other
+firmware paths could change queue configuration. It is not a universal Linux
+queue-depth declaration.
+
+The Linux C response helper receives **0x702**, acknowledges it, and the
+original ISR returns through mret with its integer registers restored. The
+whole firmware code region is compared to the original bytes and remains
+unchanged. No firmware function is stubbed; hardware register/DMA effects are
+still the explicit synthetic models described above.
+
+A negative case changes only descriptor version byte +8 to 255. Original code
+returns response **0x90701**, leaves queue count zero and the first slot's state
+word zero. It still fetches the header before rejecting it. This extends the
+earlier isolated common-header checks to the initialized queue and complete
+command/response path, rather than assuming a positive parser result means
+successful enqueue.
+
+Neither case resumes the scheduler after interrupt return. **Task acceptance
+is not task completion or inference**: address-list/model loading, instruction
+execution, postactions, error reporting during execution and hardware compute
+are not exercised here. Buffer lifetime must extend through actual completion
+or quiescence; the immediate 0x702 mailbox ACK is insufficient for reclamation.
