@@ -44,7 +44,8 @@ on immutable CPU snapshots; see [history evidence](docs/region5-history.md) and
 The auxiliary HFRP register/IRQ capture and shared Windows dispatch are now
 cross-checked against L4T. Bounded HFRP command/reply ring helpers are compared
 against the original Windows code but are not connected to the live modules;
-physical IRQ roles and the Linux handshake remain unverified. See
+the Linux handshake and single-command channel are tested against a synthetic
+peer. Physical IRQ roles, live handshake and power-on remain unverified. See
 [HFRP/IRQ evidence](docs/hfrp-irq.md).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
 device nor write hardware registers.

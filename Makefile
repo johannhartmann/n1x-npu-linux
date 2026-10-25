@@ -41,6 +41,7 @@ test-vendor: test
 	venv/bin/python scripts/test_region5_producer.py
 	venv/bin/python scripts/test_hfrp_irq.py
 	venv/bin/python scripts/test_hfrp_ring.py
+	venv/bin/python scripts/test_hfrp_channel.py
 	venv/bin/python scripts/test_loader_prerequisites.py
 	venv/bin/python scripts/test_hfrp_power_policy.py
 	venv/bin/python scripts/test_hfrp_version.py

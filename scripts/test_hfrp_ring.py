@@ -26,7 +26,7 @@ STOP = STUB+0xff0
 class Tx(ctypes.Structure):
     _fields_ = [('header', ctypes.c_uint32), ('head_publish_attempted', ctypes.c_uint8),
                 ('head_published', ctypes.c_uint8), ('doorbell_attempted', ctypes.c_uint8),
-                ('doorbell_written', ctypes.c_uint8)]
+                ('doorbell_written', ctypes.c_uint8), ('space_unavailable', ctypes.c_uint8)]
 
 
 class Reply(ctypes.Structure):

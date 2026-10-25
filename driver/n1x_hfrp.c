@@ -71,8 +71,10 @@ int n1x_hfrp_queue_command(const struct n1x_dla_io *io, __u16 command,
     if (head >= N1X_HFRP_RING_SIZE || tail >= N1X_HFRP_RING_SIZE)
         return -EPROTO;
     used = (N1X_HFRP_RING_SIZE + head - tail) % N1X_HFRP_RING_SIZE;
-    if (used + length + 4U >= N1X_HFRP_RING_SIZE)
+    if (used + length + 4U >= N1X_HFRP_RING_SIZE) {
+        result->space_unavailable = 1;
         return -ENOSPC;
+    }
     result->header = (length + 4U) | ((__u32)sequence << 8) | ((__u32)command << 18);
     for (index = 0; index < length + 4U; ++index) {
         __u8 byte = index < 4U ? (__u8)(result->header >> (index * 8U)) : payload[index - 4U];
@@ -153,5 +155,221 @@ int n1x_hfrp_read_reply(const struct n1x_dla_io *io,
     err = io->write32(io->context, 0x110, (client & ~0xff00U) | (tail << 8));
     if (!err)
         reply->tail_published = 1;
+    return err;
+}
+
+static int hfrp_parameters(const struct n1x_dla_io *io,
+                            const struct n1x_hfrp_channel *channel,
+                            __u32 polls, __u32 interval_us,
+                            const struct n1x_hfrp_exchange_result *result)
+{
+    if (!io || !io->read32 || !io->write32 || !channel || !result ||
+        !polls || polls > 5001U ||
+        (polls > 1U && interval_us && !io->delay_us))
+        return -EINVAL;
+    return 0;
+}
+
+static int hfrp_wait_bit(const struct n1x_dla_io *io, __u32 offset,
+                         __u32 mask, __u32 expected, __u32 polls, __u32 interval)
+{
+    __u32 i, value;
+    int err;
+
+    for (i = 0; i < polls; ++i) {
+        err = io->read32(io->context, offset, &value);
+        if (err)
+            return err;
+        if ((value & mask) == expected)
+            return 0;
+        if (i + 1U < polls && interval)
+            io->delay_us(io->context, interval);
+    }
+    return -ETIMEDOUT;
+}
+
+static int hfrp_reply_empty(const struct n1x_dla_io *io)
+{
+    __u32 client, server, head, tail;
+    int err = io->read32(io->context, 0x188, &server);
+
+    if (err)
+        return err;
+    err = io->read32(io->context, 0x110, &client);
+    if (err)
+        return err;
+    head = server & 0xffU;
+    tail = (client >> 8) & 0xffU;
+    if (head >= N1X_HFRP_RING_SIZE || tail >= N1X_HFRP_RING_SIZE)
+        return -EPROTO;
+    return head == tail;
+}
+
+static int hfrp_collect(const struct n1x_dla_io *io,
+                         struct n1x_hfrp_channel *channel,
+                         struct n1x_hfrp_exchange_result *result, int startup)
+{
+    struct n1x_hfrp_reply reply;
+    __u32 count;
+    int err;
+
+    /* At most 28 minimum-sized packets fit. Bound even a replenishing peer. */
+    for (count = 0; count < N1X_HFRP_RING_SIZE / 4U; ++count) {
+        err = n1x_hfrp_read_reply(io, &reply);
+        if (err == -EAGAIN) {
+            err = hfrp_reply_empty(io);
+            if (err < 0)
+                return err;
+            if (err)
+                return 0;
+            /* A response may have arrived between snapshots. Recheck boundedly. */
+            continue;
+        }
+        if (err) {
+            result->reply = reply;
+            result->reply_valid = 0;
+            return err;
+        }
+        if (startup) {
+            ++result->discarded_startup_replies;
+        } else if (reply.sequence == N1X_HFRP_ASYNC_SEQ) {
+            ++result->async_count;
+            err = channel->async_reply ? channel->async_reply(channel->async_context, &reply) : -EOPNOTSUPP;
+            if (err) {
+                result->reply = reply;
+                result->reply_valid = 0;
+                return err;
+            }
+        } else if (reply.sequence != channel->pending_sequence || result->reply_valid) {
+            result->reply = reply;
+            result->reply_valid = 0;
+            return -EPROTO;
+        } else {
+            result->reply = reply;
+            result->reply_valid = 1;
+        }
+    }
+    return -EOVERFLOW;
+}
+
+static int hfrp_drain_ack(const struct n1x_dla_io *io,
+                           struct n1x_hfrp_channel *channel,
+                           struct n1x_hfrp_exchange_result *result, int startup)
+{
+    int err;
+
+    result->ack_attempted = 0;
+    result->ack_completed = 0;
+    err = hfrp_collect(io, channel, result, startup);
+
+    if (err)
+        return err;
+    result->ack_attempted = 1;
+    result->ack_completed = 0;
+    err = io->write32(io->context, 0x10c, 2);
+    if (err)
+        return err;
+    result->ack_completed = 1;
+    /* Recheck after acknowledgment so a concurrent arrival is not overlooked. */
+    return hfrp_collect(io, channel, result, startup);
+}
+
+static int hfrp_transact(const struct n1x_dla_io *io,
+                          struct n1x_hfrp_channel *channel, __u16 command,
+                          const __u8 *payload, __u32 length, __u32 polls,
+                          __u32 interval, struct n1x_hfrp_exchange_result *result)
+{
+    __u32 i;
+    int err;
+
+    err = n1x_hfrp_queue_command(io, command, channel->next_sequence,
+                                  payload, length, &result->tx);
+    if (result->tx.head_publish_attempted) {
+        channel->pending_sequence = channel->next_sequence;
+        channel->next_sequence = (channel->next_sequence + 1U) % N1X_HFRP_ASYNC_SEQ;
+    }
+    if (err)
+        return err;
+    for (i = 0; i < polls; ++i) {
+        err = hfrp_drain_ack(io, channel, result, 0);
+        if (err)
+            return err;
+        if (result->reply_valid) {
+            channel->pending_sequence = N1X_HFRP_NO_SEQUENCE;
+            return result->reply.status ? -EREMOTEIO : 0;
+        }
+        if (i + 1U < polls && interval)
+            io->delay_us(io->context, interval);
+    }
+    return -ETIMEDOUT;
+}
+
+int n1x_hfrp_handshake(const struct n1x_dla_io *io,
+                        struct n1x_hfrp_channel *channel, __u32 polls,
+                        __u32 interval_us, struct n1x_hfrp_exchange_result *result)
+{
+    static const __u8 payload[] = {0, 0, 0xcc, 0xdd, 0};
+    int err = hfrp_parameters(io, channel, polls, interval_us, result);
+
+    if (err)
+        return err;
+    if (channel->state != N1X_HFRP_NEW)
+        return channel->state == N1X_HFRP_FAILED ? -ENOTRECOVERABLE : -EALREADY;
+    memset(result, 0, sizeof(*result));
+    channel->state = N1X_HFRP_ACTIVE;
+    channel->next_sequence = 1;
+    channel->pending_sequence = N1X_HFRP_NO_SEQUENCE;
+    result->reset_attempted = 1;
+    err = io->write32(io->context, 0x100, 1);
+    if (err)
+        goto failed;
+    err = hfrp_wait_bit(io, 0x100, 1, 0, polls, interval_us);
+    if (err)
+        goto failed;
+    result->reset_completed = 1;
+    err = hfrp_wait_bit(io, 0x104, 2, 2, polls, interval_us);
+    if (err)
+        goto failed;
+    result->peer_ready = 1;
+    err = hfrp_drain_ack(io, channel, result, 1);
+    if (err)
+        goto failed;
+    err = hfrp_transact(io, channel, 1, payload, sizeof(payload), polls, interval_us, result);
+    if (err)
+        goto failed;
+    channel->state = N1X_HFRP_READY;
+    return 0;
+failed:
+    channel->state = N1X_HFRP_FAILED;
+    return err;
+}
+
+int n1x_hfrp_exchange(const struct n1x_dla_io *io,
+                       struct n1x_hfrp_channel *channel, __u16 command,
+                       const __u8 *payload, __u32 length, __u32 polls,
+                       __u32 interval_us, struct n1x_hfrp_exchange_result *result)
+{
+    int err = hfrp_parameters(io, channel, polls, interval_us, result);
+
+    if (err || command > 0x3ffU || length > N1X_HFRP_RING_SIZE - 5U || (length && !payload))
+        return -EINVAL;
+    if (channel->state != N1X_HFRP_READY)
+        return channel->state == N1X_HFRP_FAILED ? -ENOTRECOVERABLE : -EBUSY;
+    if (channel->next_sequence >= N1X_HFRP_ASYNC_SEQ ||
+        channel->pending_sequence != N1X_HFRP_NO_SEQUENCE)
+        return -EINVAL;
+    memset(result, 0, sizeof(*result));
+    channel->state = N1X_HFRP_ACTIVE;
+    /* Reject stale synchronous replies before assigning a new sequence. */
+    err = hfrp_drain_ack(io, channel, result, 0);
+    if (err) {
+        channel->state = N1X_HFRP_FAILED;
+        return err;
+    }
+    err = hfrp_transact(io, channel, command, payload, length, polls, interval_us, result);
+    channel->state = (!err || (err == -EREMOTEIO && result->reply_valid &&
+                              result->reply.status && channel->pending_sequence == N1X_HFRP_NO_SEQUENCE) ||
+                     (err == -ENOSPC && result->tx.space_unavailable))
+                     ? N1X_HFRP_READY : N1X_HFRP_FAILED;
     return err;
 }

@@ -384,9 +384,9 @@ venv/bin/python scripts/test_hfrp_version.py
 ```
 
 These findings identify missing bootstrap dependencies, not a working power
-backend. Bounded ring helpers are now implemented below. The remaining
-immediate work is integrating a strict handshake, pending-command ownership
-and recovery, followed by correct parent-path selection. The Linux
+backend. Bounded rings and a strict polled channel are now implemented below.
+The remaining immediate work is integrating version discovery and power
+commands with the correctly selected parent path and Linux platform owner. The Linux
 bootstrap still sends no HFRP power/reset commands. Neither observed SROOT
 upload rejection is explained or repaired by these offline results alone.
 
@@ -493,5 +493,99 @@ make -C "/usr/lib/modules/$(uname -r)/build" M="$PWD/driver" n1x_hfrp.o
 ```
 
 No HFRP mapping, reset, bootloader update, new firmware upload or module reload
-was performed. These helpers still require a transport owner and strict
-handshake before they can support the NPU's actual power-on path.
+was performed. The transport owner and strict handshake below still require
+platform integration before they can support the NPU's actual power-on path.
+
+## Strict Linux handshake and synchronous channel
+
+`n1x_hfrp_handshake()` and `n1x_hfrp_exchange()` now implement the polled
+transport in the same C component. These are callback APIs, **not a newly
+loaded driver or proof of NPU bring-up**. They remain outside both live module
+link lists. The caller must first establish the correct mode-0 aperture,
+device power and exclusive ownership, hold its lock across each call, and
+prevent concurrent IRQ/ring consumption. They do not discover hardware mode,
+process power-event IRQs or provide recovery from an external controller reset.
+
+A zero-initialized `n1x_hfrp_channel` belongs to one separately established
+device lifetime:
+
+| State | Permitted operation |
+| --- | --- |
+| NEW | one initial handshake |
+| ACTIVE | no reentrant operation |
+| READY | one synchronous command at a time |
+| FAILED | neither further exchange nor another handshake |
+
+Handshake writes the recovered reset request, requires reset-bit clearance
+and peer readiness, drains/counts startup replies, acknowledges only doorbell
+bit 1, then sends the exact original command-1 packet. It accepts only a
+matching sequence-1 response with firmware status zero. Unlike the original
+Windows function, reset timeout or a nonzero firmware status fails the channel.
+The raw reply is retained; no undocumented payload interpretation is imposed.
+Startup draining is allowed only after this explicit reset with no outstanding
+owned commands. It is not a general permission to discard application replies.
+
+The successful handshake leaves the next sequence at 2. Exchanges allocate
+from 0..1022, wrap after 1022, and retain the pending sequence through response
+consumption and doorbell acknowledgment. Preflight draining rejects stale
+synchronous responses before a new command is published. Unexpected or
+duplicate synchronous replies fail the channel. A complete nonzero firmware
+status returns `-EREMOTEIO` while leaving a successfully completed transport
+READY; it does not authorize continuing a failed power-on sequence.
+
+Timeout, malformed input, failed notification delivery and access errors move
+the channel to FAILED. A pending/uncertain sequence is not recycled, and a late
+reply does not reopen the channel. The APIs never automatically reset, cancel
+or retry. Reinitializing the C struct alone is not hardware recovery; the
+owning driver must separately establish quiescence before a new lifetime.
+A verified full command ring remains retryable because no packet was published.
+The producer reports that condition explicitly as `space_unavailable`; an
+accessor or notification callback returning the same `-ENOSPC` errno is not
+mistaken for a full ring.
+
+Asynchronous sequence-1023 replies go to an explicit synchronous callback
+after successful tail publication. A missing/failing callback fails the channel
+and retains the offending reply instead of silently dropping a notification.
+Callbacks cannot retain the temporary reply pointer or reenter the channel.
+The transport drains before acknowledgment and rechecks afterward to handle
+arrivals in that window. Other IRQ bits are preserved for the eventual device
+owner; observing those events and detecting unexpected device resets remain
+platform-driver responsibilities.
+
+Every wait has a caller-selected limit of 1..5001 polls. Delays occur only
+between unsuccessful polls, with an optional zero-delay mode. Each drain pass
+is additionally capped at 29 iterations, preventing a continuously replenishing
+peer from extending a call indefinitely. Invalid indices, incomplete published
+frames and notification floods cannot cause unbounded parsing. Result fields
+record reset progress, publication attempts, the latest acknowledgment attempt,
+matching-reply validity and startup/async counts. **A valid copied reply alone
+does not override a later transport error**; callers must check return value
+and channel state before proceeding.
+
+`scripts/test_hfrp_channel.py` compiles the actual C component and drives a
+synthetic register/firmware peer. Its **31 scenarios**, **123 injected access
+failures** and **22 invalid-argument/state checks** cover:
+
+- Immediate and delayed reset/readiness/reply, including the last allowed poll.
+- Reset/readiness/reply timeouts, firmware errors, duplicate/wrong/stale replies.
+- Sequence wrap and exclusion of late replies after timeout.
+- Async delivery, callback failure/reentrancy, notification floods and ACK races.
+- Malformed and incomplete published packets, full-ring retry and errno ambiguity.
+- Errors before and after a write's possible side effect, with no further I/O
+  and no reuse of a failed channel.
+
+All scenarios pass with UndefinedBehaviorSanitizer enabled. The existing
+Windows differential ring/handshake tests and IRQ tests also pass, and the
+expanded component builds against the running kernel headers. These are
+software checks; no physical reset, firmware query or NPU inference occurred.
+
+```sh
+venv/bin/python scripts/test_hfrp_channel.py
+CC='cc -fsanitize=undefined -fno-sanitize-recover=undefined' \
+  venv/bin/python scripts/test_hfrp_channel.py
+```
+
+Next, version discovery must use this checked exchange API and validate the
+response size/status before choosing a power-command format. Platform binding,
+power policy and their ordering relative to the retained SROOT upload remain
+unresolved; the channel's READY state is not a substitute for those steps.

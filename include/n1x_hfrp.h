@@ -35,6 +35,7 @@ struct n1x_hfrp_tx_result {
     __u8 head_published;
     __u8 doorbell_attempted;
     __u8 doorbell_written;
+    __u8 space_unavailable;
 };
 
 struct n1x_hfrp_reply {
@@ -71,4 +72,69 @@ int n1x_hfrp_queue_command(const struct n1x_dla_io *io, __u16 command,
                            struct n1x_hfrp_tx_result *result);
 int n1x_hfrp_read_reply(const struct n1x_dla_io *io,
                         struct n1x_hfrp_reply *reply);
+
+enum n1x_hfrp_channel_state {
+    N1X_HFRP_NEW = 0,
+    N1X_HFRP_READY,
+    N1X_HFRP_ACTIVE,
+    N1X_HFRP_FAILED,
+};
+
+#define N1X_HFRP_NO_SEQUENCE 0xffffU
+
+/* Zero initialize once for a separately established, exclusively owned device
+ * lifetime. A failed channel cannot be re-handshaken by these APIs. Resetting
+ * this struct is NOT recovery: hardware quiescence must be established first.
+ * Caller holds its lock throughout each API and all callbacks. async_reply may
+ * copy/deliver a consumed asynchronous response and returns zero or negative
+ * errno; it must not reenter or retain the pointer. A missing/failing callback
+ * fails the channel instead of silently
+ * losing a notification. No IRQ handler may consume these rings concurrently.
+ */
+struct n1x_hfrp_channel {
+    enum n1x_hfrp_channel_state state;
+    __u16 next_sequence;
+    __u16 pending_sequence;
+    void *async_context;
+    int (*async_reply)(void *context, const struct n1x_hfrp_reply *reply);
+};
+
+struct n1x_hfrp_exchange_result {
+    struct n1x_hfrp_tx_result tx;
+    struct n1x_hfrp_reply reply;
+    __u32 async_count;
+    __u32 discarded_startup_replies;
+    __u8 reply_valid;
+    __u8 reset_attempted;
+    __u8 reset_completed;
+    __u8 peer_ready;
+    __u8 ack_attempted;
+    __u8 ack_completed;
+};
+
+/* Both APIs are synchronous, bounded polling operations, not kernel bindings.
+ * polls is 1..5001; interval_us is passed to delay_us between unsuccessful
+ * polls (required when polls > 1 and interval_us != 0). Invalid parameters and
+ * state-gate failures leave channel/result unchanged and perform no I/O.
+ * Only handshake on NEW may reset the HFRP transport. It does not power on or
+ * authenticate the NPU. Startup replies are drained/counted after reset, before
+ * command 1 is issued. The matched reply is retained; no undocumented payload
+ * interpretation is imposed. Reset timeout and firmware errors fail handshake.
+ *
+ * Exchange requires READY. One pending sequence is retained until matching
+ * reply consumption and doorbell acknowledgment finish. A completed firmware
+ * error returns -EREMOTEIO with reply_valid=1 and leaves the channel usable.
+ * Timeout, access/protocol/notification errors poison the channel, even when
+ * a reply has already been consumed. No cancellation, retry or automatic reset
+ * occurs. A full command ring before publication (-ENOSPC) remains retryable.
+ * READY means transport completion only, not success of a power operation.
+ * Other IRQ bits are left untouched for the owning device's event handling.
+ */
+int n1x_hfrp_handshake(const struct n1x_dla_io *io,
+                        struct n1x_hfrp_channel *channel, __u32 polls,
+                        __u32 interval_us, struct n1x_hfrp_exchange_result *result);
+int n1x_hfrp_exchange(const struct n1x_dla_io *io,
+                       struct n1x_hfrp_channel *channel, __u16 command,
+                       const __u8 *payload, __u32 length, __u32 polls,
+                       __u32 interval_us, struct n1x_hfrp_exchange_result *result);
 #endif
