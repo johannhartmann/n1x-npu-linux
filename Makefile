@@ -10,6 +10,8 @@ test-vendor: test
 	venv/bin/python scripts/test_acpi_collection.py
 	venv/bin/python scripts/test_iort.py
 	venv/bin/python scripts/test_linux_dma_allocation.py
+	venv/bin/python scripts/test_linux_bootstrap.py
+	venv/bin/python scripts/test_linux_bootstrap_guards.py
 	venv/bin/python scripts/test_npu_dma_domains.py
 	venv/bin/python scripts/test_sroot_uki_verifier.py
 	venv/bin/python scripts/test_sroot_menu.py

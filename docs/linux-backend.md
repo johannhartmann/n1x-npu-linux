@@ -487,9 +487,10 @@ identity; its actual live response still needs qualification.
 The API deliberately stops before route capture, IRQ-mask changes, ping,
 region/configuration setup, task queues and inference. It has separate bounded
 budgets per polling stage, not a reconstructed Windows global timeout. It is
-compiled as a kernel component but is **not linked into the observation module**
-and has not been connected to writable Linux MMIO callbacks or invoked on the
-machine. Installed test-kernel/observation artifacts are unchanged.
+compiled as a kernel component and is **not linked into the observation module**.
+The separate bootstrap module below now supplies guarded Linux callbacks; neither
+that connection nor this phase has been invoked on the machine. Installed
+test-kernel/observation artifacts are unchanged.
 
 `test_sroot_upload_phase.py` checks 24 transport traces against the original
 Windows wrapper, injects failure at all 22 I/O positions, verifies timeout/busy
@@ -498,3 +499,112 @@ before I/O. Its DLA interface has no write callback, so an accidental core-start
 write cannot silently pass. All readiness, replies and DMA addresses are
 synthetic. The original method-2 orchestration, SROOT exchange and core-control
 regressions also pass, as does `make kernel-check`.
+
+### Explicit Linux bootstrap module (built, not yet run)
+
+`driver/n1x_npu_boot_linux.c` provides a separate **n1x_npu_bootstrap** module
+for the initial SROOT upload phase. It connects Linux firmware loading, SROOT
+coherent DMA allocation, ordered MMIO callbacks and the callback phase above.
+The observation module remains independent and has no write path. Neither
+module has ACPI autoload aliases. Bootstrap upload is disabled by default and
+never happens during module initialization, probe or a status read.
+
+This experiment is restricted to `7.2.8-23-omarchy-p16-asus-npu1`, the exact
+ASUS/P16/BIOS identifiers and the audited ACPI revisions/resources. SROOT maps
+only register indices 1..12 at stride 16, preserving the stride descriptor's
+reservation. Its callbacks allow only the recovered TX/RX/status/ACK registers.
+DLA's callback permits only a read of logical IDLESTATE `0x4c`; it has **no write
+callback**. Logical offsets are bounds-checked before readl/writel. No IRQ handler,
+CPUCTL/reset write, inference UAPI or automatic recovery is implemented.
+
+The root-only `upload` attribute accepts the exact word `upload` and additionally
+requires CAP_SYS_RAWIO and the immutable `enable_upload=1` load option. Both
+endpoints must be attached. Before allocation it requires the expected ACPI and
+Linux coherency, translated DMA domains using the IOMMU DMA backend, the observed
+stream IDs (SROOT 1, DLA 0x2b), and a dedicated IOMMU group for each endpoint.
+It never changes groups or global IOMMU policy itself.
+
+Only `nvidia/n1x/p16-sroot-v0.bin` is requested, without userspace firmware
+fallback. Before allocation/publication the module checks length 67,508 and
+SHA-256 **0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4**.
+This pins the exact recovered opaque variant; it does not decode/authenticate
+its internal format or prove equivalence to the separately emulated raw image.
+The SROOT-owned coherent allocation must be 256-byte aligned, entirely in
+`0xe0000000..0xffffffff`, and fit the 32-bit DMA mask. Rejected unpublished
+allocations are freed. No CPU physical-address substitution, alternate device,
+manual IOVA mapping or guessed cache operation is used. The existing stage
+helper copies image[4:] and zeros the final four bytes. `dma_wmb()` precedes
+ordered mailbox writes.
+
+**After an attempted upload this experiment requires a reboot before another
+attempt.** Before any mailbox operation it pins its own module and holds runtime
+PM references for both endpoints. It retains the DMA allocation and those
+references on **all** transport/firmware/idle outcomes, including success.
+Subsequent triggers return EALREADY. It suppresses manual bind/unbind attributes
+and rejects system suspend/freeze/poweroff preparation with EBUSY after the
+attempt; runtime references prevent normal autosuspend. This is deliberately
+not production recovery. Do not force-unload it. Unexpected platform removal,
+kexec, physical reset guarantees and a recoverable DMA-quiescence procedure
+remain outside the implemented experiment. No kernel reboot is initiated by it.
+
+Before publication, firmware/mask/runtime-PM/allocation/staging/module-reference
+failures balance all acquired resources. The firmware file's storage is released
+after copying; it is independent of the retained coherent DMA allocation.
+Status exposes whether endpoints are bound, upload is enabled/attempted, the
+last error, raw reply validity/header, observed idle and allocation retention.
+A successful upload phase still does not mean IRQ setup, ping, full boot or
+inference succeeded.
+
+Validation performed:
+
+- Actual upload-function lifecycle: 21 fault/success cases, including real vendor
+  SHA-256, corruption/size controls, balanced early cleanup, PM/module references,
+  retained storage after timeout/rejection and refusal to repeat an attempt.
+- Actual machine/DMA/MMIO guard functions: 544 cases plus machine/kernel and
+  resource-end controls. Identity domains, missing/mismatched CCA/coherency,
+  unexpected/multiple stream IDs, shared groups and forbidden offsets fail.
+- Connected phase's 24 Windows transport comparisons / 22 I/O fault positions /
+  14 invalid-input controls still pass. All OS/device effects in tests are mocks.
+- Module builds against both current and installed **test-kernel** headers;
+  target vermagic, source-copy hashes and absence of autoload aliases checked.
+  The target build is in `results/npu1-bootstrap-build/`; its source manifest
+  records artifact hashes and explicitly says not loaded/installed/booted.
+
+The lifecycle harness requires OpenSSL headers/libcrypto for its userspace
+SHA-256 shim; the kernel module uses the kernel's exported `sha256()` function.
+
+```sh
+venv/bin/python scripts/test_linux_bootstrap.py
+venv/bin/python scripts/test_linux_bootstrap_guards.py
+```
+
+#### Hardware qualification sequence — still pending
+
+First manually boot **N1X NPU test**, verify graphics/input and confirm the exact
+uname above. Complete the earlier SROOT CCA/domain and allocation-only procedure
+before considering an upload. Both observer bindings must be unloaded before
+bootstrap can bind, and the per-device domain-selection script requires unbound
+devices. Keep the working boot entry available. These commands are a pending
+manual experiment, **not a record of execution**:
+
+```sh
+# Only after test-kernel boot and allocation-only qualification:
+sudo rmmod n1x_npu_observe
+# Copy the verified extracted vendor input, not the raw HAL-1 firmware image:
+sudo install -Dm644 sources/dla-p16-sroot-v0.bin \
+  /usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin
+# Use the module built for npu1, not the current-kernel build in driver/:
+sudo insmod results/npu1-bootstrap-build/driver/n1x_npu_bootstrap.ko enable_upload=1
+sudo cat /sys/bus/platform/devices/NVDA200A:00/status
+# This is the one write trigger; it requires retention/reboot afterward:
+printf 'upload\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/upload
+sudo cat /sys/bus/platform/devices/NVDA200A:00/status
+sudo journalctl -k -b --no-pager
+```
+
+Do not loop/retry the trigger or free the retained buffer after a failed or
+successful phase. Capture the actual reply, idle/error, IOMMU/kernel logs and
+system stability before deciding the next bring-up step. The current machine
+still runs the original kernel; no bootstrap module has been installed/loaded,
+no firmware file copied to the system firmware path, and no NPU register written
+by this work. The installed test UKI/menu/defaults remain unchanged.
