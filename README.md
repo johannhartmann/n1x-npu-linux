@@ -78,6 +78,9 @@ An offline replay identifies a GSP diagnostic labelled `VBIOS` (protobuf
 fields 307 → 1), but its traced producer supplies MXM data, not a demonstrated
 complete board ROM. It does not resolve acquisition of the NPU policy; see
 [GSP export evidence](docs/hfrp-vbios.md#gsp-diagnostic-export-investigation).
+The matching GPU HAL's separate ROM reader uses a `GFWI` container. Its member
+layout is replayed offline, with a bounded file extractor available; acquiring
+the actual board container remains open. See [GFWI evidence](docs/hfrp-vbios.md#gsp-rom-source-gfwi-container).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
 device nor write hardware registers.
 

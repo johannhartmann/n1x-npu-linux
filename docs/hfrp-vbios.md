@@ -394,3 +394,76 @@ process exit status zero and wrote only a 44-byte empty archive. A usable dump
 must be checked for actual members and payload bytes. No matching board ROM
 has yet been recovered through this route, and no Linux NPU startup policy
 has been populated from it.
+
+## GSP ROM source: GFWI container
+
+A fresh, read-only `NV2080_CTRL_CMD_MC_GET_ARCH_INFO` query on this machine
+returned architecture `0x1b0`, implementation `0x0b`, revision `0xa1` and
+subrevision 0. The installed driver's chip mapping identifies the `0x1b/0x0b`
+family as **GB20B**, HAL index 70. GB10B uses index 61 and must not be substituted
+solely because this is an N1X/Spark system.
+
+The pinned RV64 ELF's NVOC class descriptor at `0x1cb1130` has class ID
+`0x5dc772` (OBJVBIOS, matching the public GPU header), size `0x1700` and
+constructor `0x1a0e5cc`. Executing that constructor with HAL index 70 selects:
+
+| Object slot | Target VA | Observed operation |
+| --- | --- | --- |
+| `0x150` | `0x11b8424` | Returns ROM buffer capacity `0x700000` |
+| `0x240` | `0x11bcdc4` | Obtains a GFWI container from one of two existing GPU objects and extracts its ROM member |
+
+`scripts/test_gsp_rom_source.py` executes the original constructor with only
+NVOC dynamic casts stubbed. Indices 61/62/70/71 and RM variants 0..3 all select
+the same two targets (16 cases). This confirms the callback for the observed
+GB20B index; it does not identify which source branch is active on this boot.
+
+The reader first checks `GPU+0x22d0`, its flag `+0x1e9` and descriptor pointer
+`+0x1f0`. When available, it copies that descriptor's memory buffer into a
+temporary allocation before calling `0x11bcd14`. Otherwise, an object at
+`GPU+0x22f0` with flag `+0x378` supplies a buffer at `+0x3500` and size at
+`+0x3508`; that path inlines the same extraction rules. These are GSP virtual
+object offsets, **not CPU physical addresses**.
+
+The GFWI member layout is:
+
+| Byte offset | Type | Meaning established by the original copy helper |
+| --- | --- | --- |
+| `0x00` | u32 LE | `0x49574647`, bytes `GFWI` |
+| `0x20` | u32 LE | ROM offset relative to container start |
+| `0x24` | u32 LE | ROM byte count |
+
+The original helper compares offset and size individually with the container
+length and compares size with output capacity. It **does not check their sum**.
+An offline case with offset 120, size 32 and declared container length 128
+returns success and copies bytes beyond that declared extent (the emulator
+deliberately provides surrounding synthetic memory). Do not reuse its bounds
+logic for file parsing. Zero-length and overlapping-header inputs also pass
+the original helper and are rejected by the local extractor.
+
+`scripts/extract_gfwi_vbios.py` extracts from an **already acquired file**.
+It requires the complete header, a non-overlapping member, nonzero size within
+the observed HAL capacity, and a fully contained offset-plus-size range. It
+creates a new output file exclusively and performs no hardware access. Twelve
+original-helper cases test copying, error preservation and the stricter file
+decoder; all 40 truncated-header lengths are rejected. This produces raw ROM
+bytes only: board identity and the presence of the NPU's complete BIT `l`
+policy must still be established separately.
+
+```sh
+venv/bin/python scripts/test_gsp_rom_source.py --elf /path/to/gsp-rm.elf
+# Only after acquiring a matching container:
+venv/bin/python scripts/extract_gfwi_vbios.py board.gfwi board.rom
+```
+
+The separate global pair `0x41ae600` (address) / `0x41ae5f8` (size), read by
+the ROM initialization path at `0x1ac9304`, is **an override input**. Its writer
+at `0x1ad1188` copies offsets `0xa8/0xb0` from the `GSP ` boot-arguments block.
+Those offsets correspond to `GSP_ARGUMENTS_CACHED.vbiosOverrideArgs.pa/size`
+in the public `gsp_init_args.h`. It is not evidence for an independently
+readable board ROM address and was not populated or modified by this work.
+
+No valid raw GFWI container was found in the four inspected local files:
+`gsp_ga10x.bin`, `ucodes_ga10x.bin`, the DGX Spark `socfw.cap`, and the pinned
+Windows `nvlddmkm.sys`. This literal-signature scan does not rule out compressed
+or otherwise wrapped content. Acquisition of the actual source buffer remains
+open. No GPU object, NPU register, boot configuration or firmware was changed.
