@@ -5,6 +5,7 @@ Executes original native getters and Windows copy code in one Unicorn address
 space. The ABI adapter, frontend size/map operations and memcpy are explicit
 fixtures. This does not run the frontend packager or produce a loadable.
 """
+import argparse
 import hashlib
 import json
 import struct
@@ -16,6 +17,9 @@ from inspect_dla_compiler import ROOT, NATIVE_HASH
 
 
 def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--translation-input',action='store_true',help='Verify final backend outputs from the captured second handoff')
+    args=parser.parse_args()
     directory=ROOT/'sources/tensorrt-11.4'
     native=(directory/'native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so').read_bytes()
     windows=directory/'nvdla_compiler.dll'
@@ -34,7 +38,7 @@ def main():
     image=pe.get_memory_mapped_image()
     u.mem_map(base,(len(image)+4095)&~4095);u.mem_write(base,image)
     heap,stack,stop=0x40000000,0x41000000,0x42000000
-    u.mem_map(heap,0x40000);u.mem_map(stack,0x4000);u.mem_map(stop,4096)
+    u.mem_map(heap,0x800000);u.mem_map(stack,0x4000);u.mem_map(stop,4096)
     # Only the stack guard GOT slot is needed by these native functions.
     u.mem_map(0xc8c000,4096)
     u.mem_write(0xc8caa8,struct.pack('<Q',heap+0x700))
@@ -51,9 +55,18 @@ def main():
         3:(256,'d40c6354059292dc4b2c3c7faca391b59240d305ce45b35da00c902ca67f778c'),
         6:(28736,'da9182fb36e22c8262eed1d4baf3d0383d9f90826d99d692c1139f51ec56f7c3'),
     }
+    if args.translation_input:
+        pinned={
+            0:(30464,'eb1090b0e47dc472be8aec0290f0422f61f85ab34d540a807e9ffdc82bee2cbf'),
+            1:(320,'b42e7caa0ee7f927aa6ce37f2002f1c377493a90772417d690eb0bb9b6e2ebc9'),
+            3:(256,'86f4866d1a6a859b697a8a97548080bcfdc3ef21f06e2f9cb90efc44b75ae781'),
+            4:(2738944,'1213200f5d0ad268d324b62729dbcd520ff32f4cb94b78bf5afcf536cc1b11a4'),
+            6:(0,'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
+        }
+    output_directory=ROOT/('results/windows-final-backend-output' if args.translation_input else 'results/windows-backend-output')
     cursor=heap+0x1000;payloads={}
     for index,(kind,(length,digest)) in enumerate(pinned.items()):
-        data=(ROOT/f'results/windows-backend-output/kind-{kind}.bin').read_bytes()
+        data=(output_directory/f'kind-{kind}.bin').read_bytes()
         assert len(data)==length and hashlib.sha256(data).hexdigest()==digest
         if data:u.mem_write(cursor,data)
         descriptor=bytearray(24)
@@ -61,15 +74,16 @@ def main():
         struct.pack_into('<Q',descriptor,16,length)
         u.mem_write(vector+index*24,bytes(descriptor))
         payloads[kind]=data;cursor+=(length+15)&~15
-    u.mem_write(backend+0x58,struct.pack('<3Q',vector,vector+72,vector+72))
-    destination=heap+0x20000
+    end=vector+len(pinned)*24
+    u.mem_write(backend+0x58,struct.pack('<3Q',vector,end,end))
+    destination=heap+0x400000
     copies=[];registrations=[];size_queries=[]
 
     def hook(uc,address,size,user):
         x0,x1,x2=[uc.reg_read(reg) for reg in (r.UC_ARM64_REG_X0,r.UC_ARM64_REG_X1,r.UC_ARM64_REG_X2)]
         if address==0x58b970:
-            assert (x0,x1)==(frontend,0)
-            size_queries.append(x1);uc.mem_write(x2,struct.pack('<Q',len(payloads[3])));result=0
+            assert x0==frontend and x1 in (0,6)
+            size_queries.append(x1);uc.mem_write(x2,struct.pack('<Q',len(payloads[{0:3,6:1}[x1]])));result=0
         elif address==0x5885a0:
             assert x0==frontend and x2==destination
             registrations.append(x1);result=0
@@ -77,7 +91,7 @@ def main():
             assert x0==backend and x2==destination
             copies.append(uc.mem_read(x1,1)[0]);return  # Execute original getter.
         elif address==base+0x1200:
-            assert x0==destination and x2 in (256,28736)
+            assert x0==destination and x2 in {n for n,_ in pinned.values() if n}
             uc.mem_write(x0,bytes(uc.mem_read(x1,x2)));result=x0
         else:raise AssertionError(hex(address))
         uc.reg_write(r.UC_ARM64_REG_X0,result)
@@ -86,13 +100,19 @@ def main():
     for address in (0x58b970,0x5885a0,base+0x6243a0,base+0x1200):
         u.hook_add(UC_HOOK_CODE,hook,begin=address,end=address)
     cases=[]
-    for name,address,kind,memory_kind,status in (
+    consumers=[
         ('network_descriptor',0x58ba64,3,0,0),
         ('rvv',0x589b40,6,11,0),
         ('instruction',0x589aa0,0,None,8),
-    ):
+    ]
+    if args.translation_input:
+        consumers=[('network_descriptor',0x58ba64,3,0,0),
+                   ('instruction',0x589aa0,0,5,0),('data',0x58b9a0,1,6,0),
+                   ('preempt_context',0x589af0,4,10,0),('rvv',0x589b40,6,None,8)]
+    for name,address,kind,memory_kind,status in consumers:
         copies.clear();registrations.clear();size_queries.clear()
-        u.mem_write(destination,b'\xa5'*0x8000)
+        destination_bytes=len(payloads[kind])+32
+        u.mem_write(destination,b'\xa5'*destination_bytes)
         for reg,value in ((r.UC_ARM64_REG_X0,frontend),(r.UC_ARM64_REG_X1,destination),
                           (r.UC_ARM64_REG_SP,stack+0x4000),(r.UC_ARM64_REG_LR,stop)):
             u.reg_write(reg,value)
@@ -101,9 +121,9 @@ def main():
         assert u.reg_read(r.UC_ARM64_REG_X0)==status
         assert copies==[kind]
         assert registrations==([] if memory_kind is None else [memory_kind])
-        assert size_queries==([0] if kind==3 else [])
-        expected=payloads[kind]+b'\xa5'*(0x8000-len(payloads[kind]))
-        assert bytes(u.mem_read(destination,0x8000))==expected
+        assert size_queries==([0] if kind==3 else [6] if kind==1 else [])
+        expected=payloads[kind]+b'\xa5'*32
+        assert bytes(u.mem_read(destination,destination_bytes))==expected
         cases.append(dict(consumer=name,elf_address=hex(address),backend_kind=kind,
                           frontend_memory_kind=memory_kind,status=status,bytes=len(payloads[kind]),
                           copy_and_guard_verified=True))

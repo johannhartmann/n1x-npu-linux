@@ -252,13 +252,19 @@ whole-buffer comparison with the blob named positive is treated as success.
 A [small FP16 ReLU source model and CPU oracle](docs/model-probe.md) now provide
 a numerical target for investigating the Windows ARM TensorRT 11.4 compiler.
 The original Windows backend now completes pretranslation and translation of
-captured native ReLU intermediates in Unicorn, producing three checked nonempty
-buffers plus an empty descriptor. The probe verifies the full C++ initializer
-sequence and original output getters. Original native consumers now identify
-and copy the network-descriptor and RVV blobs through an explicit ABI adapter;
-the empty instruction blob returns an error when copied, and backend metrics
-are absent in this fixture. Runtime packaging into a complete N1X loadable and
-verified Linux inference remain unresolved.
+captured native ReLU intermediates in Unicorn. Replaying its actual
+pretranslation changes into the native frontend exposes the distinct second
+handoff, including input/output address-list indices. Using that handoff
+produces a 30,464-byte instruction blob, data, network descriptor, preemption
+context and metadata with tensor bindings. Original native getters copy the
+nonempty execution blobs through an explicit ABI adapter. The earlier test
+reused the pretranslation descriptor and produced an empty instruction blob;
+it remains a diagnostic comparison, not the final compilation handoff.
+The native serializer now packages the exact Windows results into a checked
+2,800,596-byte NVDA 0.9.0 artifact, including the task/address lists and all five
+execution/metadata blobs. This is a reproducible adapter for one ReLU fixture,
+not a native compiler backend. Windows runtime acceptance, firmware acceptance
+and verified Linux NPU inference remain unresolved.
 
 
 The default SROOT image now has an [offline signed-envelope audit](docs/sroot-envelope.md):

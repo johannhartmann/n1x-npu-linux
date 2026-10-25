@@ -17,14 +17,16 @@ def read(a,n): return bytes(inf.read_memory(a,n))
 def q(a): return struct.unpack('<Q',read(a,8))[0]
 obj=int(gdb.parse_and_eval('$n1x_mtl'))
 common=int(gdb.parse_and_eval('$x1'))
-def tree(root):
+def tree(root,index=False):
     result={};seen=set()
     def walk(n):
         if not n:return
         assert n not in seen and len(seen)<128;seen.add(n)
-        walk(q(n+16));result[struct.unpack('<i',read(n+32,4))[0]]=q(n+40);walk(q(n+24))
+        walk(q(n+16))
+        result[struct.unpack('<i',read(n+32,4))[0]]=struct.unpack('<i',read(n+36,4))[0] if index else q(n+40)
+        walk(q(n+24))
     walk(root);return result
-maps={name:tree(q(obj+offset)) for name,offset in [('pointer',0x60),('size',0xc0),('other',0x90),('index',0xf0)]}
+maps={name:tree(q(obj+offset),name=='index') for name,offset in [('pointer',0x60),('size',0xc0),('other',0x90),('index',0xf0)]}
 out=pathlib.Path(os.environ['N1X_MTL_CAPTURE_DIR']);entries=[]
 for kind,ptr in maps['pointer'].items():
     size=maps['other'].get(kind,0)

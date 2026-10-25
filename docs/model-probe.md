@@ -1,8 +1,10 @@
 # A numerical probe for the Windows ARM DLA compiler
 
-This is a reproducible source model and CPU oracle, **not a compiled DLA
-loadable or a working Linux inference path**. It replaces neither firmware
-qualification nor the driver work. The legacy built-in diagnostic is gated
+This includes a reproducible source model, CPU oracle and an offline compiler
+investigation. The workflow below now produces a serialized NVDA ReLU fixture
+using the original Windows backend and native frontend, joined by checked
+result replay. **It is not a working Linux inference path.** It replaces
+neither firmware qualification nor the driver work. The legacy built-in diagnostic is gated
 away for the reconstructed P16 runtime selector; see [the diagnostic audit](diagnostic-contract.md).
 
 ## Compiler route verified on 2026-10-25
@@ -69,7 +71,8 @@ separate DLA compiler DLL is listed. The complete archive has now downloaded;
 its locally calculated SHA-256 matches the advertised value above. Code
 inspection remains incomplete.
 Windows binaries are not installed into the Linux Python environment. No
-successful compilation, generated DLA binary or physical inference is claimed.
+end-to-end Windows TensorRT compilation or physical inference is claimed.
+The hybrid frontend/backend artifact is documented separately below.
 
 ### Compiler dependency and parser audit
 
@@ -546,7 +549,7 @@ pretranslation run. The current verifier reserves a bounded 128 MiB emulator
 heap for the subsequent translation and retains freed storage without reuse.
 Instruction budgets are checked: exhausting one cannot produce a passing result.
 
-### Complete backend translation and extracted output buffers
+### Initial backend translation with the pretranslation descriptor
 
 The verifier now executes original translation entry **`0x624eb0`** through
 return value **0**, again with no nonzero error-flag setter calls. The original
@@ -554,6 +557,13 @@ code completes its RVV/hardware-layer processing. No external compiler is
 launched, and no model-translation function is replaced with a success stub.
 This is still a single captured ReLU case using backend constructor defaults,
 not a Windows frontend compilation of arbitrary ONNX models.
+
+**Correction from the subsequent frontend trace:** this initial test reused
+the pretranslation descriptor when invoking translation. The original
+frontend supplies a different second descriptor and assigns input/output
+addresses between those calls. The results below remain a reproducible
+diagnostic comparison; they are not the final compilation handoff. See the
+two-stage workflow below for the corrected translation input and outputs.
 
 The DLL startup code at `0xf03508` calls original initializer runner `0xf19358`
 with the range `[0x10523b0, 0x1055af0)`. The verifier executes that same runner
@@ -640,8 +650,11 @@ Both successful copies match the Windows output byte-for-byte. All destination
 bytes beyond each payload retain their poison pattern. The empty instruction
 copy leaves the entire destination unchanged: the native wrapper maps Windows
 status `0x7fffffff` to 8 and skips frontend memory registration. This does not
-prove that the complete frontend would fail; it may skip empty instruction
-buffers. That caller behavior still needs tracing.
+by itself prove that the complete frontend would fail. The subsequent trace
+does show an unconditional instruction getter call at native `0x4cf698` and
+an error exit at `0x4cf6a0`. The original Windows frontend similarly calls its
+instruction getter at `0x3d0508` and checks the error at `0x3d0510`. The remedy
+is the correct translation handoff below, not overriding that failure.
 
 Frontend memory registration and the network-descriptor size lookup are
 explicit fixtures in this probe. No frontend compilation is replaced by a
@@ -655,3 +668,150 @@ is null; it returns `0x7fffffff` and leaves all 36 bytes of the poisoned output
 and guard unchanged. No metrics are available in this constructor-default
 ReLU fixture. Translation success alone must not be used to manufacture
 metadata for a native frontend bridge.
+
+### Correct second handoff produces the instruction and data blobs
+
+Run the stages in order; all vendor files and generated buffers remain local:
+
+```sh
+venv/bin/python scripts/probe_native_graph.py --target t254 --capture-mtl
+venv/bin/python scripts/inspect_windows_mtl_collector.py
+venv/bin/python scripts/probe_native_graph.py --target t254 --capture-translation-input
+venv/bin/python scripts/inspect_windows_mtl_collector.py --translation-input
+venv/bin/python scripts/inspect_native_blob_contract.py --translation-input
+```
+
+The first Windows run now saves its **actual pretranslation mutations** under
+`results/windows-pretranslation-output/`. The original routine changes four
+bytes of the surface record (offsets 4360–4363) and 18 bytes of the operation
+record. The five-buffer sizes and output hashes are checked. It preserves the
+64-byte wrapper descriptor, network record, common-operation record and
+auxiliary record.
+
+The new GDB capture stays inside the existing device-free native sandbox.
+It compares all five live input hashes with the actual Windows pretranslation
+run before writing any result. It then replays those output buffers and the
+observed return value 0 across the unavailable native backend boundary.
+This is a recorded-result adapter for one exact fixture, not execution of a
+native backend or an unverified replacement compiler. The native frontend
+continues normally and stops before `nvdla_mtl_translate`; it never attempts
+loadable execution. GDB unwinds the first wrapper stack instruction when
+returning the recorded result.
+
+The native frontend assigns operation-record address-list indices **1 and 2**
+at byte offsets **232 and 976**. It constructs a fresh 44-byte network
+descriptor with u32 words:
+
+```text
+3, 4, 5, 6, 0xffffffff, 7, 0xffffffff, 0, 2, 0, 0
+```
+
+Its SHA-256 is `8c52127eee7cbbe584ed4ea87c94632fa30c4623527560074f38f1f4b0a7d9d2`.
+The native memory-index map is `{5:3, 6:4, 8:6, 10:5, 11:7}`. Its values are
+32-bit at tree-node +36; the original capture helper's generic u64-at-+40
+reader was unsuitable for a populated index map and is now corrected.
+
+The second backend descriptor carries that new network pointer and zeroes in
+the remaining fields. The original native wrapper takes these from common
+offsets 40–88; its earlier common-operation/operation/auxiliary pointers at
+offsets 8, 24 and 32 are not those backend fields. The backend retains the
+pretranslated graph. The verifier reconstructs the exact second handoff,
+allocates a separate network record and preserves the original pretranslation
+record. It reruns original pretranslation to retain real backend state, checks
+the captured frontend changes, and then executes original translation.
+
+The corrected translation returns 0 and yields:
+
+| Kind | Bytes | Consumer/observed content | SHA-256 |
+| --- | ---: | --- | --- |
+| 0 | 30,464 | Instruction blob | `eb1090b0e47dc472be8aec0290f0422f61f85ab34d540a807e9ffdc82bee2cbf` |
+| 1 | 320 | Data blob | `b42e7caa0ee7f927aa6ce37f2002f1c377493a90772417d690eb0bb9b6e2ebc9` |
+| 3 | 256 | Network descriptor | `86f4866d1a6a859b697a8a97548080bcfdc3ef21f06e2f9cb90efc44b75ae781` |
+| 4 | 2,738,944 | Preemption context | `1213200f5d0ad268d324b62729dbcd520ff32f4cb94b78bf5afcf536cc1b11a4` |
+| 5 | 28,736 | Native stat-kind slot; same bytes as the earlier kind-6 diagnostic output | `da9182fb36e22c8262eed1d4baf3d0383d9f90826d99d692c1139f51ec56f7c3` |
+| 6 | 0 | Empty RVV-kind descriptor | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| 7 | 10,034 | JSON with tensor/storage metadata | `2b5334a01d3f1d39385f053c8b2baeebe78c7e9e4271b339b98a37b892e9781a` |
+
+Original Windows size/copy methods validate each descriptor and its destination
+guard. The native consumer probe separately copies kinds 0, 1, 3 and 4
+byte-for-byte through the explicit vtable adapter, returning status 0. The
+empty RVV getter returns status 8 when called directly; unlike the instruction
+case, native packaging checks RVV size before calling it (`0x4d0cdc–0x4d0d00`).
+No dummy instruction or fabricated metadata is needed. The optional metrics
+pointer remains null, with the same unchanged-destination error behavior.
+
+JSON metadata now contains one input and output for each of four CPIPE tiles.
+Their address-list indices are 1 and 2, FP16 shapes are `[1,32,2,7]` for the
+first three tiles and `[1,32,1,7]` for the last. Byte offsets are 0, 448, 896
+and 1344; batch/line/surface strides are 3136/224/1568 bytes. These properties
+are checked; they do not establish successful device memory access.
+
+Artifacts go to `results/windows-final-backend-output/`. The earlier output
+directory remains a distinct diagnostic fixture. A second run changes heap,
+stack, TLS and return addresses, poison bytes and synthetic counter increments;
+all seven output hashes remain identical. The following stage now serializes
+these results. Runtime address binding, firmware acceptance and numerical NPU
+execution are still unverified. Backend constructor defaults are still used;
+full Windows frontend configuration has not been reproduced.
+
+### Original frontend serializes an NVDA ReLU artifact
+
+After the five commands above, run:
+
+```sh
+venv/bin/python scripts/probe_native_graph.py --target t254 --package-windows-output
+venv/bin/python scripts/verify_relu_loadable.py
+```
+
+`package_windows_output.gdb` repeats the checked pretranslation replay and
+compares the next live frontend handoff with the actual Windows final-output
+manifest. It supplies those output sizes and bytes at the native MTL wrappers.
+The native backend factory remains unavailable; this does not pretend to
+implement it. `nvdla_mtl_copy_imatrix_out_data` uses an explicitly modeled
+no-output branch: the original native backend-3 branch at
+`0x6493cc–0x6493e4` succeeds with a non-null backend and does not modify the
+caller output. Its temporary allocation/free side effects are omitted.
+
+Everything after those backend boundaries, including `setLoadableContents`,
+the serializer and the public size/image getters, runs as original native
+compiler code. The recorded wrapper sequence is one size query, one imatrix
+query and copies of kinds **3, 0, 1, 5, 4**. No kind-6 copy occurs because its
+size is zero. The native process exits normally with all three public
+compile/size/image calls returning 0.
+
+The generated local file is `results/native-compile-t254/relu.nvda`:
+
+- Size: **2,800,596 bytes**.
+- SHA-256: `561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942`.
+- FlatBuffers identifier/version: **NVDA / 0.9.0**.
+- One task, one submit, nine memory records, nine address records and two
+  tensor records in the bounded shared-field projection.
+- Five copied blobs named `task-0-nw`, `task-0-inst`, `task-0-ctrl_data`,
+  `task-0-preempt_ctx` and `task-0-stats`, plus three pool-size properties.
+  The five blobs use interface 1, version **3.0.0** and match the original
+  Windows output bytes exactly.
+
+The task address list is `[3,1,2,4,5,6,7,8]`. Input/output memory IDs 1 and 2
+each have 3136 bytes and input/output flags respectively. Memory IDs 3–7
+contain the five named blobs at offset zero; all memory alignments are 4096.
+The local instruction/data/preemption/stat indices from the frontend map
+refer to positions in that task list, rather than directly to global memory
+IDs. This distinction matters when building the Linux submission path.
+
+The 256-byte compiler network descriptor contains nonzero extension values:
+`+0xcc=0x3054`, `+0xd0=4`, `+0xd4=0x3054`, `+0xd8=3`. These are actual compiler
+output, not guessed patches to the older diagnostic's zero padding. Their
+interpretation and operation with the pinned HAL-1 firmware still need to be
+checked against the original firmware/IRQ paths.
+
+The verifier checks the pinned artifact hash, task/submit relationships,
+shared-field projection, memory bounds for the named content and exact blob
+bytes. Two packaging executions produced the same file hash. It deliberately
+does not claim that a partial NVDLA-v1 projection validates every field of the
+modern 0.9.0 schema. JSON kind 7 remains a separate research artifact.
+
+This is now a **serialized compiler artifact for the one exact ReLU fixture**.
+It is not a general Windows compiler port, Windows-runtime acceptance test or
+proof of firmware compatibility. The next driver-facing checks are original
+runtime materialization/version handling, network-extension interpretation,
+task/address construction and eventual numerical execution on the NPU.

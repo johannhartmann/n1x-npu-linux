@@ -25,8 +25,16 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target',choices=('t234','t254','t256'),help='Attempt an offline compile for this explicit candidate target')
     parser.add_argument('--capture-mtl',action='store_true',help='Stop under GDB and save intermediate MTL buffers without translation')
+    parser.add_argument('--capture-translation-input',action='store_true',
+                        help='Replay verified Windows pretranslation outputs and capture the next frontend handoff')
+    parser.add_argument('--package-windows-output',action='store_true',
+                        help='Package the exact verified Windows backend outputs with the native frontend')
     args=parser.parse_args()
     if args.capture_mtl and not args.target:parser.error('--capture-mtl requires --target')
+    if args.capture_translation_input and (args.target!='t254' or args.capture_mtl):
+        parser.error('--capture-translation-input requires --target t254 and excludes --capture-mtl')
+    if args.package_windows_output and (args.target!='t254' or args.capture_mtl or args.capture_translation_input):
+        parser.error('--package-windows-output requires --target t254 and excludes capture modes')
     outdir=ROOT/'results'/('native-compile-'+args.target) if args.target else None
     if os.environ.get('N1X_COMPILER_SANDBOX')!='1':
         command=['bwrap','--unshare-all','--die-with-parent','--clearenv',
@@ -39,9 +47,11 @@ def main():
         if outdir:
             outdir.mkdir(parents=True,exist_ok=True)
             command+=['--bind',str(outdir),str(outdir)]
-        if args.capture_mtl:
+        if args.capture_mtl or args.capture_translation_input or args.package_windows_output:
+            gdb_script=('package_windows_output.gdb' if args.package_windows_output else
+                        'capture_native_translate.gdb' if args.capture_translation_input else 'capture_native_mtl.gdb')
             command+=['--setenv','N1X_MTL_CAPTURE_DIR',str(outdir),'gdb','-batch',
-                      '-x',str(ROOT/'scripts/capture_native_mtl.gdb'),'--args']
+                      '-x',str(ROOT/'scripts'/gdb_script),'--args']
         command+=[str(ROOT/'venv/bin/python'),str(Path(__file__).resolve()),*sys.argv[1:]]
         subprocess.run(command,check=True)
         return
@@ -119,7 +129,9 @@ def main():
             invoke('NvDlaCompilerGetLoadableImage',[H,C.c_char_p,H],compiler,b'probe',image)
             data=image.raw
             (outdir/'relu.nvda').write_bytes(data)
-            compiled=dict(target=args.target,bytes=len(data),sha256=hashlib.sha256(data).hexdigest())
+            compiled=dict(target=args.target,bytes=len(data),sha256=hashlib.sha256(data).hexdigest(),
+                          backend='verified Windows result replay' if args.package_windows_output else 'native',
+                          hardware_access=False,inference_verified=False)
             (outdir/'manifest.json').write_text(json.dumps(compiled,indent=2)+'\n')
         print(json.dumps(dict(passed=True,hardware_access=False,sandbox='private /dev, absent /sys, isolated namespaces',
                              native_library_loaded=True,graph_constructed=True,dimension_fields=[dims.a,dims.b,dims.c,dims.d],

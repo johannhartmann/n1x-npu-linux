@@ -4,15 +4,19 @@
 Runs in Unicorn with explicit Windows/CRT models and no host API dispatch.
 Exports checked backend buffers, not a complete loadable or physical inference.
 """
-import hashlib,json,struct
+import argparse,hashlib,json,struct
 from collections import Counter
 import pefile
 from unicorn import Uc,UC_ARCH_ARM64,UC_MODE_ARM,UC_HOOK_CODE
 from unicorn import arm64_const as r
-from inspect_dla_compiler import ROOT
+from inspect_dla_compiler import ROOT,NATIVE_HASH
 
 
 def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--translation-input',action='store_true',
+                        help='Use the captured second frontend handoff after real pretranslation output replay')
+    args=parser.parse_args()
     path=ROOT/'sources/tensorrt-11.4/nvdla_compiler.dll'
     digest=hashlib.sha256(path.read_bytes()).hexdigest()
     assert digest=='0ef7c9366205a7151490f07b0df94a5e6908c94da32e83fabaaef5d06254147d'
@@ -335,6 +339,17 @@ def main():
     mtl=heap+0xe00
     assert invoke(0x617a70,mtl)==mtl
     assert invoke(0x624630,mtl,common,instruction_limit=10000000)==0
+    assert bytes(u.mem_read(common,64))==bytes(descriptor)
+    pre_payloads={kind:bytes(u.mem_read(pointers[kind],len(data))) for kind,data in buffers.items()}
+    pre_hashes={1:'4d0745544f4f7c0128991b927595e5a8c9472b7b36170b698152349f4aebdb9f',
+                3:'d6df2465b95418819f9ae10480cd61089f7a8d6f9a9198e82c2a2a6016d1aae7'}
+    pre_outputs=[]
+    for kind,data in pre_payloads.items():
+        expected_hash=pre_hashes.get(kind,hashlib.sha256(buffers[kind]).hexdigest())
+        assert hashlib.sha256(data).hexdigest()==expected_hash
+        pre_outputs.append(dict(kind=kind,bytes=len(data),sha256=expected_hash,
+                                input_sha256=hashlib.sha256(buffers[kind]).hexdigest(),
+                                changed_offsets=[i for i,(a,b) in enumerate(zip(buffers[kind],data)) if a!=b]))
     pre_graph=qword(mtl+0xc0)
     assert pre_graph in allocations and pre_graph not in retired
     assert qword(pre_graph+0x18)==1 and qword(pre_graph+0x58)==0
@@ -347,7 +362,45 @@ def main():
     pretranslation=dict(rva='0x624630',completed=True,return_value=0,
                         graph_nodes=1,graph_edges=0,node_name=node_name(node),
                         node_vtable_rva=hex(qword(node)-base),optional_config='absent')
+    handoff=dict(stage='pretranslation descriptor reused',operation_count=1)
+    if args.translation_input:
+        cap=captured/'translation-input'
+        capture=json.loads((cap/'manifest.json').read_text())
+        assert capture['native_sha256']==NATIVE_HASH and capture['windows_sha256']==digest
+        raw=(cap/'common.bin').read_bytes()
+        assert len(raw)==96 and hashlib.sha256(raw).hexdigest()==capture['common_sha256']
+        assert struct.unpack_from('<I',raw,48)[0]==struct.unpack_from('<I',raw,80)[0]==0
+        assert raw[48:]==bytes(48)
+        network=(cap/'network.bin').read_bytes()
+        assert len(network)==44 and hashlib.sha256(network).hexdigest()==capture['network_sha256']=='8c52127eee7cbbe584ed4ea87c94632fa30c4623527560074f38f1f4b0a7d9d2'
+        final_entries={e['kind']:e for e in capture['entries']}
+        for kind in (1,2,3,4):
+            data=(cap/f'kind-{kind}.bin').read_bytes()
+            expected_data=bytearray(pre_payloads[kind])
+            if kind==3:
+                # Original frontend assigns the input/output address-list indices.
+                struct.pack_into('<I',expected_data,232,1)
+                struct.pack_into('<I',expected_data,976,2)
+            assert data==bytes(expected_data)
+            assert hashlib.sha256(data).hexdigest()==final_entries[kind]['sha256']
+            u.mem_write(pointers[kind],data)
+        translation_network=allocate(len(network))
+        u.mem_write(translation_network,network)
+        # The second wrapper handoff contains only this new descriptor.
+        # Input records have been retained by the backend during pretranslation.
+        descriptor=bytearray(64)
+        struct.pack_into('<Q',descriptor,0,translation_network)
+        u.mem_write(common,bytes(descriptor))
+        handoff=dict(stage='captured frontend translation descriptor',operation_count=0,
+                     network_sha256=capture['network_sha256'],network_hex=network.hex(),
+                     source=str(cap),input_sha256={e['kind']:e['sha256'] for e in capture['entries']})
+    retained_before={kind:bytes(u.mem_read(pointers[kind],len(data))) for kind,data in buffers.items()}
     assert invoke(0x624eb0,mtl,common,instruction_limit=100000000)==0
+    if args.translation_input:
+        assert bytes(u.mem_read(common,64))==bytes(descriptor)
+        assert bytes(u.mem_read(translation_network,44))==network
+        assert all(bytes(u.mem_read(pointers[kind],len(data)))==data for kind,data in retained_before.items())
+        handoff['inputs_unchanged_after_translation']=True
     assert not error_flags
     # Translation success does not imply that optional metrics were produced.
     # The original getter dereferences the pointer stored at object +0x50.
@@ -359,13 +412,23 @@ def main():
     metrics=dict(getter_rva='0x624480',status=metrics_status,available=False,
                  destination_unchanged=True)
     begin,end,capacity=struct.unpack('<3Q',u.mem_read(mtl+0x58,24))
-    assert end-begin==4*24 and end<=capacity
+    assert end-begin==(7 if args.translation_input else 4)*24 and end<=capacity
     expected_outputs={
         0:(0,'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
         3:(256,'d40c6354059292dc4b2c3c7faca391b59240d305ce45b35da00c902ca67f778c'),
         6:(28736,'da9182fb36e22c8262eed1d4baf3d0383d9f90826d99d692c1139f51ec56f7c3'),
         7:(3624,'c1af31f16b73278e61f8e6b9b8cf3aedb3140c3caf79afc45c8e4623aa44d76d'),
     }
+    if args.translation_input:
+        expected_outputs={
+            0:(30464,'eb1090b0e47dc472be8aec0290f0422f61f85ab34d540a807e9ffdc82bee2cbf'),
+            1:(320,'b42e7caa0ee7f927aa6ce37f2002f1c377493a90772417d690eb0bb9b6e2ebc9'),
+            3:(256,'86f4866d1a6a859b697a8a97548080bcfdc3ef21f06e2f9cb90efc44b75ae781'),
+            4:(2738944,'1213200f5d0ad268d324b62729dbcd520ff32f4cb94b78bf5afcf536cc1b11a4'),
+            5:(28736,'da9182fb36e22c8262eed1d4baf3d0383d9f90826d99d692c1139f51ec56f7c3'),
+            6:(0,'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
+            7:(10034,'2b5334a01d3f1d39385f053c8b2baeebe78c7e9e4271b339b98a37b892e9781a'),
+        }
     outputs=[];payloads={}
     for slot in range(begin,end,24):
         descriptor=bytes(u.mem_read(slot,24))
@@ -394,21 +457,35 @@ def main():
     assert metadata['gp_layers'][0]['id']==0 and len(es_lists)==4
     for index,entry in enumerate(es_lists):
         assert entry['es_type']==f'NVDLA_PAUSE_ES_CPIPE{index}' and entry['count']==2
-        assert entry['blob_offset']==24832+index*384<len(payloads[6])
+        assert entry['blob_offset']==24832+index*384<len(payloads[5 if args.translation_input else 6])
         assert metadata['layers'][index]['name']==f'layer-anon-0_cpipe_tile_{index}_ts_hwl_cpipe_{index}'
+        if args.translation_input:
+            for side,address_index in (('input_tensors',1),('output_tensors',2)):
+                tensors=metadata['layers'][index][side];assert len(tensors)==1
+                tensor=tensors[0];storage=tensor['storage']
+                assert (tensor['n'],tensor['c'],tensor['h'],tensor['w'])==(1,32,2 if index<3 else 1,7)
+                assert tensor['dtype']=='DATA_TYPE_FP16'
+                assert storage['address_list_index']==address_index
+                assert storage['src_offset_bytes']==448*index
+                assert (storage['batch_stride_bytes'],storage['line_stride_bytes'],storage['surface_stride_bytes'])==(3136,224,1568)
+    postdir=ROOT/'results/windows-pretranslation-output';postdir.mkdir(exist_ok=True)
+    for kind,data in pre_payloads.items():(postdir/f'kind-{kind}.bin').write_bytes(data)
+    (postdir/'manifest.json').write_text(json.dumps(dict(passed=True,hardware_access=False,
+        windows_sha256=digest,return_value=0,descriptor_unchanged=True,outputs=pre_outputs),indent=2)+'\n')
     # Write artifacts only after all checks. These are research intermediates.
-    outdir=ROOT/'results/windows-backend-output';outdir.mkdir(exist_ok=True)
+    outdir=ROOT/('results/windows-final-backend-output' if args.translation_input else 'results/windows-backend-output')
+    outdir.mkdir(exist_ok=True)
     for entry in outputs:(outdir/entry['file']).write_bytes(payloads[entry['kind']])
     output_manifest=dict(passed=True,hardware_access=False,complete_loadable=False,
                          windows_sha256=digest,source_capture='native-compile-t254',
                          input_sha256={kind:hashlib.sha256(data).hexdigest() for kind,data in buffers.items()},
-                         pretranslation_return=0,translation_return=0,metrics=metrics,outputs=outputs)
+                         pretranslation_return=0,translation_return=0,metrics=metrics,handoff=handoff,outputs=outputs)
     (outdir/'manifest.json').write_text(json.dumps(output_manifest,indent=2)+'\n')
     print(json.dumps(dict(passed=True,hardware_access=False,windows_sha256=digest,
         collector_rva='0x756630',operation_count=1,record_bytes=len(record),
         pretranslation=pretranslation,
         translation=dict(rva='0x624eb0',completed=True,return_value=0,outputs=outputs,
-                         metrics=metrics,
+                         metrics=metrics,handoff=handoff,
                          output_manifest=str(outdir/'manifest.json'),complete_loadable=False),
         cpp_initializers=dict(runner_rva='0xf19358',array_begin_rva='0x10523b0',
                               array_end_rva='0x1055af0',count=len(initializer_calls),order_verified=True),
