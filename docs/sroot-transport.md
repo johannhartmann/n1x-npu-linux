@@ -31,6 +31,50 @@ and the
 [DMF IOCTL record layout](https://github.com/microsoft/DMF/blob/master/Dmf/Modules.Library/Dmf_IoctlHandler.h).
 The examined binaries contain the DMF IoctlHandler source-path/type strings.
 
+## Completion status and the first firmware error
+
+`emulate_boot_transport.py` now also runs the complete original KMD transport
+(`0xd3bbc8`) and wrapper (`0xd49ef0`) through modeled IRP completion, instead
+of stopping only at `IoBuildDeviceIoControlRequest`. Its PE imports identify
+`IofCallDriver`, `KeWaitForSingleObject`, `IoCancelIrp` and
+`KeQueryPerformanceCounter`. OS/event/time operations and logging remain stubs;
+the original branching, completion-status loads and returns execute.
+
+For upload and reinitialization alike, synchronous completion returns the
+`IofCallDriver` status unchanged. If the call returns `STATUS_PENDING` (`0x103`)
+and the event wait returns zero, the original code reads and returns the
+completion status from `IO_STATUS_BLOCK`. Both paths preserve the observed
+provider result **`0xc0000229`** without conversion to `0x65`. The latter is
+used by a separate unexpected-wait-result branch. IRP construction failure
+returns `0xffff`.
+
+Both IOCTL requests have a null output pointer and zero output length. This
+transport receives the provider's NTSTATUS, not the original SROOT status 6
+and detail 42 as separate fields. Therefore the upper KMD wrapper does not
+provide a second decoder for that firmware response.
+
+Four composed status-chain cases connect original code across the modeled
+OS boundary: the complete SROOT handler consumes recorded header `0x2a006018`
+and returns `0xc0000229`; the KMD transport preserves it; the original variant
+selector tries variant 1 if no prior success is recorded. With prior success,
+it makes only the variant-0 request and returns the same error. Both synchronous
+and pending completion paths are covered. These are separate emulators joined
+by actual returned status values; the second upload's success remains a stub,
+not a physical acceptance result.
+
+The timeout path has a different recovery policy: after wait result `0x102`
+it cancels the IRP, waits again with **no timeout**, and may rebuild/resubmit
+according to outer context `+0x54`. A three-attempt control confirms that
+sequence. This is not safe Linux recovery evidence: successful cancellation
+and the follow-up completion wait are modeled, and neither establishes DMA
+quiescence. Linux's retained-buffer/one-attempt rule remains unchanged.
+
+Eleven completion controls plus the four composed status-chain cases pass:
+
+```sh
+venv/bin/python scripts/emulate_boot_transport.py
+```
+
 ## Pinned vendor inputs
 
 These were extracted without running Windows executables from the existing

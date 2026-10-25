@@ -19,7 +19,8 @@ CTX, OUTER, STACK, STUB = (0x28000000+i*0x10000 for i in range(4))
 STOP = STUB+0xff0
 
 
-def run(pe, remapper, fail_requests=0, previous_success=False, initial_variant=0):
+def run(pe, remapper, fail_requests=0, previous_success=False, initial_variant=0,
+        request_error=0x65):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     for rva, size in ((0x1951000, 0xd000), (0xd45000, 0x2000),
                       (0x108f000, 0x1000), (0xd57000, 0x1000)):
@@ -67,7 +68,7 @@ def run(pe, remapper, fail_requests=0, previous_success=False, initial_variant=0
             assert len(payload) == length
             requests.append({'rva': hex(rva), 'bytes': length,
                              'sha256': hashlib.sha256(payload).hexdigest()})
-            u.reg_write(regs.UC_ARM64_REG_X0, 0x65 if len(requests) <= fail_requests else 0)
+            u.reg_write(regs.UC_ARM64_REG_X0, request_error if len(requests) <= fail_requests else 0)
         elif address in (BASE+0xd3bfd8, BASE+0xce440, BASE+0xce478, BASE+0xce4b0):
             u.reg_write(regs.UC_ARM64_REG_X0, 0)
 
