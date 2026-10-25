@@ -25,7 +25,9 @@ remain unresolved; no hardware backend is enabled. Basic HAL-1 ping and
 mailbox/ACK handling have now been independently revalidated in an RV32 emulator,
 including round trips through the Linux C response handler. Four consecutive
 commands now use both Linux C method submission and response ACK in one
-RV32 emulator instance: the firmware rearms SWGEN1 before each reply. The HAL-1 word uploader
+RV32 emulator instance: the firmware rearms SWGEN1 before each reply. Its
+early IRQ initializer also executes without function stubs in RAM, and the
+Windows loader's route-mask capture is checked against those firmware outputs. The HAL-1 word uploader
 also matches Windows across 16,839 callback writes, and its shared core-selection
 routine and 78 accessor cases are verified. Physical boot remains unverified. Auxiliary-driver selection is traced below.
 HAL-1 common task headers and UMD version strides are now revalidated;

@@ -1007,3 +1007,52 @@ coherency remain synthetic; firmware bookkeeping/logging/hang queries remain
 stubbed. The mailbox protocol now supports repeated offline commands without
 an invented host rearm write. This does not establish complete Linux IRQ setup,
 task execution, inference or firmware boot.
+
+## HAL-1 firmware IRQ initialization and host route-mask capture
+
+`emulate_profile1_irq_init.py` executes the complete matching RV32 routine at
+`0x100370`, including its original table-programming callee `0x1009b6` and tail
+call `0x1021a6`. **No function is stubbed in this experiment.** Code/data are
+loaded from the hash-pinned HAL-1 image, while MMIO, stack and initial CPU CSR
+state are synthetic. This is one initialization routine, not the reset entry
+or a complete firmware boot.
+
+The routine makes 41 four-byte MMIO writes. Its first 22 writes select ten
+entries through internal offsets 0xf24/0xf28, bounded by writes 0xf20=4 and
+0xf24=0x80000000. The test pins all ten values and the complete following
+19-write sequence. Among those observations:
+
+| Internal register offset | Written value |
+| --- | --- |
+| 0xd2c | 0x1d0 |
+| 0xd30 | 0x100 |
+| 0x0c | 0x1f2c |
+| 0xd20 | 0x1f85 |
+| 0xd60 | 0x3f |
+| 0xd64 | 0xffffffff |
+| mailbox0 / mailbox1 | 0 / 0 |
+
+Four initial values at offset 0xf08 verify the original read/modify/write
+`(initial & 0xff3fffff) | 0x800000`. With otherwise zero synthetic state, the
+resulting CPU CSRs are mstatus=0x2008, mie=0x888 and mtvec=0x1002dc. These are
+firmware observations, **not a host register initialization recipe**. Do not
+duplicate these writes from Linux merely because a successful emulator trace
+contains them. Hardware effects and table-entry meanings remain unverified.
+
+The original Windows common-loader slice `0xd43c48..0xd43c98` reads offset
+0xd2c through subobject slot 0xa0 into subobject+0x54, then calls the already
+recovered HAL mask callback with enable=0. The extended `emulate_irq_mask.py`
+executes this slice, the original read thunk/accessor and original callback.
+Its main case feeds the **actual output** of the RV32 initializer above into
+the synthetic Windows register backend: route/ownership value 0x1d0 and mask
+0x1f85 yield mask-clear 0x180 and saved-mask 0x180. Additional zero and alternative
+route-mask cases verify the intersection rather than assuming a constant.
+
+Thus subobject+0x54 is populated from a device register in this common-loader
+branch; it is not simply a fixed 0xc0 ownership constant. The separate method-2
+resume/reinit branch can bypass this slice, so this does not prove every
+lifecycle path refreshes that field. Constructor/configuration of the enable
+flag at subobject+0x50, the exact host/target routing semantics of 0xd2c/0xd30,
+and assignment of ACPI GSIs 463/800 remain open. The ACPI GSIs must not be
+chosen by analogy to a Jetson interrupt number. No Linux device binding,
+physical IRQ registration, MMIO access or firmware boot was performed.
