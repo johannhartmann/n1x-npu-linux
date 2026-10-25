@@ -19,8 +19,9 @@ relative to 0x18010000 and are translated/bounds-checked against this subrange.
 It neither removes the child descriptor nor bypasses resource reservations.
 No auxiliary aperture is mapped and neither IRQ is requested.
 
-Probe does not read MMIO, request firmware, allocate DMA memory or invoke a
-power/reset operation. Standard Linux binding still performs ACPI/core DMA
+With default parameters, probe does not read MMIO, request firmware, allocate
+DMA memory or invoke a power/reset operation. The explicit `test_dma=1` option
+adds the allocation-only check described below. Standard Linux binding still performs ACPI/core DMA
 configuration, including IOMMU/domain setup where available. The preceding
 power-path audit found no DLA/ROT0 or ancestor initialization/power methods
 that binding would execute in these exact tables. This is not a guarantee that
@@ -210,3 +211,99 @@ nested/same source destination, mismatched running configuration/Image, and
 an existing output directory. Its fixtures perform no copy/build/install.
 Both builders intentionally refuse implicit resumption; inspect a failed or
 interrupted process and its exact output before choosing how to resume.
+
+## Allocation-only DMA qualification
+
+The observation module now has an immutable load-time `test_dma=1` option.
+It is disabled by default. The updated module compiles for both the current kernel and the isolated test
+kernel; this is not a physical allocation result.
+
+For each device the test requires an observed ACPI `_CCA`, matching ACPI/Linux
+coherency, a non-NULL DMA mask, a DMA-API domain and the kernel's active
+`use_dma_iommu()` backend. Identity, unmanaged and missing domains are rejected
+before allocation. It then sets the mask to 32 bits for SROOT or 36 for DLA.
+SROOT allocates **67508 bytes**, matching the audited default opaque upload
+image; DLA allocates 4096 bytes. The complete SROOT extent must lie within
+**0xe0000000..0xffffffff**. Both addresses must be 256-byte aligned, and zero
+is rejected for DLA's encoded-method use. The test checks CPU write/readback
+and frees the buffer.
+
+No device is given the address: no firmware is requested or copied, no mailbox
+request is sent, and no NPU register is written. Therefore the buffer can be
+freed after every allocation outcome. **That cleanup rule must not be reused
+after a firmware upload/task attempt**, where delivery/DMA quiescence may be
+uncertain. The test establishes allocation/mapping constraints only; it cannot
+establish device DMA visibility, transfer completion or inference.
+
+`test_linux_dma_allocation.py` compiles the actual kernel C allocation function
+with mocked API boundaries. Twenty-three cases verify prerequisites prevent
+allocation, whole-extent/address/alignment limits, mask/allocation/readback
+failures, and exact allocation/free pairing. These are fault checks, not real
+DMA tests.
+
+`scripts/select_npu_dma_domains.py` prepares only the two audited device groups
+on the exact `...-npu1` test kernel. Its default mode prints a plan. Before any
+write, it checks machine/BIOS, both devices unbound, exact SMMU suppliers,
+single-device groups and supported current types. With `--apply` it changes
+identity to DMA and preserves existing DMA/DMA-FQ domains. It never unbinds a
+driver, changes global policy, or forces a rejected kernel operation. Kernel
+locking/ownership checks also guard the actual type writes. Nine filesystem
+fixtures check shared groups, bound devices, wrong suppliers/BIOS/types/paths,
+and preservation of already configured domains. No real group was changed.
+
+After the test kernel is separately installed and successfully booted, the
+intended qualification sequence is:
+
+```sh
+# Unload the observation module first if it is loaded; both devices must be unbound.
+python3 scripts/select_npu_dma_domains.py
+sudo python3 scripts/select_npu_dma_domains.py --apply
+sudo insmod results/linux-7.2.8-p16-npu1/n1x-npu-module/driver/n1x_npu_observe.ko test_dma=1
+cat /sys/bus/platform/devices/NVDA200A:00/dma_state
+cat /sys/bus/platform/devices/NVDA8600:00/dma_state
+journalctl -k -b --no-pager -g 'DMA allocation-only test|DMA allocation test failed'
+```
+
+A loaded module alone does not imply either probe/test succeeded; verify both
+device bindings and their journal results. A failed second domain change can
+leave the first group configured; inspect the actual type controls before
+continuing. This sequence has **not** run on hardware. Test-kernel packaging,
+boot-entry preparation and boot verification still precede it. The existing
+kernel and global IOMMU configuration remain unchanged.
+
+The negative prerequisite test has now also run on the unchanged physical
+7.2.8-23 kernel (journal 2026-10-25 08:37:00). Both probes rejected `test_dma=1`
+with **-EOPNOTSUPP** before allocation: DLA has an identity domain; SROOT lacks
+CCA/DMA configuration. The temporary module was removed and reloaded with both
+`test_dma` and `read_mmio` disabled. Both ordinary observation bindings were
+restored, with their original DMA states. The loaded module's srcversion
+matches the updated current-kernel artifact. No successful physical allocation
+or NPU transfer is claimed from that negative test.
+
+## Prepared kernel packages
+
+`scripts/package_sroot_kernel.py` reuses the pinned P16 packaging functions
+from the existing 7.2.8-23 recipe with a distinct package name and the already
+verified test-kernel build. It performs no source downloads or rebuilds and
+does not install anything. Kernel/header files use only the new release's
+module, source and DTB paths; the packages declare no conflicts/replacements.
+The package audit checks those paths, identity/architecture, exact Image/config
+hashes, header release and retained SPI HID modules.
+
+```sh
+python3 scripts/package_sroot_kernel.py \
+  results/linux-7.2.8-p16-npu1 \
+  /home/johann/p16rtx_linux/kernel/PKGBUILD results/npu1-kernel-packages
+```
+
+This produced and audited:
+
+- `linux-p16-asus-23-npu1-7.2.8-23-aarch64.pkg.tar.zst` (165788954 bytes).
+- `linux-p16-asus-23-npu1-headers-7.2.8-23-aarch64.pkg.tar.zst` (41561820 bytes).
+
+The observation module also compiles against a separately extracted copy of
+the **packaged headers**, with matching test-kernel vermagic. Neither package
+was installed. Initramfs/UKI preparation, controlled boot-entry creation and
+boot verification are still pending. Normal package installation may run
+system-wide DKMS/boot hooks; deployment must account for those before invoking
+pacman and must preserve the existing boot default/recovery entry.

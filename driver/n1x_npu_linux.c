@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Initial Linux platform backend. Observation only: no register writes,
- * firmware requests, DMA allocations, IRQ handlers or power/reset operations.
+/* Initial Linux platform backend. No NPU register writes, firmware requests,
+ * IRQ handlers or power/reset operations. DMA allocation testing is opt-in.
  * No MODULE_DEVICE_TABLE: this experimental driver is never auto-loaded.
  */
 #include <linux/acpi.h>
 #include <linux/dma-map-ops.h>
+#include <linux/dma-mapping.h>
 #include <linux/dmi.h>
 #include <linux/io.h>
 #include <linux/iommu.h>
+#include <linux/iommu-dma.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include "n1x_dla_registers.h"
@@ -16,12 +18,60 @@ static bool read_mmio;
 module_param(read_mmio, bool, 0400);
 MODULE_PARM_DESC(read_mmio, "Allow explicit read-only register snapshots (default false)");
 
+static bool test_dma;
+module_param(test_dma, bool, 0400);
+MODULE_PARM_DESC(test_dma, "Allocate/check/free an unpublished DMA buffer at probe (default false)");
+
 struct n1x_linux {
 	void __iomem *base;
 	resource_size_t bytes;
 	u32 first_offset;
 	bool sroot;
 };
+
+/* Allocation-only test: no device receives this address, so freeing on any
+ * result is safe. This rule must NOT be reused after an upload/task submission.
+ */
+static int n1x_test_dma_allocation(struct device *dev, bool sroot)
+{
+	struct acpi_device *adev = ACPI_COMPANION(dev);
+	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
+	u64 minimum = sroot ? 0xe0000000ULL : 1;
+	u64 maximum = DMA_BIT_MASK(sroot ? 32 : 36);
+	size_t bytes = sroot ? 67508 : 4096;
+	dma_addr_t address;
+	void *buffer;
+	int ret;
+
+	if (!adev || !adev->flags.cca_seen || !dev->dma_mask)
+		return -EOPNOTSUPP;
+	if (adev->flags.coherent_dma != !sroot || dev_is_dma_coherent(dev) != !sroot)
+		return -EINVAL;
+	if (!domain || !iommu_is_dma_domain(domain) || !use_dma_iommu(dev))
+		return -EOPNOTSUPP;
+	ret = dma_set_mask_and_coherent(dev, maximum);
+	if (ret)
+		return ret;
+	buffer = dma_alloc_coherent(dev, bytes, &address, GFP_KERNEL);
+	if (!buffer)
+		return -ENOMEM;
+	if (address < minimum || address > maximum || bytes - 1 > maximum - address ||
+	    (address & 255)) {
+		ret = -ERANGE;
+		goto free;
+	}
+	memset(buffer, 0xa5, bytes);
+	if (memchr_inv(buffer, 0xa5, bytes)) {
+		ret = -EIO;
+		goto free;
+	}
+	dev_info(dev, "DMA allocation-only test: %zu bytes at %pad; no device transfer\n",
+		 bytes, &address);
+	ret = 0;
+free:
+	dma_free_coherent(dev, bytes, buffer, address);
+	return ret;
+}
 
 static int n1x_linux_read32(struct n1x_linux *npu, u32 logical, u32 *value)
 {
@@ -149,6 +199,12 @@ static int n1x_probe(struct platform_device *pdev)
 	npu->base = devm_ioremap_resource(dev, &registers);
 	if (IS_ERR(npu->base))
 		return PTR_ERR(npu->base);
+	if (test_dma) {
+		int ret = n1x_test_dma_allocation(dev, sroot);
+
+		if (ret)
+			return dev_err_probe(dev, ret, "DMA allocation test failed; check CCA/domain/window\n");
+	}
 	platform_set_drvdata(pdev, npu);
 	dev_info(dev, "observation backend attached; MMIO reads %s; no write path\n",
 		 read_mmio ? "explicitly enabled" : "disabled");
