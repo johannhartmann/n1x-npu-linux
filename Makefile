@@ -69,6 +69,7 @@ test-vendor: test
 	venv/bin/python scripts/inspect_runtime_selector_setter.py
 	venv/bin/python scripts/inspect_provider_record.py
 	venv/bin/python scripts/inspect_kmd_private_selector.py
+	venv/bin/python scripts/inspect_loadable_version_gate.py
 	venv/bin/python scripts/test_diagnostic_output.py
 	venv/bin/python scripts/test_diagnostic_scheduler_boundary.py
 	venv/bin/python scripts/test_command23_builder.py

@@ -426,3 +426,33 @@ execution remain unobserved. Thus this is a strong compatibility explanation,
 not proof that every Windows diagnostic mechanism is unsupported, nor proof of
 a physical firmware ABI. The earlier zero-extended diagnostic fixture must
 remain a research input rather than a claimed runnable P16 test network.
+
+### Normal content-loader gate differs from diagnostic selection
+
+The normal loader's original branch **0x20e70..0x20edc** calls runtime
+vtable+0x1d0 with a three-byte output pointer, compares the first two bytes
+against metadata at +0x80, and forms status 0x430005 for a major mismatch or
+an insufficient minor value. A callback error bypasses those comparisons.
+The subsequent conditional comparison has an important special case:
+**selector 3 continues despite a nonzero status**. Other tested selectors
+reject that status. The third byte is not compared by this branch. Both
+successful and bypassed paths continue at 0x20ee0 into later compatibility
+logic; neither establishes completed loading or hardware compatibility.
+
+`scripts/inspect_loadable_version_gate.py` executes the original branch for
+30 combinations covering five selectors, major mismatch, exact version,
+compatible/incompatible minor versions, ignored third byte and callback error.
+The callback, CFG boundary and metadata are explicitly synthetic. The script
+also inventories NVDA markers in the five available NVIDIA DLL/SYS inputs,
+reporting each file's SHA-256 and candidates accepted by the existing bounded
+v1 projection. That scan finds only the known runtime diagnostic (file offset
+0xa5810, root version 0.8.0, seven blobs, one task) in this corpus. It is not
+an exhaustive model-format recognizer: packed, compressed, external or
+schema-incompatible models would not necessarily be recognized.
+
+The provisional blob projection reports raw slot-4 bytes `02 01 00` for all
+seven diagnostic contents. Their correspondence to the loader's materialized
+metadata is not established merely by matching byte positions. Accordingly no
+version bytes are patched, and a bypassed version gate is not used to claim
+that the old diagnostic can execute on this P16. A normally compiled model
+and its complete materialization contract are still required.
