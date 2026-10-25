@@ -402,3 +402,25 @@ future adapter. Neither the captured kind-0 network nor kind-4 buffer is
 read by this collector. Its acceptance establishes this copying/layout step
 only; it is not validation of every operation field, backend configuration,
 IR lowering, an executable loadable or physical firmware compatibility.
+
+### The captured operation reaches the Windows SDP builder
+
+The collector verifier now also executes the original IR dispatch slice at
+`0x70e984`, stopping at the selected builder entry before it executes. The
+captured surface byte at **+0x1004 is 2**. The dispatch reads that byte,
+uses its original jump table and selects builder **`0x6f9928`**. Static
+inspection of that builder shows a 0x18f8-byte allocation followed by a call
+to constructor `0x6e34e8`; the constructor references the string
+**`MtlEngineSdp`** at RVA `0x1166560`. This identifies the selected SDP
+builder path, not successful semantic validation of every ReLU parameter.
+
+At the builder entry the verifier checks all seven arguments, in order:
+IR context, captured kind-2 common-operation data, kind-1 surface data,
+kind-3 operation data, kind-0 network data, kind-4 auxiliary data, and graph
+context. Process-local pointers are replaced with emulator addresses; the
+captured payload bytes are unchanged. The input's +48 pointer is supplied
+from kind 4, matching the dispatcher load. Contexts and the caller's scratch
+frame are modeled storage because execution stops before the builder uses
+them. No builder, IR object constructor, instruction generator or physical
+NPU executes in this dispatch test. The graph's complete Windows translation
+remains the next unresolved step.

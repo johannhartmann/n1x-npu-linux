@@ -41,6 +41,7 @@ def main():
     descriptor=bytearray(64)
     struct.pack_into('<QI',descriptor,0,pointers[0],1)
     struct.pack_into('<3Q',descriptor,16,pointers[2],pointers[3],pointers[1])
+    struct.pack_into('<Q',descriptor,48,pointers[4])
     u.mem_write(common,bytes(descriptor))
     u.mem_write(vector,struct.pack('<3Q',output,output,output+0x9f60))
     copies=[]
@@ -65,8 +66,24 @@ def main():
     assert record[0x88f0:0x9a08]==buffers[1]
     assert record[0x9a08:]==b'\xa5'*(0x9f60-0x9a08)
     assert copies==[0x8800,0x1118,0x9f60]
+    # Execute the original IR dispatch, stopping before the selected builder.
+    ir_object,graph_object=heap+0x400,heap+0x800
+    for reg,value in ((r.UC_ARM64_REG_X19,common),(r.UC_ARM64_REG_X20,graph_object),
+                      (r.UC_ARM64_REG_X21,ir_object),(r.UC_ARM64_REG_X26,heap+0x600)):
+        u.reg_write(reg,value)
+    u.emu_start(base+0x70e984,base+0x6f9928,count=100)
+    assert u.reg_read(r.UC_ARM64_REG_PC)==base+0x6f9928
+    arguments=[u.reg_read(reg) for reg in (r.UC_ARM64_REG_X0,r.UC_ARM64_REG_X1,r.UC_ARM64_REG_X2,
+                                         r.UC_ARM64_REG_X3,r.UC_ARM64_REG_X4,r.UC_ARM64_REG_X5,r.UC_ARM64_REG_X6)]
+    assert arguments==[ir_object,pointers[2],pointers[1],pointers[3],pointers[0],pointers[4],graph_object]
+    assert buffers[1][0x1004]==2
+    assert pe.get_data(0x1166560,13)==b'MtlEngineSdp\0'
     print(json.dumps(dict(passed=True,hardware_access=False,windows_sha256=digest,
         collector_rva='0x756630',operation_count=1,record_bytes=len(record),
+        dispatch=dict(surface_type_offset='0x1004',surface_type=2,builder_rva='0x6f9928',
+                      constructor_rva='0x6e34e8',constructor_label='MtlEngineSdp',
+                      original_dispatch_executed=True,builder_executed=False,
+                      verified_argument_source_kinds=[None,2,1,3,0,4,None]),
         original_stack_helpers_executed=True,memcpy_shim_sizes=copies,
         verified_regions=[dict(offset=0,bytes=236,source_kind=2),dict(offset=240,bytes=34816,source_kind=3),
                           dict(offset=35056,bytes=4376,source_kind=1)],
