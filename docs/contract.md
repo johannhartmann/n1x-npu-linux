@@ -1471,3 +1471,42 @@ They do not define every message type, task-success signal, flag or error code.
 Outstanding-task association, deadlines, recovery and DMA quiescence still need
 implementation and hardware validation; neither frame parsing nor a zero status
 alone authorizes freeing an active task's buffers.
+
+## Original Windows IRQ error policy and SWGEN0 counter handling
+
+`test_response_decode.py` now additionally executes the complete original
+HAL-1 IRQ callback at **0xd48ce0**, using its actual initializer, mailbox parser,
+accessors, message predicates and debug-register helper. The IRQ mask argument,
+lock success, context and registers are synthetic. OS/logging, dump collection,
+report emission and memory-clear boundaries are stubbed. In particular this
+does not execute a real recovery, reset, Windows event or device operation.
+
+Eighteen response cases cover the observed submission/descriptor-error/task-error
+frames plus message bytes 2/8/9/10 combined with status bytes 0/3/15/255. Under
+the tested zero feature flags:
+
+- Submission 0x702 reads both mailboxes and writes ACK 0xd1a0cafe without a dump.
+- Frames 0x90701 and 0x8003070a both set context byte **+0x5ac** to 1, invoke
+  dump collection with code **0x8a**, write the ACK, then emit the report.
+- Message 9 uses report code **0x98**; otherwise message 8 **or** status 15
+  selects **0x99**. Other tested nonzero/non-255 statuses select **0x8a**.
+- With tested message 2/10 and status 0/255, there is no dump/report in this path.
+
+The ordered callback trace pins **dump -> ACK -> report** for errors. The
+original callback returns **zero even on these error paths**. Context +0x5ac
+is an observed state byte also used elsewhere; this experiment does not assign
+it a universal recovery-ready/error-bit meaning. A zero callback return and
+an ACK are not evidence of successful work or completed recovery. Report-code
+names and complete error taxonomy remain unestablished.
+
+The SWGEN0-only path (IRQ bit 6) reads neither mailbox and performs no ACK write.
+It decrements context counter **+0x5b4 only when positive**. Tests with initial
+0/1/2 yield 0/0/1. Combined bits 6+7 decrement the counter and process a normal
+mailbox reply in the same invocation. The counter's full lifecycle and relation
+to Linux task ownership are not inferred from these injected initial values.
+
+The callback-level ACK trace intentionally differs from Linux's complete
+capture/clear/ACK helper: Windows enters this callback after earlier IRQ layers.
+It does not imply that mask/status clearing may be omitted by a Linux backend.
+Remaining queue association, hardware quiescence, physical IRQ setup and recovery
+must be implemented and verified before reclaiming DMA-backed work.

@@ -7,7 +7,9 @@ upload firmware words, select/start the RISC-V core, wait for idle without a
 start write, and send methods through
 caller-provided callbacks. A basic queue-0 task serializer and response capture/ACK helper are also present.
 A native C response-field decoder is checked against the original Windows parser;
-it preserves unknown bits and does not infer task completion.
+it preserves unknown bits and does not infer task completion. The original
+Windows IRQ callback is also exercised for error-report ordering and SWGEN0
+counter handling; report/recovery boundaries remain synthetic.
 No hardware backend is supplied;
 the tests neither bind the ACPI device nor write hardware registers.
 
