@@ -307,3 +307,56 @@ was installed. Initramfs/UKI preparation, controlled boot-entry creation and
 boot verification are still pending. Normal package installation may run
 system-wide DKMS/boot hooks; deployment must account for those before invoking
 pacman and must preserve the existing boot default/recovery entry.
+
+## Staged UKI and release-specific ACPI hook
+
+The existing installed `p16-acpi` hook and its configuration allow only the
+known kernel releases. The NPU test release would otherwise omit the ACPI
+fixes or fail that hook's guard. `build_sroot_uki.py` therefore builds a
+**private module root and hook directory**, retaining the exact pinned tables
+through a local `npu-test-acpi` hook. It snapshots the current mkinitcpio base/
+drop-in configuration, preserves the current command line, adds SPI HID, and
+copies the seven hash-checked matching external modules into the staging root.
+`depmod` and module-vermagic checks use that root, not the running system.
+
+Only `run_sroot_mkinitcpio.py` requires root. It reads the current Limine menu
+into the private build directory and runs mkinitcpio with **--nopost** and an
+explicit output under `results/`. Thus it creates no installed modules,
+initramfs presets, EFI files under `/boot`, or boot-menu entries. The output is
+returned to the invoking directory owner's UID/GID. No NPU driver is loaded
+by this build. Standard hook directories are passed explicitly in addition to
+the private one: mkinitcpio's `-D` **replaces**, rather than augments, its defaults.
+
+```sh
+python3 scripts/build_sroot_uki.py \
+  results/linux-7.2.8-p16-npu1 results/npu1-kernel-packages \
+  results/npu1-external-modules results/npu1-uki-v3
+```
+
+The initial offline attempt lacked standard hooks because of `-D` behavior;
+mkinitcpio nevertheless returned zero. A second attempt restored the hooks but
+reported fakeroot internal metadata-protocol errors. Both images are marked
+invalid and renamed `.efi.invalid`. Neither was installed. The builder now
+uses real root metadata, records the build log and rejects mkinitcpio errors
+independently of the exit status; fakeroot is no longer used for UKI creation.
+
+The **third build completed with a clean log** and passed
+`verify_sroot_uki.py`. GNU objcopy extracts the PE sections into temporary
+files without rewriting the input UKI. Verification checks:
+
+- Exact test-kernel release, Image bytes and command line.
+- Early-CPIO DSDT/SSDT contents against the pinned SHA-256 values.
+- NVIDIA, SPI/I2C-HID and ASUS keyboard modules.
+- Init, encrypt hook, cryptsetup and vconsole configuration presence.
+- No observation module in the initramfs, so it cannot bind the NPU at early boot.
+
+`test_sroot_uki_verifier.py` checks a valid early CPIO and seven malformed/
+duplicate/truncated fixtures. The real artifact is
+`results/npu1-uki-v3/linux-p16-asus-23-npu1.efi`, 212898304 bytes, SHA-256
+`f05f2a6d04876655cbdbf8f45da22189eb1da31355cfb16b8596088083f4727e`.
+Its manifest records the exact configuration snapshot and initial menu hash.
+
+The inspected menu still selects **Omarchy/linux-p16-asus-23** by default,
+with a five-second timeout. No menu or installed EFI image has been changed.
+Package/module installation and adding a separate test entry remain pending;
+physical boot and successful DMA allocation are still unverified.

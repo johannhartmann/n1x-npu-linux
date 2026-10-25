@@ -11,6 +11,7 @@ test-vendor: test
 	venv/bin/python scripts/test_iort.py
 	venv/bin/python scripts/test_linux_dma_allocation.py
 	venv/bin/python scripts/test_npu_dma_domains.py
+	venv/bin/python scripts/test_sroot_uki_verifier.py
 	./tests/test_firmware sources/dla-t35x-verified.bin
 	venv/bin/python scripts/emulate_firmware_parser.py
 	venv/bin/python scripts/decode_transfer_registers.py
