@@ -82,9 +82,9 @@ enabled HFRP callback reports nonzero status, this invocation skips the primary
 DLA probe. Otherwise it calls the primary object's status callback `+0x280`;
 a nonzero successful result is accumulated at `+0x4a0` and its `+0xe0` callback
 is invoked to schedule subsequent work. A primary accessor error prevents that
-accumulation/scheduling. The primary status callback and scheduler are explicit
-stubs in this parent-dispatch test; actual primary response handling is tested
-separately.
+accumulation/scheduling. The original 48-case parent test uses explicit primary status/scheduling
+stubs. A further 60 cases now execute the original primary initializer and
+callbacks described below; only lower OS/MMIO/provider boundaries are modeled.
 
 This proves a shared software dispatch path and HFRP-first priority, not which
 physical wire invoked it. In particular, simultaneous modeled pending sources
@@ -141,6 +141,61 @@ No interrupt was requested, device register read/written, bootstrap loaded or
 firmware started by these tests. Hardware GSI routing, HFRP queue processing,
 power-state coordination, full initialization and inference remain unverified.
 Do not map the auxiliary block, register an IRQ or add power writes solely from
-the index analogy. The next evidence should connect the Windows interrupt
-registration context to this parent path, or capture actual source status during
-an explicitly qualified hardware experiment.
+the index analogy. The next evidence still needs to connect the generic Windows registration
+context to this NPU wrapper and its translated resources, or capture actual
+source status during an explicitly qualified hardware experiment.
+
+
+## NPU entry wrapper and original primary callbacks
+
+A static executable-section branch scan found the direct call
+`0xd36fa4 -> 0xd39198`. Its containing entry wrapper is **0xd36ee8**; the
+additional static caller `0xdd21e0 -> 0xd36ee8` is independently checked by
+instruction decoding in the test. The latter wrapper at 0xdd2188 includes
+logging around the call; it does not itself identify a Windows PDO or GSI.
+This is a concrete NPU software path, still separate from the generic
+IoConnectInterruptEx/vtable path above.
+
+Executing `0xd36ee8` shows that it obtains the owner from global `0x1512148`,
+looks up the parent through `0x93630`, gets an outer object through `0xd39160`,
+then calls the shared HFRP-first/DLA dispatcher. It finally invokes
+`0xd3b4a0(outer, parent->0x160, 0)` and returns 1. That final helper is an
+explicit test boundary; its notification/synchronization semantics are not
+reconstructed here. The tested input register x0 does not affect this path.
+Its external semantic name is unknown; the test values are not IRQ numbers.
+
+Thirty cases vary that input over 0, 1, 2, 0x12345678, UINT32_MAX, HFRP status
+over 0/2 and primary status over 0/0x40/0xc0. With modeled lookups succeeding,
+the wrapper returns 1 and reaches the final helper even when neither source
+is pending. A zero-global control returns 0 before any dispatch or final
+helper. Linux must not copy the unconditional successful return as evidence
+that a shared IRQ belongs to this device or a task completed.
+
+The original HAL-1 initializer `0x1951238` sets primary context `+0x280` to
+**0xd48830** and `+0xe0` to **0xd45670**. The extended test executes that
+initializer, verifies both installed pointers and then executes both original
+callbacks through the parent dispatcher, replacing the previous primary stubs
+for these additional cases:
+
+- `0xd48830` tail-calls the generic accessor with **resource id 0**, logical
+  offset **8**, preserving its error return. This reads DLA IRQSTAT, distinct
+  from HFRP resource id 2 / offset 0x104.
+- On a successful nonzero status the parent ORs all raw bits into primary
+  `+0x4a0`. A failed accessor neither accumulates nor schedules.
+- `0xd45670` follows primary `+0x68` to the provider, reads its ownership mask
+  at `+0x54`, ANDs it with accumulated `+0x4a0`, then calls provider vtable
+  **+0xb0** with a pointer to the filtered u32. The provider callback is an
+  explicit test boundary, not evidence that Windows work/IRQ delivery occurred.
+
+Sixty combinations vary HFRP enabled/status, primary IRQSTAT (including an
+unknown bit 0x100) and ownership masks 0/0x40/0xc0. They verify HFRP-first
+suppression, raw pending accumulation and filtered provider payloads. A
+nonzero raw status with ownership mask zero still calls the provider with
+zero; no unobserved filtering policy is inferred. The separate accessor-error
+control confirms no accumulation/provider call.
+
+The earlier 72 C capture/fault and 48 parent/timestamp cases still pass. These
+new cases perform no MMIO on this machine and change no Linux IRQ registration.
+They recover more of the required software dispatch/ownership chain; physical
+463/800 assignment, GIC delivery, deferred-work consumption, reset/recovery and
+numerical execution remain unresolved.

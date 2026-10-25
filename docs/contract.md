@@ -1857,3 +1857,16 @@ retained lifetime. [Native phase details](bypass-task.md#native-one-attempt-boot
 distinguish its synthetic lifecycle test from the separate original-firmware
 scheduler test. No physical submission, IRQ routing, device quiescence,
 arbitrary-model UAPI or numerical execution is established.
+
+
+## NPU interrupt entry and ownership-filtered primary dispatch
+
+The original wrapper `0xd36ee8` now executes through the shared dispatcher in
+30 modeled cases, with static callers `0xdd21e0` and `0xd36fa4` checked. A
+further 60 cases use original HAL-1 initialization and primary callbacks
+`0xd48830` (resource 0 / IRQSTAT logical 8) and `0xd45670` (accumulated status
+AND provider ownership mask +54, then provider vtable +b0). Tests preserve
+HFRP-first priority and lower-accessor error suppression. See [entry and primary
+callback evidence](hfrp-irq.md#npu-entry-wrapper-and-original-primary-callbacks).
+This still does not connect IoConnectInterruptEx to the NPU PDO's GSI routing,
+and the final provider/OS helper calls remain modeled boundaries.
