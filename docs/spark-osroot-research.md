@@ -140,6 +140,56 @@ observed on the P16. The mailbox fields alone cannot recover the discarded
 upper bits or prove the origin of the error. This provides the next code-search
 targets without labeling the observed failure as a signature or trust error.
 
+## Running the original envelope parser
+
+`scripts/test_osroot_envelope_parser.py` runs the original initializer at
+offset `0xf0ec` and parser at `0xf1d2` against both pinned Windows images.
+It strips the four-byte tag and appends the four zero allocation-tail bytes
+used by the Linux staging code. The input resides in synthetic local memory;
+the staging/source addresses are identical, deliberately avoiding the reference
+parser's DMA path. The logger is the only function stub. Original CBOR parsing,
+allocation, error handling and cleanup execute unchanged.
+
+An initial experiment stopped in the firmware's integrity-failure path because
+the parser decrements an encoded operation counter that its caller normally
+acquires first. The harness now invokes the original acquire routine at
+`0xde9e` with argument 1, matching the caller at `0x6088`. It checks that the
+counter returns to `(0, 0xa5c35a3c)` after parsing and that the two-word return
+value obeys the same XOR encoding. No integrity check is bypassed.
+
+Both images traverse the envelope to the key-ID `08` lookup at `0xf6ee`.
+The accessor at `0x6e8a` returns context address `0x16e000`; the parser reads
+the record at `context + 0x5c4 + key_id * 52`, hence `0x16e764` for key 8.
+It expects the record's first word to be `-43` (the SHA-384 identifier used by
+the signed format). The emulated runtime context is absent and zero-filled,
+so this check produces **`0xaa559430`**, not the observed P16 error. The parser
+does not reach successful signature verification. No key digest is fabricated
+or inserted, and the context remains unchanged throughout these tests.
+
+All four scheme values accepted by the initializer are exercised. With
+`0xc11`, `0x3033` and `0xc077`, the parser returns `0xaa559430` and clears the
+configured staging extent. With `0x300`, its log explicitly says
+`Ignore Auth Result` with that same error, but the return is `0x55aa0000` and
+the input remains unchanged. This is a reference-policy observation, **not**
+successful authentication or a proposed P16 workaround. The correct scheme and
+runtime key context for P16 SROOT have not been recovered.
+
+Eight malformed-input controls (four for each image) stop before the key lookup:
+
+| Condition | Reference parser error |
+| --- | --- |
+| Prefix type byte is not `0x59` | `0xaa559411` |
+| Declared prefix length plus 3 is not 16-byte aligned | `0xaa559410` |
+| Declared prefix exceeds configured staging capacity | `0xaa559407` |
+| Outer envelope padding contains a nonzero byte | `0xaa55940c` |
+
+Together with the eight original-image/scheme cases, these 16 tests establish
+prefix traversal and the missing-context boundary. They do not prove full image
+acceptance, body validation, DMA correctness, P16 trust or the cause of the live
+`0x253ff018` reply. The next required evidence is the runtime-context producer
+or the actual SROOT authentication path; changing the Linux driver on the basis
+of this emulated missing-context error would be premature.
+
 ## Reproduce without touching hardware
 
 Download the catalog-pinned package from the LVFS CDN, validate its hash, and
@@ -158,6 +208,8 @@ venv/bin/python scripts/inspect_spark_osroot.py
 venv/bin/python scripts/inspect_spark_osroot.py --extract-dir sources/dgx-spark-osroot
 # After extraction; also needs the existing pinned Windows provider:
 venv/bin/python scripts/test_osroot_reply.py
+# Also requires both pinned images extracted from the Windows KMD:
+venv/bin/python scripts/test_osroot_envelope_parser.py
 ```
 
 The script pins the whole capsule, verifies the internal signature and all
