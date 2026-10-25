@@ -597,8 +597,9 @@ sudo rmmod n1x_npu_observe
 sudo install -Dm644 sources/dla-p16-sroot-v0.bin \
   /usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin
 # Use the module built for npu1, not the current-kernel build in driver/:
-sudo insmod results/npu1-bootstrap-region5-build/driver/n1x_npu_bootstrap.ko \
-  enable_upload=1 enable_ping=1 enable_region5=1 enable_config_snapshot=1
+sudo insmod results/npu1-bootstrap-config-apply-build/driver/n1x_npu_bootstrap.ko \
+  enable_upload=1 enable_ping=1 enable_region5=1 enable_config_snapshot=1 \
+  enable_config_apply=1
 sudo cat /sys/bus/platform/devices/NVDA200A:00/status
 # This is the one write trigger; it requires retention/reboot afterward:
 printf 'upload\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/upload
@@ -684,8 +685,8 @@ software contracts under mocks; hardware boot and inference remain open.
 The bootstrap module now offers a third immutable option,
 `enable_config_snapshot=1`, and root/CAP_SYS_RAWIO trigger `read_config` accepting
 `read`. It requires both endpoint bindings and this boot's **verified DMA-word
-ping**. There is no automatic export and no configuration import/write-settings
-attribute. The updated pending module-load command above enables all three
+ping**. There is no automatic export. The separate optional default-import
+phase below adds an explicit write trigger; arbitrary settings are not exposed. The updated pending module-load command above enables all three
 independently triggered phases; select options before the first upload since
 module/runtime references are retained afterward.
 
@@ -745,8 +746,8 @@ IRQ routing/recovery and inference remain incomplete.
 `init`, gated on this boot's verified DMA-word ping and both endpoint bindings.
 It initializes the exact Windows-default 1-MiB allocation/layout through command
 11, preserves the buffer after every transaction attempt, and reports attempt,
-error, registration and retention in status. It does not implement ring
-production/consumption, task submission or configuration import.
+error, registration and retention in status. The region phase itself does not implement ring production/consumption, task
+submission or configuration import; default import is a separate step below.
 
 The recommended pending qualification order is upload, DMA-word ping, region-5
 registration, then optional configuration export. The earlier config-only
@@ -768,3 +769,31 @@ failure policy, firmware test and remaining ring semantics. The 26 new lifecycle
 cases and prior 26 snapshot, 29 ping, 21 upload and 2592 DMA/MMIO cases pass.
 Both current- and test-kernel module builds pass. No module was installed/loaded,
 no firmware file installed and no device register touched by this work.
+
+
+### Optional Windows-default configuration import (built, not yet run)
+
+The original `0xd47830` modifier changes bytes 1->2 and 50->1 even without an
+active override table. The C helper and native import phase now reproduce
+that default transformation, gated on ping, registered region 5 and a valid
+prior export. Immutable `enable_config_apply=1` permits the root/CAP_SYS_RAWIO
+`apply_config` trigger (`apply`). It never imports automatically and accepts
+no arbitrary payload or custom settings.
+
+The already retained config DMA allocation is reused after gate/extent checks;
+the original saved snapshot remains pre-import data. After dma_wmb, command 21
+uses the checked control/ACK pipeline. Acceptance is reported separately from
+actual hardware readback/full initialization, and all buffers remain retained.
+No native persistence/readback verification is claimed. See
+[default-config evidence](default-config.md) for the six full Windows/C
+transform comparisons, same-instance 22/21/22 firmware test and 27 Linux
+lifecycle cases.
+
+The updated pending manual sequence is upload → DMA-word ping → region 5 →
+config export → default config apply. Select all needed options before upload.
+The module-load example above now uses
+`results/npu1-bootstrap-config-apply-build/`; earlier region/control-only builds
+remain historical artifacts. Both kernel builds and affected regressions pass.
+No bootstrap has been loaded, firmware installed or physical import performed.
+Low-power/IRQ initialization, recovery, a usable task interface and numerical
+inference still require implementation/qualification.

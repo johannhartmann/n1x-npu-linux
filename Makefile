@@ -15,6 +15,8 @@ test-vendor: test
 	venv/bin/python scripts/test_linux_bootstrap_ping.py
 	venv/bin/python scripts/test_control_command.py
 	venv/bin/python scripts/test_linux_config_snapshot.py
+	venv/bin/python scripts/test_default_config.py
+	venv/bin/python scripts/test_linux_config_apply.py
 	venv/bin/python scripts/emulate_region5_setup.py
 	venv/bin/python scripts/test_linux_region5.py
 	venv/bin/python scripts/test_region5_history.py

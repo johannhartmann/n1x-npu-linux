@@ -49,6 +49,10 @@ static bool enable_region5;
 module_param(enable_region5, bool, 0400);
 MODULE_PARM_DESC(enable_region5, "Permit one explicit region-5 initialization after DMA ping (default false)");
 
+static bool enable_config_apply;
+module_param(enable_config_apply, bool, 0400);
+MODULE_PARM_DESC(enable_config_apply, "Permit one explicit default config import after export/region-5 qualification (default false)");
+
 struct n1x_boot_endpoint {
 	struct device *dev;
 	void __iomem *base;
@@ -86,6 +90,11 @@ static struct {
 	bool attempted, registered;
 	int error;
 } boot_region5;
+static struct {
+	struct n1x_dla_control_result transaction;
+	bool attempted, accepted;
+	int error;
+} boot_config_apply;
 
 static bool n1x_boot_machine(void)
 {
@@ -496,6 +505,60 @@ static ssize_t read_config_store(struct device *dev, struct device_attribute *at
 }
 static DEVICE_ATTR_WO(read_config);
 
+/* Reuse the already retained config allocation, as the Windows init sequence
+ * does. The saved CPU snapshot remains the original pre-import export.
+ */
+static int n1x_boot_apply_config_once(void)
+{
+	struct n1x_dla_io io;
+	u64 maximum = DMA_BIT_MASK(36);
+	int err;
+
+	if (!enable_config_apply || !n1x_boot_machine())
+		return -EPERM;
+	if (!boot_sroot || !boot_dla || !boot_ping.verified || !boot_region5.registered ||
+	    !boot_config.valid || !boot_config.buffer)
+		return -ENODEV;
+	if (boot_config_apply.attempted)
+		return -EALREADY;
+	err = n1x_boot_dma_gate(boot_dla);
+	if (err)
+		return err;
+	if (!boot_config.dma || (boot_config.dma & 255) || boot_config.dma > maximum ||
+	    4095 > maximum - boot_config.dma)
+		return -ERANGE;
+	err = n1x_dla_prepare_default_config(boot_config.buffer, 4096);
+	if (err)
+		return err;
+	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+	dma_wmb();
+	boot_config_apply.attempted = true;
+	err = n1x_dla_control_command(&io, 21, boot_config.dma, 5001, 1000,
+				       &boot_config_apply.transaction);
+	if (!err)
+		boot_config_apply.accepted = true;
+	/* No path frees or replaces the export's already-published allocation. */
+	return err;
+}
+
+static ssize_t apply_config_store(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	int err;
+
+	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "apply"))
+		return -EPERM;
+	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev)
+		err = -ENODEV;
+	else
+		err = n1x_boot_apply_config_once();
+	boot_config_apply.error = err;
+	mutex_unlock(&boot_lock);
+	return err ? err : count;
+}
+static DEVICE_ATTR_WO(apply_config);
+
 static ssize_t config_snapshot_show(struct device *dev, struct device_attribute *attr,
 				    char *buf)
 {
@@ -558,7 +621,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 
 	mutex_lock(&boot_lock);
 	size = sysfs_emit(buf,
-		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u\n",
+		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x\n",
 		!!boot_dla, !!boot_sroot, enable_upload, boot_attempted, boot_error,
 		boot_result.reply_valid, boot_result.reply.header,
 		boot_result.idle_observed, !!boot_buffer, enable_ping, boot_ping.attempted,
@@ -566,13 +629,16 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 		enable_config_snapshot, boot_config.attempted, boot_config.error, boot_config.valid,
 		boot_config.transaction.response_valid, boot_config.transaction.response.word,
 		!!boot_config.buffer, enable_region5, boot_region5.attempted, boot_region5.error,
-		boot_region5.registered, !!boot_region5.buffer);
+		boot_region5.registered, !!boot_region5.buffer, enable_config_apply,
+		boot_config_apply.attempted, boot_config_apply.error, boot_config_apply.accepted,
+		boot_config_apply.transaction.response_valid, boot_config_apply.transaction.response.word);
 	mutex_unlock(&boot_lock);
 	return size;
 }
 static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_show, NULL);
 static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
-	&dev_attr_config_snapshot.attr, &dev_attr_init_region5.attr, &dev_attr_status.attr, NULL};
+	&dev_attr_config_snapshot.attr, &dev_attr_init_region5.attr,
+	&dev_attr_apply_config.attr, &dev_attr_status.attr, NULL};
 ATTRIBUTE_GROUPS(boot);
 
 static int n1x_boot_probe(struct platform_device *pdev)

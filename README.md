@@ -22,9 +22,10 @@ now connects that phase to guarded Linux MMIO and SROOT DMA storage. It builds
 for the isolated test kernel but has not been installed or run. It is a
 one-attempt experiment requiring retained DMA storage/reboot, and does not
 complete IRQ/configuration initialization or inference. An additional opt-in
-DMA-word ping, exact Windows-layout region-5 setup and command-22 configuration
-export are implemented but remain untested on hardware. Configuration import
-and ring consumption are not exposed. A standalone recent-history reader works
+DMA-word ping, exact Windows-layout region-5 setup, command-22 export and
+Windows-default command-21 import are implemented but remain untested on hardware.
+Custom configuration overrides and ring consumption are not exposed. See
+[default configuration](docs/default-config.md). A standalone recent-history reader works
 on immutable CPU snapshots; see [history evidence](docs/region5-history.md) and
 [region-5 setup](docs/region5.md).
 The auxiliary HFRP register/IRQ capture and shared Windows dispatch are now

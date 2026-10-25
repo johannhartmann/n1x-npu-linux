@@ -67,3 +67,15 @@ int n1x_dla_build_command23(__u8 *out, size_t out_size, __u8 context_47d,
         out[i] = record[i];
     return 0;
 }
+
+int n1x_dla_prepare_default_config(__u8 *buffer, size_t buffer_size)
+{
+    if (!buffer || buffer_size < N1X_DLA_CONFIG_BYTES)
+        return -EINVAL;
+    /* Windows d47830 with no effective +640 overrides and constructor
+     * defaults +47e=1, +480=1. Field units/operating meanings stay opaque.
+     */
+    buffer[1] = 2;
+    buffer[0x32] = 1;
+    return 0;
+}

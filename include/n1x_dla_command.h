@@ -37,4 +37,17 @@ int n1x_dla_build_region(__u8 *out, size_t out_size, __u32 region,
  */
 int n1x_dla_build_command23(__u8 *out, size_t out_size, __u8 context_47d,
                             __u32 context_490, __u32 provider_f4);
+
+#define N1X_DLA_CONFIG_BYTES 252U
+/* Modify a previously exported HAL-1 config in place, matching Windows d47830
+ * with no effective override-table entries and defaults +47e=1/+480=1.
+ * Changes only bytes 1->2 and 0x32->1. Do not infer field units or translate
+ * arbitrary user settings from this helper. Requires the region-5 allocation
+ * when used by the default init sequence; the caller owns DMA visibility,
+ * addressability, command 21 submission, response validation and lifetime.
+ * Invalid arguments leave all bytes unchanged; trailing allocation bytes are
+ * untouched. This does not submit or establish full firmware initialization.
+ */
+int n1x_dla_prepare_default_config(__u8 *buffer, size_t buffer_size);
+
 #endif

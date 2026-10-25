@@ -1809,3 +1809,13 @@ raw-image wrap quirk writes a record excluded by Windows history and overwritten
 on the next call. It is not a demonstrated physical/SROOT-image bug. Field
 semantics, caller behavior and hardware remain open; see
 [producer evidence](region5-producer.md).
+
+
+## Windows-default config transformation and import
+
+Full original `0xd47830` modifies bytes 1->2 and 50->1 under constructor defaults,
+even with null/all-disabled override tables. A C helper matches six full-buffer
+comparisons; original raw HAL-1 22/21/22 in one instance confirms the two-byte
+change through export/import/re-export. The native phase reuses retained export
+backing and checks command-21 acceptance, without physical persistence or full
+initialization claims. See [default-config evidence](default-config.md).
