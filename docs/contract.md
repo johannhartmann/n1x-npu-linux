@@ -1581,3 +1581,47 @@ This proves registration/local ring setup in the **raw HAL-1** image, not ring
 production, consumption or hardware execution. The code identity of the opaque
 SROOT upload variant has not been established by these tests. Physical DMA,
 firmware boot and numerical inference remain unverified.
+
+## Post-upload configuration method boundaries
+
+`emulate_postinit_commands.py` executes original Windows callbacks at
+0xd46300 (HAL +0x78), 0xd49570 (+0x88), and 0xd496e0 (+0x438) to recording
+method/cache/delay boundaries. Fourteen cases cover valid/missing CPU and
+logical addresses, a shifted address of zero and method-send errors.
+
+| HAL slot | Windows RVA | Command | Encoded data / context field |
+|---|---|---:|---|
+| +0x78 | 0xd46300 | 22 | u64 +0x500 >> 8; CPU buffer at +0x4f8 |
+| +0x88 | 0xd49570 | 21 | u64 +0x500 >> 8; same CPU buffer |
+| +0x438 | 0xd496e0 | 23 | u64 +0x4f0 >> 8 |
+
+Command 22's wrapper sends first, then on success calls the delay helper with
+100 and cache helper with `(CPU,4096,0)`. Command 21 calls cache helper
+`(CPU,4096,1)` and delay 100 before send, then delay 100 and `(CPU,4096,0)` on
+success. Failed sends skip the trailing delay/cache operations. Cache effects
+and delay units are not inferred merely from these captured arguments. Both
+wrappers return 0x40 for missing CPU/usable encoded DMA address. Command 23
+returns 0x1f for a zero encoded DMA address and otherwise directly forwards the
+method return. None of these callbacks changes the synthetic CPU buffer itself.
+HAL +0x90 at 0xd47830 edits the shared configuration before command 21; its
+complete field layout is still being decoded.
+
+The raw HAL-1 firmware independently confirms command 22 exporting and command
+21 importing a **252-byte** block at **0x186154**. `test_profile1_config.py`
+executes both with the original reset/trap/DMA/ACK paths and unchanged firmware
+code, with no firmware function stubs. Each transfer decomposes into **63
+four-byte DMA operations** in this layout. A default export can be imported
+unchanged. Import mode-byte values 0/1 enter a separate normalization branch;
+the test checks its byte/word stores without assigning speculative field names
+or physical operating ranges. The default exported mode byte is 2.
+
+Command 23 imports a separate **40-byte** block at **0x186254**; command 24
+exports it. A same-firmware-instance test sets a synthetic 40-byte pattern,
+erases host memory, and gets the identical pattern back. It observes ten read
+and ten write DMA operations with replies **0x1702/0x1802**. These contents are
+test data, not a proposed hardware configuration. Commands 21/22 return
+**0x1502/0x1602**. Host memory beyond the respective transfer extent is preserved.
+
+This establishes transfer layouts and basic firmware behavior in RAM, not
+physical configuration safety, cache coherency or instruction execution on the
+NPU. The opaque SROOT image's code identity remains separate from the raw image.

@@ -111,5 +111,23 @@ stream_id[0]=0x2b
 The sysfs IOMMU link resolves to SMMUv3 0x35000000, matching the live IORT.
 No DMA allocation or transfer was attempted. ROT0's initial whole-resource
 reservation failed with EBUSY. A revised observation module uses the restricted
-register span above; its reload is pending system authentication. A successful
-DLA bind does not establish SROOT DMA readiness, firmware boot or inference.
+register span above and reloaded successfully at 08:01:06 (kernel journal).
+Both devices are now bound with MMIO reads disabled. ROT0 reports:
+
+```text
+acpi_cca_seen=0 acpi_coherent=0 dma_coherent=0 iommu_domain=-1
+```
+
+A privileged `/proc/iomem` read confirms the two firmware resources and the
+backend's distinct reservation:
+
+```text
+18010000-18010fff : NVDA8600:00
+  18010000-1801000f : NVDA8600:00
+  18010010-180100c3 : NVDA8600:00 NVDA8600:00
+```
+
+This verifies the resource fix on hardware. SROOT DMA remains unconfigured;
+the missing-CCA kernel patch is not installed. No firmware boot, DMA transfer,
+IRQ handling or inference has been attempted. The observation module remains
+loaded for inspection, with no persistent autoload configuration.
