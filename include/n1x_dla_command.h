@@ -26,4 +26,15 @@ int n1x_dla_send_method(const struct n1x_dla_io *io, __u32 method,
  */
 int n1x_dla_build_region(__u8 *out, size_t out_size, __u32 region,
                          __u64 address, __u32 bytes);
+/* Serialize the raw HAL-1 command-23 payload built by Windows RVA d45390.
+ * Byte 0 is 1; byte 1 normalizes context byte 0x47d. If context u32 0x490
+ * is nonzero, LE u32 at offset 2 is provider field +0xf4 multiplied by 2000,
+ * modulo 2^32 exactly as Windows. Other bytes are zero. Field units and the
+ * live P16 provider value are not inferred. This does not allocate/sync DMA,
+ * send a method, or authorize guessed operating values. Caller supplies the
+ * validated provider input and owns aligned DMA backing and its lifetime.
+ * At least 40 output bytes are required; invalid output remains unchanged.
+ */
+int n1x_dla_build_command23(__u8 *out, size_t out_size, __u8 context_47d,
+                            __u32 context_490, __u32 provider_f4);
 #endif

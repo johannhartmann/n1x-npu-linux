@@ -1625,3 +1625,36 @@ test data, not a proposed hardware configuration. Commands 21/22 return
 This establishes transfer layouts and basic firmware behavior in RAM, not
 physical configuration safety, cache coherency or instruction execution on the
 NPU. The opaque SROOT image's code identity remains separate from the raw image.
+
+## Original command-23 payload construction
+
+Original Windows function **0xd45390** builds the previously opaque 40-byte
+input submitted by HAL +0x438 / command 23. It clears a 40-byte stack record,
+sets byte 0 to 1 and byte 1 to `context[0x47d] != 0`. If context u32 +0x490 is
+nonzero, it stores an **unaligned little-endian u32 at offset 2** equal to
+`provider[0xf4] * 2000`, modulo 2^32. The provider is obtained through the
+original global object at RVA 0x1512148, then its pointer at +0x78. The other
+34 bytes remain zero. Field units and the live P16 provider value are unknown;
+no physical clock/timer value is assigned by analogy.
+
+The function allocates 4096 bytes, clears the full allocation, copies the
+40-byte record, calls the cache boundary with `(CPU,4096,1)`, then stores its
+CPU/DMA pair at context +0x4e8/+0x4f0. Allocation failure propagates its status;
+a NULL CPU result returns 0x1a. Both leave those context fields unchanged.
+These are original-code observations with synthetic allocator/cache/OS calls,
+not proof of physical allocation or DMA visibility.
+
+`n1x_dla_build_command23()` now implements that exact wire format in C.
+`test_command23_builder.py` compares **45 records** with the complete original
+ARM64 construction function, including nonboolean flags, disabled scaling,
+zero inputs, a multiplication boundary and u32 wraparound. Stack and DMA
+storage are poisoned before original execution, so zero fields must come from
+the actual memset calls. The original stack-cookie helper runs unchanged.
+Two Windows allocator-failure cases and two C output-preflight cases also pass.
+
+One C record is imported by raw HAL-1 command 23 through the unchanged original
+reset/trap/DMA/ACK paths, with no firmware function stubs. The local 40-byte
+block matches and response is **0x1702**. This validates encoding/import only;
+synthetic provider values are test inputs, not settings to publish on the P16.
+The serializer does not allocate or submit DMA and requires the eventual
+backend to establish the actual provider input and buffer lifetime.

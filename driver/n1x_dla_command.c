@@ -51,3 +51,19 @@ int n1x_dla_build_region(__u8 *out, size_t out_size, __u32 region,
         out[i] = record[i];
     return 0;
 }
+
+int n1x_dla_build_command23(__u8 *out, size_t out_size, __u8 context_47d,
+                            __u32 context_490, __u32 provider_f4)
+{
+    __u8 record[40] = {1, context_47d != 0};
+    __u32 scaled = context_490 ? provider_f4 * 2000U : 0;
+    unsigned int i;
+
+    if (!out || out_size < sizeof(record))
+        return -EINVAL;
+    for (i = 0; i < 4; i++)
+        record[2 + i] = scaled >> (8 * i);
+    for (i = 0; i < sizeof(record); i++)
+        out[i] = record[i];
+    return 0;
+}

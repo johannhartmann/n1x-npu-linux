@@ -46,6 +46,7 @@ test-vendor: test
 	venv/bin/python scripts/emulate_common_loader.py
 	venv/bin/python scripts/emulate_postinit_commands.py
 	venv/bin/python scripts/test_profile1_config.py
+	venv/bin/python scripts/test_command23_builder.py
 	venv/bin/python scripts/test_profile1_regions.py
 	venv/bin/python scripts/emulate_profile1_irq_init.py
 	venv/bin/python scripts/emulate_profile1_boot.py
