@@ -254,8 +254,11 @@ a numerical target for investigating the Windows ARM TensorRT 11.4 compiler.
 The original Windows backend now completes pretranslation and translation of
 captured native ReLU intermediates in Unicorn, producing three checked nonempty
 buffers plus an empty descriptor. The probe verifies the full C++ initializer
-sequence and original output getters. Runtime packaging into a complete N1X
-loadable and verified Linux inference remain unresolved.
+sequence and original output getters. Original native consumers now identify
+and copy the network-descriptor and RVV blobs through an explicit ABI adapter;
+the empty instruction blob returns an error when copied, and backend metrics
+are absent in this fixture. Runtime packaging into a complete N1X loadable and
+verified Linux inference remain unresolved.
 
 
 The default SROOT image now has an [offline signed-envelope audit](docs/sroot-envelope.md):

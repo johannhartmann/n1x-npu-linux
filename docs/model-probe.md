@@ -584,9 +584,9 @@ The backend's vector at +0x58 contains four 24-byte descriptors:
 
 | Kind | Bytes | Observed content | SHA-256 |
 | --- | ---: | --- | --- |
-| 3 | 256 | Binary payload; semantics not yet decoded | `d40c6354059292dc4b2c3c7faca391b59240d305ce45b35da00c902ca67f778c` |
+| 3 | 256 | Network-descriptor blob in the native consumer contract; fields not yet decoded | `d40c6354059292dc4b2c3c7faca391b59240d305ce45b35da00c902ca67f778c` |
 | 0 | 0 | Empty descriptor | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
-| 6 | 28,736 | Binary payload with layer names | `da9182fb36e22c8262eed1d4baf3d0383d9f90826d99d692c1139f51ec56f7c3` |
+| 6 | 28,736 | RVV memory blob in the native consumer contract; contains layer names | `da9182fb36e22c8262eed1d4baf3d0383d9f90826d99d692c1139f51ec56f7c3` |
 | 7 | 3,624 | JSON metadata, schema version 1 | `c1af31f16b73278e61f8e6b9b8cf3aedb3140c3caf79afc45c8e4623aa44d76d` |
 
 For each descriptor, original size getter `0x624420` and copy getter `0x6243a0`
@@ -616,3 +616,42 @@ physical firmware boot, and numerical inference against the CPU oracle remain
 unverified. The next boundary is decoding and packaging these real outputs
 through the original compiler/runtime ABI, not submitting the raw buffers to
 hardware.
+
+### Native consumers identify the backend blobs
+
+```sh
+venv/bin/python scripts/inspect_windows_mtl_collector.py
+venv/bin/python scripts/inspect_native_blob_contract.py
+```
+
+The second probe executes original native frontend getters and the original
+Windows backend copy method against the hash-pinned extracted buffers. It
+uses an explicit vtable adapter: native `nvdla_mtl_copy_blob_buf` dispatches
+through slot +0x50, while the Windows backend uses +0x48 for its copy method
+at RVA `0x6243a0`. Their C++ objects are not directly interchangeable.
+
+| Native consumer | ELF address | Backend kind | Frontend memory kind | Observed result |
+| --- | --- | ---: | ---: | --- |
+| `getBuiltNetworkDescMemoryBlob` | `0x58ba64` | 3 | 0 | Copies all 256 bytes, status 0 |
+| `getBuiltRvvMemoryBlob` | `0x589b40` | 6 | 11 | Copies all 28,736 bytes, status 0 |
+| `getBuiltInstructionMemoryBlob` | `0x589aa0` | 0 | No registration on failure | Empty descriptor returns native status 8 |
+
+Both successful copies match the Windows output byte-for-byte. All destination
+bytes beyond each payload retain their poison pattern. The empty instruction
+copy leaves the entire destination unchanged: the native wrapper maps Windows
+status `0x7fffffff` to 8 and skips frontend memory registration. This does not
+prove that the complete frontend would fail; it may skip empty instruction
+buffers. That caller behavior still needs tracing.
+
+Frontend memory registration and the network-descriptor size lookup are
+explicit fixtures in this probe. No frontend compilation is replaced by a
+success result. This verifies the selected consumer contract, not complete
+packaging, relocation, or validity of the blob contents for firmware. Kind 7
+JSON is not classified by this native getter test.
+
+The full Windows translation probe also now invokes original metrics getter
+`0x624480` after successful translation. Its source pointer at backend +0x50
+is null; it returns `0x7fffffff` and leaves all 36 bytes of the poisoned output
+and guard unchanged. No metrics are available in this constructor-default
+ReLU fixture. Translation success alone must not be used to manufacture
+metadata for a native frontend bridge.

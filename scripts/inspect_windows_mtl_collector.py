@@ -349,6 +349,15 @@ def main():
                         node_vtable_rva=hex(qword(node)-base),optional_config='absent')
     assert invoke(0x624eb0,mtl,common,instruction_limit=100000000)==0
     assert not error_flags
+    # Translation success does not imply that optional metrics were produced.
+    # The original getter dereferences the pointer stored at object +0x50.
+    assert qword(mtl+0x50)==0
+    metrics_destination=allocate(36)
+    metrics_status=invoke(0x624480,mtl,metrics_destination)
+    assert metrics_status==0x7fffffff
+    assert bytes(u.mem_read(metrics_destination,36))==b'\xa5'*36
+    metrics=dict(getter_rva='0x624480',status=metrics_status,available=False,
+                 destination_unchanged=True)
     begin,end,capacity=struct.unpack('<3Q',u.mem_read(mtl+0x58,24))
     assert end-begin==4*24 and end<=capacity
     expected_outputs={
@@ -393,12 +402,13 @@ def main():
     output_manifest=dict(passed=True,hardware_access=False,complete_loadable=False,
                          windows_sha256=digest,source_capture='native-compile-t254',
                          input_sha256={kind:hashlib.sha256(data).hexdigest() for kind,data in buffers.items()},
-                         pretranslation_return=0,translation_return=0,outputs=outputs)
+                         pretranslation_return=0,translation_return=0,metrics=metrics,outputs=outputs)
     (outdir/'manifest.json').write_text(json.dumps(output_manifest,indent=2)+'\n')
     print(json.dumps(dict(passed=True,hardware_access=False,windows_sha256=digest,
         collector_rva='0x756630',operation_count=1,record_bytes=len(record),
         pretranslation=pretranslation,
         translation=dict(rva='0x624eb0',completed=True,return_value=0,outputs=outputs,
+                         metrics=metrics,
                          output_manifest=str(outdir/'manifest.json'),complete_loadable=False),
         cpp_initializers=dict(runner_rva='0xf19358',array_begin_rva='0x10523b0',
                               array_end_rva='0x1055af0',count=len(initializer_calls),order_verified=True),
