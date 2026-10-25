@@ -583,6 +583,28 @@ venv/bin/python scripts/test_linux_bootstrap.py
 venv/bin/python scripts/test_linux_bootstrap_guards.py
 ```
 
+#### Rebuilding the current bootstrap from source
+
+Historical `results/npu1-*` directories are ignored local artifacts, not files
+provided by a checkout. Build the current tracked source against the installed
+test-kernel headers before the pending experiment:
+
+```sh
+make module KERNEL_RELEASE=7.2.8-23-omarchy-p16-asus-npu1
+modinfo -F vermagic driver/n1x_npu_bootstrap.ko
+modinfo -F alias driver/n1x_npu_bootstrap.ko
+```
+
+Vermagic must begin with that exact release, and alias output must be empty.
+This produces `driver/n1x_npu_bootstrap.ko` plus the observer module. It neither
+installs, loads nor triggers either module. The explicit target works while the
+old kernel is running, provided the test headers are installed. With no override,
+`make module` and `make kernel-check` use the running kernel as before. A later
+build for another release replaces the in-tree module artifact; check vermagic
+again before using it. Missing headers fail the build rather than falling back.
+The bootstrap still refuses any kernel other than the exact audited npu1
+release. Changing the Make target does not relax its runtime guard.
+
 #### Hardware qualification sequence — still pending
 
 First manually boot **N1X NPU test**, verify graphics/input and confirm the exact
@@ -598,8 +620,8 @@ sudo rmmod n1x_npu_observe
 # Copy the verified extracted vendor input, not the raw HAL-1 firmware image:
 sudo install -Dm644 sources/dla-p16-sroot-v0.bin \
   /usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin
-# Use the module built for npu1, not the current-kernel build in driver/:
-sudo insmod results/npu1-bootstrap-bypass-build/driver/n1x_npu_bootstrap.ko \
+# Use the current source build above; confirm npu1 vermagic before loading:
+sudo insmod driver/n1x_npu_bootstrap.ko \
   enable_upload=1 enable_ping=1 enable_region5=1 enable_config_snapshot=1 \
   enable_config_apply=1 enable_lpwr_config=1 enable_bypass_task=1
 sudo cat /sys/bus/platform/devices/NVDA200A:00/status

@@ -147,8 +147,10 @@ routine. Tests inject write failures and verify that malformed/oversized inputs
 produce no writes. The register translator reproduces both recovered Windows mapping tables and
 adds alignment/resource bounds checks. The core-control and method-sender components are compared with the original
 Windows routines, including busy/error paths. `make kernel-check` compiles all
-eight C components against the running kernel without building or loading a
-module. The task serializer is checked against the compiled public reference
+callback C components against the running kernel without linking or loading a
+module. `KERNEL_RELEASE=<installed-release>` explicitly selects another installed
+header tree for both `make kernel-check` and `make module`; the default remains
+the running kernel. See [bootstrap rebuild instructions](docs/linux-backend.md#rebuilding-the-current-bootstrap-from-source). The task serializer is checked against the compiled public reference
 structure and actual firmware common-header checks. Full task/inference
 compatibility is still unverified; no live map selection is assumed. A simulated
 round trip runs the original RISC-V ping/response code and the Linux C ACK

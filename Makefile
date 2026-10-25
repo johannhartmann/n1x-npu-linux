@@ -1,5 +1,7 @@
 CC ?= cc
 CFLAGS ?= -O2 -g -Wall -Wextra -Werror
+# Explicit installed-kernel target; builds only, never installs/loads modules.
+KERNEL_RELEASE ?= $(shell uname -r)
 .PHONY: test test-vendor kernel-check module clean
 tests/test_firmware: tests/test_firmware.c driver/n1x_dla_firmware.c include/n1x_dla_firmware.h
 	$(CC) $(CFLAGS) -Iinclude tests/test_firmware.c driver/n1x_dla_firmware.c -o $@
@@ -94,9 +96,9 @@ test-vendor: test
 	venv/bin/python scripts/test_il_slice.py
 	venv/bin/python scripts/emulate_init_il.py
 kernel-check:
-	$(MAKE) -C /usr/lib/modules/$(shell uname -r)/build M=$(CURDIR)/driver n1x_dla_ring.o n1x_hfrp.o n1x_dla_control.o n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o n1x_sroot.o
+	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" n1x_dla_ring.o n1x_hfrp.o n1x_dla_control.o n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_response.o n1x_sroot.o
 clean:
 	rm -f tests/test_firmware
 
 module:
-	$(MAKE) -C /usr/lib/modules/$(shell uname -r)/build M=$(CURDIR)/driver modules
+	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" modules
