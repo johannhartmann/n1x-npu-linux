@@ -19,6 +19,7 @@ MODULE_PARM_DESC(read_mmio, "Allow explicit read-only register snapshots (defaul
 struct n1x_linux {
 	void __iomem *base;
 	resource_size_t bytes;
+	u32 first_offset;
 	bool sroot;
 };
 
@@ -28,8 +29,10 @@ static int n1x_linux_read32(struct n1x_linux *npu, u32 logical, u32 *value)
 	int ret;
 
 	if (npu->sroot) {
-		offset = logical;
-		if ((offset & 3) || npu->bytes < 4 || offset > npu->bytes - 4)
+		if ((logical & 3) || logical < npu->first_offset)
+			return -ERANGE;
+		offset = logical - npu->first_offset;
+		if (npu->bytes < 4 || offset > npu->bytes - 4)
 			return -ERANGE;
 	} else {
 		/* Snapshot registers have identical offsets in Windows maps 1/2.
@@ -104,6 +107,7 @@ static int n1x_probe(struct platform_device *pdev)
 	struct acpi_device *adev = ACPI_COMPANION(dev);
 	struct n1x_linux *npu;
 	struct resource *first, *second;
+	struct resource registers = { .flags = IORESOURCE_MEM };
 	unsigned long long revision;
 	bool sroot;
 
@@ -128,8 +132,21 @@ static int n1x_probe(struct platform_device *pdev)
 	if (!npu)
 		return -ENOMEM;
 	npu->sroot = sroot;
-	npu->bytes = resource_size(first);
-	npu->base = devm_ioremap_resource(dev, first);
+	registers.start = first->start;
+	registers.end = first->end;
+	registers.name = dev_name(dev);
+	if (sroot) {
+		/* The stride descriptor occupies indices 0's first 16 bytes
+		 * in Linux's resource tree. Request only the actual mailbox
+		 * registers (indices 1..12), without bypassing its reservation
+		 * or claiming a parent region across a child descriptor.
+		 */
+		npu->first_offset = resource_size(second);
+		registers.start += npu->first_offset;
+		registers.end = first->start + 12 * npu->first_offset + 3;
+	}
+	npu->bytes = resource_size(&registers);
+	npu->base = devm_ioremap_resource(dev, &registers);
 	if (IS_ERR(npu->base))
 		return PTR_ERR(npu->base);
 	platform_set_drvdata(pdev, npu);

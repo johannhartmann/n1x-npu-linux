@@ -6,6 +6,8 @@ current driver components validate the firmware, translate register offsets,
 upload firmware words, select/start the RISC-V core, wait for idle without a
 start write, and send methods through
 caller-provided callbacks. A basic queue-0 task serializer and response capture/ACK helper are also present.
+Region-5 records and local ring setup are now verified against the raw HAL-1
+firmware; this region is unsupported in the separate HAL-2 reference image.
 A native C response-field decoder is checked against the original Windows parser;
 it preserves unknown bits and does not infer task completion. The original
 Windows IRQ callback is also exercised for error-report ordering and SWGEN0

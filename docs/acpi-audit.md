@@ -3,7 +3,8 @@
 Audit date: 2026-10-25. **Live-table identity is now verified.** Read-only
 collection obtained DSDT, five SSDTs and IORT; no dynamic SSDTs were present.
 All six AML tables match the previously audited candidates byte-for-byte.
-No NPU driver was bound and no NPU MMIO was issued.
+The observation module subsequently bound DLA0 with MMIO reads disabled; no
+NPU register access or firmware boot has occurred.
 
 ## Sources and identity
 
@@ -174,7 +175,9 @@ not sufficient grounds to request/map unadvertised physical addresses.
 3. Establish live remapper/boot state and implement bounded Linux DMA/IRQ/MMIO
    backends before firmware boot, ping/version, tasks and numerical inference.
 
-No hardware backend has been attached; offline firmware execution is not a
+The observation backend has bound DLA0 and confirmed Stream ID 0x2b and its
+SMMU link without register access. ROT0 initially failed resource reservation;
+see [Linux backend](linux-backend.md). Offline firmware execution is not a
 physical NPU boot or inference result.
 
 ## Reproducible live collection and standard IORT decoding

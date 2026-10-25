@@ -461,9 +461,11 @@ successful read of value 1 sets the byte to 1; other present values clear it,
 and an absent value preserves it. `emulate_boot_policy.py` now executes the
 initializer store and registry slice for absent/0/1/2/3/0xffffffff across both
 HAL selectors, in addition to the existing method/remapper checks. The registry
-boolean is distinct from the normalized reinit request's mode 1/2. Complete
-cold/resume call ordering still needs tracing before defining Linux boot state
-transitions. Do not infer this field from upload-success byte +0x48c, which is
+boolean is distinct from the normalized reinit request's mode 1/2. The complete
+common loader has now been traced through initial/later branches;
+see [loader ordering](contract.md#complete-original-initiallater-loader-ordering).
+A live Windows cold/resume trace and optional callback semantics remain unknown.
+Do not infer this field from upload-success byte +0x48c, which is
 a different field.
 
 ## Method-2 start ordering and write-free idle wait

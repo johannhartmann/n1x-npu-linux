@@ -711,9 +711,11 @@ The original selector-2 HAL has +0x138 pointing to the ping routine `0xd48110`,
 `0xd49fc0`. The loader `0xd439c0` calls ping after the upload/start path,
 then conditionally calls +0x160 with IDs 3, 1, 5 and 7. The controlling fields
 are +0x468, +0x46c, +0x480/+0x47e, and +0x494 respectively. Their actual P16
-values have not been established. These are conditional possibilities, not an
-observed Windows boot trace. The region-5/7 paths are incompatible with the
-extracted firmware's region dispatcher and must not be enabled by analogy.
+installed overrides have not been established. The original constructor now
+confirms defaults enabling the region-5 path: +0x480=1 and +0x47e=1. These are
+constructor/default-code observations, not a live Windows boot trace. The
+region-5/7 rejection below concerns the **HAL-2** image only. HAL-1/P16 region 5
+has since been independently revalidated; see the section below.
 
 `emulate_windows_region.py` executes the original ARM64 builder, with a synthetic
 buffer-provider callback (+0x158), CPU/DMA address pair, copy/cache/OS helpers,
@@ -731,7 +733,7 @@ A provider failure sends no command and writes no record; a method-send failure
 propagates its status. Synthetic cache maintenance cannot prove coherency.
 
 The Linux `n1x_dla_build_region` serializer supports the verified 1/3 record
-format. Four byte-for-byte comparisons use different provider offsets/sizes
+format and the separately revalidated HAL-1 region-5 record. Four byte-for-byte comparisons use different provider offsets/sizes
 against original Windows execution. Seven preflight cases cover invalid output,
 short storage, unknown ID, empty/unaligned address and zero/wrapping size, without
 output mutation. These rejection rules are Linux API policy, not claimed firmware
@@ -1510,3 +1512,72 @@ capture/clear/ACK helper: Windows enters this callback after earlier IRQ layers.
 It does not imply that mask/status clearing may be omitted by a Linux backend.
 Remaining queue association, hardware quiescence, physical IRQ setup and recovery
 must be implemented and verified before reclaiming DMA-backed work.
+
+## Complete original initial/later loader ordering
+
+`emulate_common_loader.py` executes the entire original function at RVA
+**0xd439c0**, the selector-1 HAL initializer, contiguous constructor defaults,
+original method-2 start orchestrator and idle-wait helper. HAL transport,
+route, mask, ping and optional callbacks remain recording stubs. Seventeen
+cases verify the following paths and fault behavior. They do not establish a
+live Windows cold/resume invocation or physical firmware boot.
+
+The constructor sets byte +0x47c=0, +0x474=1, +0x47d=1, +0x47e=1,
++0x486=0 and u32 +0x480=1. Method 2 is the independently verified default.
+With +0x47c=0 the common loader always invokes upload slot +0x408, including
+when +0x486=0. The successful sequence is:
+
+1. Upload -> original IDLESTATE wait.
+2. Capture route via subobject slot +0xa0 into +0x54; disable masks via HAL +0xd8.
+3. Ping via HAL +0x138 (`0xd48110`).
+4. With constructor defaults: region 5 via +0x160 (`0xd49c20`), then
+   +0x78 (`0xd46300`), +0x90 (`0xd47830`), +0x88 (`0xd49570`),
+   and +0x438 (`0xd496e0`). The latter functions' complete behavior is not
+   established by recording their invocation.
+5. Apply IRQ enable via +0xd8, set byte +0x47c=1, clear counter +0x5b4 and
+   loader/error byte +0x5ac.
+
+With +0x47c=1 and +0x474=1, the common loader instead invokes +0x420
+(`0xd47430`). Its +0x486 flag chooses reinit (zero) or upload (nonzero), then
+idle, region 5, +0x88, +0x438 and IRQ configuration. This path bypasses the
+initial loader's route capture and ping. Thus reinit is not the first-load
+recipe, and an unconditional upload-then-reinit sequence is not supported.
+
+Upload/idle/ping errors on the initial path prevent subsequent initialization,
+leave +0x47c=0 and +0x5ac=1, and invoke mask-disable cleanup. A route-read error
+is ignored and leaves ownership at the initial 0xffffffff. Mask and tested
+optional-callback return errors are also ignored. These are Windows behaviors,
+not sound success/quiescence rules to copy into Linux. The Linux backend must
+propagate transport/configuration errors and must not free live DMA storage
+merely because this orchestration returned an error.
+
+## HAL-1 region-5 serialization and local ring setup
+
+The original HAL-1 dispatcher at 0x102338 recognizes region IDs
+1/2/3/5/6/7/8. Region 5 calls **0x106a4a**, which reads a packed 16-byte record
+into **0x1859d0**: ID at 0, u64 address at 4, size at 12. With nonzero address
+and size it reads eight bytes of header into **0x1860f8**. If both u32 header
+words are zero, it initializes its local pair to **8/8**. Setup itself does not
+write that normalization back to host memory. No semantic name is assigned to
+the ring solely from this layout.
+
+`test_profile1_regions.py` compares five actual C records with the original
+Windows builder, then passes them through the unmodified HAL-1 reset, trap,
+command, DMA-function and ACK paths under the explicit register/DMA model.
+Regions 1/3 succeed; three region-5 cases cover zero/zero, 8/8 and 64/128 headers
+at different addresses/sizes. Each returns **0xb02**, leaves the host payload
+unchanged and retains byte-for-byte original firmware code with no function
+stubs. Region 5 uses DMA extents **4, 16, 8** bytes; the original local descriptor
+and header match the supplied values/normalization.
+
+The C serializer now accepts region 5 and rejects sizes below eight bytes
+before changing its output. It still rejects region 7 because that record
+format/lifetime has not been revalidated. A preliminary region-7 probe exceeded
+the deliberately bounded synthetic host mapping; it is not evidence of an
+unsupported firmware region. Existing HAL-2 region-5 rejection remains valid
+for that different image.
+
+This proves registration/local ring setup in the **raw HAL-1** image, not ring
+production, consumption or hardware execution. The code identity of the opaque
+SROOT upload variant has not been established by these tests. Physical DMA,
+firmware boot and numerical inference remain unverified.

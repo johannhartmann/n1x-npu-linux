@@ -9,9 +9,15 @@ or auto-loaded and has no register-write implementation. Loading is explicit.
 `driver/n1x_npu_linux.c` matches NVDA200A and NVDA8600 and refuses a probe unless
 DMI vendor/product/BIOS are ASUS / ProArt P16 H7607BA / H7607BA.300, hardware
 revision is respectively 0x34 / 1, and both memory descriptors exactly match
-the [audited live tables](acpi-audit.md). It claims/maps only the first memory
-resource. ROT0's second overlapping descriptor supplies spacing, not another
-region to claim. No auxiliary aperture is mapped and neither IRQ is requested.
+the [audited live tables](acpi-audit.md). DLA maps its first memory resource.
+ROT0's second overlapping descriptor supplies spacing and also appears as a
+child in Linux's resource tree. Reserving its entire parent resource fails
+with EBUSY even without another driver: the requested parent extent crosses
+that child. The backend therefore claims/maps only the actual register span
+for indices 1..12: **0x18010010..0x180100c3**. Logical mailbox offsets remain
+relative to 0x18010000 and are translated/bounds-checked against this subrange.
+It neither removes the child descriptor nor bypasses resource reservations.
+No auxiliary aperture is mapped and neither IRQ is requested.
 
 Probe does not read MMIO, request firmware, allocate DMA memory or invoke a
 power/reset operation. Standard Linux binding still performs ACPI/core DMA
@@ -91,3 +97,19 @@ outside that logical window must be rejected before any request is submitted.
 
 Firmware boot, actual DMA/IRQ delivery, task execution and numerical inference
 are not implemented or verified by this observation module.
+
+## Physical observation so far
+
+On 2026-10-25 the observation module loaded successfully on kernel
+7.2.8-23-omarchy-p16-asus. DLA0 bound with register reads disabled:
+
+```text
+acpi_cca_seen=1 acpi_coherent=1 dma_coherent=1 iommu_domain=4
+stream_id[0]=0x2b
+```
+
+The sysfs IOMMU link resolves to SMMUv3 0x35000000, matching the live IORT.
+No DMA allocation or transfer was attempted. ROT0's initial whole-resource
+reservation failed with EBUSY. A revised observation module uses the restricted
+register span above; its reload is pending system authentication. A successful
+DLA bind does not establish SROOT DMA readiness, firmware boot or inference.

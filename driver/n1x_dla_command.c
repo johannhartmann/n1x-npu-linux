@@ -35,11 +35,11 @@ int n1x_dla_build_region(__u8 *out, size_t out_size, __u32 region,
 {
     __u8 record[16];
     unsigned int i;
-    if (!out || out_size < sizeof(record) || (region != 1 && region != 3) ||
-        !address || (address & 3) || !bytes || address > ~(__u64)0 - bytes)
+    if (!out || out_size < sizeof(record) || (region != 1 && region != 3 && region != 5) ||
+        !address || (address & 3) || !bytes || (region == 5 && bytes < 8) || address > ~(__u64)0 - bytes)
         return -EINVAL;
-    /* Packed SET_REGIONS payload, verified against Windows d49c20 and
-     * the T35x firmware. The command points at this record, not at address.
+    /* Packed SET_REGIONS payload, verified against Windows d49c20,
+     * T35x regions 1/3 and HAL-1 regions 1/3/5. The command points at this record, not at address.
      */
     for (i = 0; i < 4; i++) {
         record[i] = region >> (8 * i);
