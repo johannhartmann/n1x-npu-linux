@@ -58,6 +58,9 @@ chain through power-on and the loader is now replayed offline; see
 [cold-start ordering](docs/hfrp-irq.md#cold-start-dispatch-chain).
 The power-policy source is now traced to VBIOS BIT token `l`. A bounded Linux
 table locator and decoder match the original Windows parser on synthetic images;
+the full parser includes general feature and allocation tables used at startup.
+The complete registry/policy initializer is replayed with synthetic inputs,
+including feature precedence and the final remapper selection;
 the actual machine's policy values still require a matching VBIOS capture.
 See [VBIOS policy evidence](docs/hfrp-vbios.md).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI

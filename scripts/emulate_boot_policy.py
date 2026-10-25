@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run original Windows boot-method/default and remapper registry slices in RAM."""
+"""Run intermediate Windows boot/default registry slices in RAM.
+
+Remapper slice outputs are later overwritten by the complete initializer;
+see test_hfrp_policy_init.py for final startup values.
+"""
 import hashlib
 import json
 import struct
@@ -98,6 +102,7 @@ def main():
         cases.append(result)
     print(json.dumps({'passed': True, 'hardware_access': False, 'kmd_sha256': KMD_SHA256,
                       'cases': cases, 'limitations': ['Registry reads are stubbed; actual installed Windows values are unknown',
+                                                     'Remapper slice outputs are intermediate: full initialization overwrites them later',
                                                      'Default-field constructor slice executes; allocation and earlier object setup are not replayed',
                                                      'No loader, firmware transport or hardware boot is executed']}, indent=2))
 

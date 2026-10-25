@@ -36,7 +36,10 @@ class Policy(ctypes.Structure):
                 ('frequency_header', ctypes.c_uint16*2), ('tuning_header', ctypes.c_uint16*2),
                 ('gating_header', ctypes.c_uint16*2), ('gating_tail', ctypes.c_uint16*2),
                 ('frequency_flags', ctypes.c_uint8*2), ('gating_flags', ctypes.c_uint8),
-                ('gating_bytes', ctypes.c_uint8*3)]
+                ('gating_bytes', ctypes.c_uint8*3),
+                ('feature_mask', ctypes.c_uint32), ('general_word', ctypes.c_uint32),
+                ('general_header', ctypes.c_uint16*3), ('allocation_words', ctypes.c_uint16*4),
+                ('boot_tables_valid', ctypes.c_uint8)]
 
 
 class Location(ctypes.Structure):
@@ -91,6 +94,8 @@ def compare_c(pe):
                 table = bytes([version])+rng.randbytes(size-1)
                 image[offset:offset+size] = table
                 tables.append(table)
+            for offset, size in ((0x300, 14), (0x400, 8)):
+                image[offset:offset+size] = bytes([version])+rng.randbytes(size-1)
             original = run(pe, bytes(image))
             assert original['status'] == 0
             fields = original['fields']
@@ -107,7 +112,14 @@ def compare_c(pe):
                 assert values == [fields[hex(offset+i*4)] for i in range(len(values))]
             assert result.gating_flags == fields['0xec']
             code, parsed, location = parse(image)
-            assert code == 0 and bytes(parsed) == bytes(result)
+            assert code == 0 and parsed.boot_tables_valid == 1 and result.boot_tables_valid == 0
+            assert parsed.feature_mask == fields['0x80']
+            assert parsed.general_word == fields['0x84']
+            assert list(parsed.general_header) == [fields[hex(i)] for i in range(0x74, 0x80, 4)]
+            assert list(parsed.allocation_words) == [fields[hex(i)] for i in range(0x88, 0x98, 4)]
+            for name in ('feature_mask', 'general_word', 'general_header', 'allocation_words', 'boot_tables_valid'):
+                setattr(result, name, getattr(parsed, name))
+            assert bytes(parsed) == bytes(result)
             assert [getattr(location, name) for name, _ in Location._fields_] == [0x100, 0, 0x200, 0x500, 0x600, 0x700]
             cases += 1
     failures = 0
@@ -142,6 +154,14 @@ def compare_c(pe):
         (0x10e, '<H', 35, -errno.EBADMSG),
         (0x110, '<I', 0, -errno.EBADMSG),
         (0x110, '<I', 0xffffffff, -errno.EBADMSG),
+        (0x200, '<I', 0, -errno.EBADMSG),
+        (0x204, '<I', 0, -errno.EBADMSG),
+        (0x200, '<I', 0xfffffff0, -errno.EBADMSG),
+        (0x204, '<I', 0xfffffff0, -errno.EBADMSG),
+        (0x200, '<I', 0x10fff3, -errno.EBADMSG),
+        (0x204, '<I', 0x10fff9, -errno.EBADMSG),
+        (0x300, '<B', 0xf, -errno.EOPNOTSUPP),
+        (0x400, '<B', 0xf, -errno.EOPNOTSUPP),
         (0x208, '<I', 0, -errno.EBADMSG),
         (0x20c, '<I', 0xffffffff, -errno.EBADMSG),
         (0x210, '<I', 0x10fff8, -errno.EBADMSG),
@@ -190,9 +210,10 @@ def fixture(*, rom_base=0, bit_offset=0x100, entry_size=8, token=0x6c,
     image[bit_offset+12:bit_offset+12+len(entry)] = entry
     tables = [0x300+i*0x100 for i in range(9)]
     struct.pack_into('<9I', image, rom_base+0x200, *tables)
-    # Unknown/nonessential tables deliberately have version 0, so Windows skips
-    # them. Supply only general, frequency, tuning and gating policy tables.
+    # Remaining tables deliberately have version 0, so Windows skips them.
+    # Supply general, allocation, frequency, tuning and gating policy tables.
     struct.pack_into('<HHHII', image, rom_base+tables[0], table_version, 14, 0x1234, 0x23456789, 0x3456789a)
+    struct.pack_into('<4H', image, rom_base+tables[1], table_version, 8, 0x4567, 0x5678)
     struct.pack_into('<HHBBIII', image, rom_base+tables[2], table_version, 18, 1, 2,
                      650000, 500000, 600000)
     struct.pack_into('<HHIIHHHIIHHH', image, rom_base+tables[3], table_version, 32,

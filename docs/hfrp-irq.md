@@ -783,5 +783,76 @@ venv/bin/python scripts/test_cold_start_dispatch.py
 venv/bin/python scripts/emulate_boot_policy.py
 ```
 
-Board VBIOS values, full gating-policy initialization, the conditional setup
-producer and a complete reviewed physical startup path remain outstanding.
+Board VBIOS values, the conditional setup producer and a complete reviewed
+physical startup path remain outstanding. The policy initializer is now
+replayed in the following section; its hardware-facing setup callbacks remain
+stubbed and a complete Linux startup translation is still needed.
+
+## Complete policy initialization and final gating mask
+
+`scripts/test_hfrp_policy_init.py` now runs the whole original `0xd440d0`,
+its feature updater `0xd435f8`, and mask producer `0xd44710`, rather than
+isolated registry slices. Original profile/HAL callback constructors, default
+field sequence, stack-cookie code and owner lookup also execute. The chip
+getter returns the established synthetic input `0x254`. Registry reads are
+stubbed by name; remapper-install and allocation/setup callbacks are recording
+boundaries. No hardware registers, real mappings or firmware are accessed.
+Settings inputs come from the separately executed Windows VBIOS parser.
+
+The settings-to-gating mapping is now established end to end:
+
+| Source | Result before feature updates |
+| --- | --- |
+| settings+`0xa0`, frequency table's first flag byte | outer+`0x31d` is 1 when source is zero; +`0x31e` is 1 |
+| settings+`0xec`, gating table's flag byte | outer+`0x320` and +`0x323` are 1 when source is zero; +`0x321` and +`0x324` are 1 |
+| settings+`0xf8` | replace zero with 1, copy low byte to outer+`0x31f` |
+| settings+`0xfc` | replace zero with 3, copy low byte to outer+`0x322` |
+| constant | outer+`0x325` is 15 |
+| settings+`0xf4` | replace zero with 4 in settings; no additional meaning inferred |
+| settings+`0x94`, +`0xbc` | copied to HAL+`0x590`, +`0x594` respectively |
+
+The newly decoded VBIOS general feature mask at settings+`0x80` is then
+applied, followed by an optional `RmSocDlaFeature` registry mask. Each call
+processes bits from low to high and mutates existing state. Zero bits do not
+reset fields. The following subset affects the HFRP policy directly; other
+bits affect HAL flags and must not be discarded in a future full translation:
+
+| Feature bit (zero-based) | Observed effect |
+| --- | --- |
+| 1 | set outer+`0x31d` to 1 |
+| 2 | set outer+`0x14c` SLCG override flag to 1 |
+| 3 | set outer+`0x320` and +`0x323` to 1 |
+| 4 | set outer+`0x323` to 1 |
+| 17 | clear outer+`0x31d` |
+| 18 | clear SLCG override flag |
+| 19 | clear outer+`0x320` |
+| 20 | clear outer+`0x323` and, by fall-through, +`0x320` |
+
+`0xd44710` produces mask 7, plus `0x110`, `0x220`, `0x440` when respectively
+`31e && !31d`, `321 && !320`, `324 && !323`. If the global owner's byte +`0x58`
+is nonzero, it instead sets mask zero. The associated registry path is named
+`RmSocSocOsPresilTesting`; a production interpretation of that owner byte is
+not established by its spelling. This is a request-permission mask, not
+physical readback of clock or rail state.
+
+Full initialization also overwrites the earlier `RmSocDlaRemapper` result at
+`0xd4455c`: HAL+`0x478` becomes 1 for owner+`0x58 == 0`, otherwise 0. The
+recorded installer boundary sees this final value. Registry overrides 0, 1,
+2 and `0xffffffff` all end at 1 for the normal owner. Previous slice tests
+remain useful to describe the intermediate parser, but not effective startup
+configuration. The physical experiment's mode-1 choice remains consistent.
+
+The test covers eight source-flag/owner combinations, all 32 single feature
+bits under both enabled and disabled source flags (each compared between
+VBIOS and registry paths), three ordered/conflicting feature combinations,
+four remapper overrides, allocation/setup failure propagation and absent
+settings. It verifies delays 1/4/10 ms and the 4/1/3 zero-value substitutions.
+Absent settings yield mask 7 and zero outer policy bytes in this synthetic
+case; that does not justify omitting the real board policy. Allocation/setup
+bodies, tuning-override handling and actual registry/VBIOS contents remain
+outside this replay.
+
+```sh
+venv/bin/python scripts/test_hfrp_policy_init.py
+venv/bin/python scripts/test_hfrp_vbios.py
+```

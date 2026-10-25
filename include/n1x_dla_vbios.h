@@ -16,6 +16,9 @@ struct n1x_dla_vbios_policy {
     __u8 frequency_flags[2];
     __u8 gating_flags;
     __u8 gating_bytes[3];
+    __u32 feature_mask, general_word;
+    __u16 general_header[3], allocation_words[4];
+    __u8 boot_tables_valid;
 };
 
 /* Decode three already located BIT 'l' subtables (directory indices 2, 3, 4)
@@ -24,6 +27,8 @@ struct n1x_dla_vbios_policy {
  * hardware programming. Raw header/flag/tuning values have no inferred units.
  * The caller must prove ROM provenance and locate each buffer within that ROM;
  * this is not a complete VBIOS directory parser or power-policy validator.
+ * General/allocation tables are not inputs to this partial decoder, so it
+ * leaves boot_tables_valid=0. Use the full ROM parser for startup inputs.
  * Output is unchanged on failure; success does not authorize applying policy.
  */
 int n1x_dla_decode_vbios_policy(const __u8 *frequency, size_t frequency_size,
@@ -38,8 +43,10 @@ struct n1x_dla_vbios_location {
 
 /* Find one unambiguous BIT 'l' policy in an immutable ROM window, at most
  * 0x110000 bytes. Checks checksum, all nested bounds, nonzero table pointers
- * and the decoder's version gates. Uses the Windows preceding aligned AA55
- * ROM-base rule; at most 32 checksummed BIT headers are examined. No physical
+ * and version gates for directory indices 0..4, including the general feature
+ * mask and raw allocation words. Success sets boot_tables_valid=1. Uses the
+ * Windows preceding aligned AA55 ROM-base rule; at most 32 checksummed BIT
+ * headers are examined. No physical
  * mapping, file access or hardware writes. Both outputs unchanged on failure.
  * This locates data, not firmware provenance or authority to program hardware.
  */

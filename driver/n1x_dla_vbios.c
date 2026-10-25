@@ -96,7 +96,7 @@ int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
             return -EBADMSG;
         for (j = 0; j < count; j++) {
             const __u8 *entry = data + i + header_size + j * entry_size;
-            size_t directory, frequency, tuning, gating;
+            size_t directory, general, allocation, frequency, tuning, gating;
             __u32 pointer;
             int err;
 
@@ -110,21 +110,35 @@ int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
             if (!pointer || !fits(pointer, get16(entry + 2), size - base))
                 return -EBADMSG;
             directory = base + pointer;
+            general = get32(data + directory);
+            allocation = get32(data + directory + 4);
             frequency = get32(data + directory + 8);
             tuning = get32(data + directory + 12);
             gating = get32(data + directory + 16);
-            if (!frequency || !tuning || !gating ||
+            if (!general || !allocation || !frequency || !tuning || !gating ||
+                !fits(general, 14, size - base) || !fits(allocation, 8, size - base) ||
                 !fits(frequency, 18, size - base) ||
                 !fits(tuning, 32, size - base) || !fits(gating, 16, size - base))
                 return -EBADMSG;
             frequency += base;
             tuning += base;
             gating += base;
+            general += base;
+            allocation += base;
+            if (data[general] < 0x10 || data[allocation] < 0x10)
+                return -EOPNOTSUPP;
             err = n1x_dla_decode_vbios_policy(data + frequency, size - frequency,
                                               data + tuning, size - tuning,
                                               data + gating, size - gating, &parsed);
             if (err)
                 return err;
+            for (unsigned int k = 0; k < 3; k++)
+                parsed.general_header[k] = get16(data + general + 2 * k);
+            parsed.feature_mask = get32(data + general + 6);
+            parsed.general_word = get32(data + general + 10);
+            for (unsigned int k = 0; k < 4; k++)
+                parsed.allocation_words[k] = get16(data + allocation + 2 * k);
+            parsed.boot_tables_valid = 1;
             found.bit_offset = i;
             found.rom_base = base;
             found.directory_offset = directory;

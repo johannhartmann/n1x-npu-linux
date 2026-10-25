@@ -286,6 +286,14 @@ values 0/2/0x77 to check the registry behavior independently. This establishes
 the static default, not the actual installed Windows registry or live Linux
 mapping. Earlier tests that supplied 0x77 did not establish that default.
 
+**Full-initializer correction:** these registry-slice results are intermediate
+values. `test_hfrp_policy_init.py` now executes all of `0xd440d0` and observes
+the later store at `0xd4455c`: it overwrites +0x478 with 1, or 0 when
+owner+0x58 is nonzero, before the remapper-install callback. Tested overrides
+0/1/2/0xffffffff therefore all end as 1 in the normal owner case. Do not use
+the earlier slices as evidence that a registry override survives startup.
+The physical boot experiment already used normal mode 1.
+
 The loader at `0xd439c0` uses method 1 for word upload, 0 for the ordinary DMA
 branch, and 2 for HAL +0x408 (`0xd45cb0`) followed by an idle wait. Thus the raw
 word/DMA image path is an alternate path, not the recovered HAL default.
@@ -502,7 +510,8 @@ installer and contents are recovered below.
 
 The setter at RVA `0xd39ae8` stores a table pointer/count in the selected
 resource descriptor. NPU installer `0xd49e20` selects two concrete static tables
-using DLA context+0x478, configured via `RmSocDlaRemapper`:
+using DLA context+0x478. `RmSocDlaRemapper` initially supplies this field, but
+the complete initialization later overwrites it as documented above:
 
 - Value 1: table RVA `0x14803d0`, count 10 from RVA `0x1480338`.
 - Value 2: table RVA `0x1480340`, count 11 from RVA `0x1480334`.

@@ -59,6 +59,8 @@ value becomes one u32 in the Windows settings object.
 
 | Directory index | Packed format | Minimum bytes | Destination |
 | --- | --- | --- | --- |
+| 0 | `3w2d` | 14 | settings+`0x74..0x84`; feature mask at `0x80` |
+| 1 | `4w` | 8 | settings+`0x88..0x94`; final word copied to HAL+`0x590` |
 | 2 | `2w2b3d` | 18 | settings+`0x98..0xb0` |
 | 3 | `2w2d3w2d3w` | 32 | settings+`0xb4..0xe0` |
 | 4 | `2w1b1d3b2w` | 16 | settings+`0xe4..0x104` |
@@ -93,11 +95,17 @@ subtable buffers, validates their lengths and the observed version gate, and
 decodes fields without alignment-dependent loads. It preserves output on error
 and performs no allocation or hardware access.
 
+That three-buffer decoder remains deliberately partial: `boot_tables_valid`
+is zero, and it does not supply general/allocation fields. It must not be used
+as a complete startup-policy source.
+
 `n1x_dla_parse_vbios_policy()` now locates those tables in an immutable ROM
 window of at most 0x110000 bytes. It follows the observed preceding aligned
 `55 aa` ROM-base rule, checks BIT header checksum and entry-array bounds, finds
-token `l`, validates its declared length and all three nested table ranges,
-then invokes the decoder. Null/overflowing pointers, missing ROM signatures,
+token `l`, validates its declared length and all five nested table ranges,
+then decodes indices 0..4. In addition to the three-buffer decoder's fields,
+it returns raw general headers/words, the feature mask and four allocation
+words, setting `boot_tables_valid=1`. Null/overflowing pointers, missing ROM signatures,
 truncated buffers, unsupported table versions and multiple matching policies
 are rejected. At most 32 checksummed BIT headers are examined. Both policy
 and source-location outputs remain unchanged on failure.
@@ -113,9 +121,16 @@ both through the subtable decoder and through the complete table locator.
 Its 76 negative cases cover every truncated table length, unsupported version
 gates and null pointers, with unchanged output on rejection. Normal and UBSan
 runs pass; the component also builds against the running kernel headers.
-Another 27 negative cases check ROM-level bounds, absent tokens, checksums,
+Another 35 negative cases check ROM-level bounds, absent tokens, checksums,
 zero/overflowing pointers, ambiguity, header-flood limits and null arguments.
 Both BIT entry widths and a nonzero ROM base are tested through the locator.
+
+The general feature mask is required for startup: `0xd440d0` passes it to
+`0xd435f8`, before applying any `RmSocDlaFeature` override through the same
+function. This is an ordered pair of updates, not an OR of the two masks.
+Its bit 0 also gates rejection in the global initializer, so merely decoding
+the table is insufficient to establish an acceptable policy. The raw general
+word at settings+`0x84` and allocation words have no inferred physical units.
 
 ```sh
 venv/bin/python scripts/test_hfrp_vbios.py
