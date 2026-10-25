@@ -190,6 +190,28 @@ acceptance, body validation, DMA correctness, P16 trust or the cause of the live
 or the actual SROOT authentication path; changing the Linux driver on the basis
 of this emulated missing-context error would be premature.
 
+## Separate SROOT envelope in the reference capsule
+
+`inspect_spark_osroot.py` also verifies the capsule's SROOT envelope at offset
+`0x23c5f`, with its body at `0x2406f`. It contains two independently ES384-signed
+manifests, using embedded key IDs `09` and `00`. Both cover the same four
+SHA-384 ranges: metadata, BPT, code-labelled payload and data-labelled payload.
+Both signatures and all four digests verify; four signature/message mutations
+and four body mutations fail their corresponding verification checks. This is
+not evidence of a certificate chain or acceptance by the P16's trust root.
+
+| Component | Payload size | Signed range (end exclusive) |
+| --- | --- | --- |
+| Metadata | 144 | `0x2406f..0x240ff` |
+| SROOT_FW_BPT | 13,104 | `0x240ff..0x274ff` |
+| SROOT_FW code label | 189,856 | `0x274ff..0x55b6f` |
+| SROOT_FW data label | 67,472 | `0x55b6f..0x663cf` |
+
+The three component ranges include their 208-byte wrappers. Their wrapper
+words at +48/+52 are `(1, 3)`; the payloads remain opaque. The script reports
+their hashes without extracting them. Locating and verifying these components
+has **not** recovered plaintext SROOT code or the P16 runtime key context.
+
 ## Reproduce without touching hardware
 
 Download the catalog-pinned package from the LVFS CDN, validate its hash, and

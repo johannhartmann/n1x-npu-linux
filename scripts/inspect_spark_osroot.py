@@ -10,6 +10,7 @@ import tempfile
 
 import capstone
 from inspect_sroot_envelope import ROOT, Tag, decode, loads, encode
+from inspect_sroot_envelope import verify as verify_ec
 
 CAPSULE_HASH = '00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78'
 PREFIX = 0x8d5c5f
@@ -48,6 +49,64 @@ def verify(public, signature, message):
         if result.returncode not in (0, 1):
             raise RuntimeError(result.stderr)
         return result.returncode == 0
+
+
+def inspect_sroot(capsule):
+    """Verify the separate SROOT FW envelope; do not extract opaque payloads."""
+    packed, body = decode(capsule, 0x23c5f)
+    assert len(packed) == 1037 and body == 0x2406f
+    outer = loads(packed)
+    assert len(outer) == 3 and outer[-1] == bytes(8)
+    signers, all_digests = [], []
+    for entry, key_id in zip(outer[:-1], (b'09', b'00')):
+        assert len(entry) == len(entry[0]) == 1
+        tagged = entry[0][0]
+        assert isinstance(tagged, Tag) and tagged.number == 98
+        protected, unprotected, payload, signatures = tagged.value
+        assert protected == b'' and unprotected == {} and len(signatures) == 1
+        signer, unsigned, signature = signatures[0]
+        headers, claims = loads(signer), loads(payload)
+        key = headers[-1277951]
+        assert unsigned == {} and len(signature) == 96
+        assert (headers[1], headers[4], key[1], key[2], key[3], key[-1]) == (
+            -35, key_id, 2, key_id, -35, 2)
+        assert len(key[-2]) == len(key[-3]) == 48
+        public = bytes.fromhex('3076301006072a8648ce3d020106052b8104002203620004')+key[-2]+key[-3]
+        message = encode(['Signature', protected, signer, b'', payload])
+        assert verify_ec(public, signature, message)
+        assert not verify_ec(public, bytes([signature[0] ^ 1])+signature[1:], message)
+        assert not verify_ec(public, signature, message[:-1]+bytes([message[-1] ^ 1]))
+        assert claims[-1310719] == 144
+        all_digests.append(claims[-1294334])
+        signers.append({'key_id': key_id.decode(), 'algorithm': 'ES384',
+                        'public_key_spki_sha256': hashlib.sha256(public).hexdigest()})
+    assert all_digests[0] == all_digests[1] and len(all_digests[0]) == 4
+    assert struct.unpack_from('<4I', capsule, body) == (1, 4, 0xefbeadde, 0xefbeadde)
+    expected = ((0, 0, 0, 144, ''), (0x1000, 0x90, 208, 0x3330, 'SROOT_FW_BPT-0.1.0'),
+                (0x2100, 0x3490, 208, 0x2e5a0, 'SROOT_FW-0.1.0'),
+                (0x2200, 0x31b00, 208, 0x10790, 'SROOT_FW-0.1.0'))
+    components = []
+    for index, (kind, offset, header, size, name) in enumerate(expected):
+        words = struct.unpack_from('<8I', capsule, body+16+index*32)
+        assert words[:5] == (0x101, kind, offset, header, size)
+        assert words[-1] == 0xefbeadde
+        start, end = body+offset, body+offset+header+size
+        assert 0 <= start < end <= len(capsule)
+        chunk = capsule[start:end]
+        algorithm, digest = all_digests[0][index]
+        assert algorithm == -43 and hashlib.sha384(chunk).digest() == digest
+        assert hashlib.sha384(chunk[:-1]+bytes([chunk[-1] ^ 1])).digest() != digest
+        if header:
+            assert struct.unpack_from('<4I', chunk) == (1, 208, 0, 0xefbeadde)
+            assert chunk[16:48].split(b'\0')[0].decode() == name
+            assert struct.unpack_from('<II', chunk, 48) == (1, 3)
+        components.append({'kind': hex(kind), 'name': name, 'signed_start': hex(start),
+                           'signed_end': hex(end), 'payload_bytes': size,
+                           'payload_sha256': hashlib.sha256(chunk[header:]).hexdigest()})
+    return {'cose_offset': '0x23c5f', 'signers': signers, 'components': components,
+            'signature_negative_controls': 4, 'body_mutation_controls': 4,
+            'limitations': ['Two independently signed manifests, not a proven certificate chain',
+                           'No validation against P16 hardware trust or recovery of plaintext SROOT code']}
 
 
 def inspect(capsule):
@@ -147,6 +206,7 @@ def inspect(capsule):
             'text_base_evidence': {'base': hex(text_base), 'startup_reference_offset': '0xf0',
                                   'cookie_address': '0x17d06c', 'scrub_end': '0x9ca00'},
             'static_services': services,
+            'sroot_fw_reference': inspect_sroot(capsule),
             'limitations': ['DGX Spark research input, not a P16 firmware update',
                 'Embedded-key verification does not validate the capsule certificate chain or P16 trust',
                 'Descriptor address words are preserved without assigning a CPU memory map',
