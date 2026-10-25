@@ -273,3 +273,44 @@ backing record. Values 0xabcd0023 and 0xffffff25 exercise ignored high bytes;
 0x2300 confirms the byte position. This proves the record-to-selector data
 path under those inputs, not the real record contents, its semantic field
 name, a Windows kernel response, or physical firmware compatibility.
+
+### Backing record reaches the Windows adapter-query boundary
+
+The fresh path at 0x79700 calls enumeration routine 0x792a8, then constructor
+0x791e0. The latter copies record `index` from a process-global vector at
+0x6a5ae0 (stride 0xc5e8) to backing+8. It preserves the complete record,
+including record+0x11c, which becomes backing+0x124. The constructor writes
+its own 0x11a9a marker separately at backing+0.
+
+Enumeration obtains adapter handles, then calls wrapper 0x786b0 with query
+types 13 (4 bytes), 15 (4 bytes), 31 (28 bytes), and finally **0 (0xc5b8
+bytes)**. The final private buffer starts at stack+0x50; the complete record
+starts at stack+0x20. Therefore record+0x11c lies at **private-buffer+0xec**.
+The private request starts with two literal header words and initializes a
+DWORD at private+0x10 to 1 before querying. This is not evidence for the
+remaining private response values or a Linux-compatible ABI.
+
+The wrapper builds an ARM64 structure with handle at +0, type at +4, buffer
+pointer at +8, size at +0x10 and zero padding at +0x14, then calls the pointer
+at 0x6a5a58. Loader 0x77fe0 establishes table base 0x6a5970; at
+0x782d4..0x782ec it resolves the literal `D3DKMTQueryAdapterInfo` through
+imported `GetProcAddress` and stores the result at table+0xe8, the same
+0x6a5a58 slot. This identifies the dynamic API binding rather than assuming
+it from structure resemblance. Microsoft's [query structure documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/d3dkmthk/ns-d3dkmthk-_d3dkmt_queryadapterinfo)
+describes these fields; its [query-type documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/d3dkmthk/ne-d3dkmthk-_kmtqueryadapterinfotype)
+describes UMDRIVERPRIVATE as vendor-specific UMD/KMD data.
+
+`scripts/inspect_provider_record.py` checks the exact dynamic-binding
+instructions and symbol, executes two complete original constructor copies
+with synthetic records, and executes four original query-wrapper cases with
+captured callback arguments and a propagated error status. Memory helpers and
+the OS callback are modeled; enumeration and a real kernel response are not
+executed. Static enumeration also filters the vendor field against 0x10de or
+0x4144564e, plus capability bits before appending records. Those filters are
+observed instructions, not yet an emulated complete enumeration contract.
+
+The recovered chain is now private response+0xec → enumerated record+0x11c →
+backing+0x124 → provider DWORD output → low byte → runtime selector. The KMD
+producer of private+0xec, its semantic meaning and its physical N1X value
+remain to be recovered. No Linux register or protocol setting is derived from
+an assumed value here.
