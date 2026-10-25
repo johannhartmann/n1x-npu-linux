@@ -20,6 +20,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/utsname.h>
 #include "n1x_dla_boot.h"
+#include "n1x_dla_command.h"
 #include "n1x_dla_registers.h"
 
 #define N1X_BOOT_KERNEL "7.2.8-23-omarchy-p16-asus-npu1"
@@ -29,6 +30,10 @@
 static bool enable_upload;
 module_param(enable_upload, bool, 0400);
 MODULE_PARM_DESC(enable_upload, "Permit root's explicit one-attempt upload trigger (default false)");
+
+static bool enable_ping;
+module_param(enable_ping, bool, 0400);
+MODULE_PARM_DESC(enable_ping, "Permit one explicit DMA-word ping after successful upload phase (default false)");
 
 struct n1x_boot_endpoint {
 	struct device *dev;
@@ -45,6 +50,13 @@ static void *boot_buffer;
 static dma_addr_t boot_dma;
 static int boot_error;
 static bool boot_attempted;
+static struct {
+	void *buffer;
+	dma_addr_t dma;
+	u32 owned, mask_before, masked, word;
+	bool attempted, verified;
+	int error;
+} boot_ping;
 
 static bool n1x_boot_machine(void)
 {
@@ -99,8 +111,11 @@ static int n1x_boot_offset(struct n1x_boot_endpoint *endpoint, u32 logical,
 			return -ERANGE;
 		return 0;
 	}
-	/* This phase uses only IDLESTATE. No writable DLA callback is supplied. */
-	if (write || logical != 0x4c)
+	/* Upload has no DLA writer. The separate opt-in ping uses only the
+	 * recovered route/mask/method registers; no core-start/reset/IRQ ACK.
+	 */
+	if (write ? (logical != 0xd24 && logical != 0x6c && logical != 0x68) :
+	    (logical != 0x4c && logical != 0xd2c && logical != 0xd28 && logical != 0x68))
 		return -EINVAL;
 	return n1x_dla_register_offset(N1X_DLA_MAP_WINDOWS_1, logical,
 				       endpoint->bytes, offset);
@@ -234,6 +249,100 @@ release:
 	return err;
 }
 
+/* Caller holds boot_lock. The upload already pins module/runtime references.
+ * A DMA-word change qualifies only command 1, never model execution/quiescence.
+ */
+static int n1x_boot_ping_once(void)
+{
+	struct n1x_dla_io io;
+	u64 maximum = DMA_BIT_MASK(36);
+	u32 attempt;
+	int err;
+
+	if (!enable_ping || !n1x_boot_machine())
+		return -EPERM;
+	if (!boot_sroot || !boot_dla || !boot_attempted ||
+	    !boot_result.reply_valid || !boot_result.idle_observed ||
+	    boot_result.reply.status || boot_result.reply.detail)
+		return -ENODEV;
+	if (boot_ping.attempted)
+		return -EALREADY;
+	err = n1x_boot_dma_gate(boot_dla);
+	if (err)
+		return err;
+	err = dma_set_mask_and_coherent(boot_dla->dev, maximum);
+	if (err)
+		return err;
+	boot_ping.buffer = dma_alloc_coherent(boot_dla->dev, 4096,
+					      &boot_ping.dma, GFP_KERNEL);
+	if (!boot_ping.buffer)
+		return -ENOMEM;
+	if (!boot_ping.dma || (boot_ping.dma & 255) || boot_ping.dma > maximum ||
+	    4095 > maximum - boot_ping.dma) {
+		err = -ERANGE;
+		goto free;
+	}
+	memset(boot_ping.buffer, 0, 4096);
+	WRITE_ONCE(*(__le32 *)boot_ping.buffer, cpu_to_le32(0x11111111));
+	err = n1x_boot_read(boot_dla, 0xd2c, &boot_ping.owned);
+	if (err)
+		goto free;
+	err = n1x_boot_read(boot_dla, 0xd28, &boot_ping.mask_before);
+	if (err)
+		goto free;
+	boot_ping.masked = boot_ping.owned & boot_ping.mask_before;
+	/* Conservative lifetime from the first mask-write attempt. No retries,
+	 * auto-restoration or freeing once the phase can change device state.
+	 */
+	boot_ping.attempted = true;
+	err = n1x_boot_write(boot_dla, 0xd24, boot_ping.masked);
+	if (err)
+		return err;
+	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+	dma_wmb();
+	/* Original Windows direct wrapper receives flags=0: method 1, not 0x301.
+	 * The result is in DMA memory; no mailbox ACK or IRQ handler is needed
+	 * by the emulated success path. Physical behavior is still unqualified.
+	 */
+	err = n1x_dla_send_method(&io, 1, boot_ping.dma >> 8, 5001, 1000);
+	if (err)
+		return err;
+	for (attempt = 0; attempt < 5001; attempt++) {
+		boot_ping.word = le32_to_cpu(READ_ONCE(*(__le32 *)boot_ping.buffer));
+		if (boot_ping.word == 0x44444444) {
+			dma_rmb();
+			boot_ping.verified = true;
+			return 0;
+		}
+		if (attempt + 1 < 5001)
+			n1x_boot_delay(boot_dla, 1000);
+	}
+	return -ETIMEDOUT;
+free:
+	dma_free_coherent(boot_dla->dev, 4096, boot_ping.buffer, boot_ping.dma);
+	boot_ping.buffer = NULL;
+	boot_ping.dma = 0;
+	return err;
+}
+
+static ssize_t ping_store(struct device *dev, struct device_attribute *attr,
+			  const char *buf, size_t count)
+{
+	int err;
+
+	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "ping"))
+		return -EPERM;
+	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev)
+		err = -ENODEV;
+	else
+		err = n1x_boot_ping_once();
+	boot_ping.error = err;
+	mutex_unlock(&boot_lock);
+	return err ? err : count;
+}
+static DEVICE_ATTR_WO(ping);
+
 static ssize_t upload_store(struct device *dev, struct device_attribute *attr,
 			    const char *buf, size_t count)
 {
@@ -258,15 +367,16 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 
 	mutex_lock(&boot_lock);
 	size = sysfs_emit(buf,
-		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u\n",
+		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u\n",
 		!!boot_dla, !!boot_sroot, enable_upload, boot_attempted, boot_error,
 		boot_result.reply_valid, boot_result.reply.header,
-		boot_result.idle_observed, !!boot_buffer);
+		boot_result.idle_observed, !!boot_buffer, enable_ping, boot_ping.attempted,
+		boot_ping.error, boot_ping.verified, boot_ping.word, !!boot_ping.buffer);
 	mutex_unlock(&boot_lock);
 	return size;
 }
 static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_show, NULL);
-static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_status.attr, NULL};
+static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_status.attr, NULL};
 ATTRIBUTE_GROUPS(boot);
 
 static int n1x_boot_probe(struct platform_device *pdev)

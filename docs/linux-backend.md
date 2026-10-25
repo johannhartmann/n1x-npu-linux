@@ -513,8 +513,10 @@ This experiment is restricted to `7.2.8-23-omarchy-p16-asus-npu1`, the exact
 ASUS/P16/BIOS identifiers and the audited ACPI revisions/resources. SROOT maps
 only register indices 1..12 at stride 16, preserving the stride descriptor's
 reservation. Its callbacks allow only the recovered TX/RX/status/ACK registers.
-DLA's callback permits only a read of logical IDLESTATE `0x4c`; it has **no write
-callback**. Logical offsets are bounds-checked before readl/writel. No IRQ handler,
+The upload phase's DLA interface permits only a read of logical IDLESTATE
+`0x4c`; it has **no write callback**. The separate opt-in ping phase below adds
+the restricted route/mask/method register callbacks. Logical offsets are
+bounds-checked before readl/writel. No IRQ handler,
 CPUCTL/reset write, inference UAPI or automatic recovery is implemented.
 
 The root-only `upload` attribute accepts the exact word `upload` and additionally
@@ -537,7 +539,8 @@ helper copies image[4:] and zeros the final four bytes. `dma_wmb()` precedes
 ordered mailbox writes.
 
 **After an attempted upload this experiment requires a reboot before another
-attempt.** Before any mailbox operation it pins its own module and holds runtime
+upload attempt.** The separately enabled ping phase may run once after a
+successful upload/idle result. Before any mailbox operation it pins its own module and holds runtime
 PM references for both endpoints. It retains the DMA allocation and those
 references on **all** transport/firmware/idle outcomes, including success.
 Subsequent triggers return EALREADY. It suppresses manual bind/unbind attributes
@@ -594,7 +597,8 @@ sudo rmmod n1x_npu_observe
 sudo install -Dm644 sources/dla-p16-sroot-v0.bin \
   /usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin
 # Use the module built for npu1, not the current-kernel build in driver/:
-sudo insmod results/npu1-bootstrap-build/driver/n1x_npu_bootstrap.ko enable_upload=1
+sudo insmod results/npu1-bootstrap-ping-build/driver/n1x_npu_bootstrap.ko \
+  enable_upload=1 enable_ping=1
 sudo cat /sys/bus/platform/devices/NVDA200A:00/status
 # This is the one write trigger; it requires retention/reboot afterward:
 printf 'upload\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/upload
@@ -608,3 +612,67 @@ system stability before deciding the next bring-up step. The current machine
 still runs the original kernel; no bootstrap module has been installed/loaded,
 no firmware file copied to the system firmware path, and no NPU register written
 by this work. The installed test UKI/menu/defaults remain unchanged.
+
+### Opt-in DMA-word ping phase (built, not yet run)
+
+The bootstrap module now also exposes a root/CAP_SYS_RAWIO `ping` attribute,
+requiring immutable `enable_ping=1` at module load. It performs no automatic ping.
+It requires a successful upload reply and idle observation from this same boot,
+both endpoint bindings and the DLA DMA gate again. An unrelated later sysfs
+error is not treated as evidence that the earlier upload did or did not succeed.
+The phase can be attempted only once after its first device-state write.
+
+The DLA-owned coherent allocation is 4096 bytes, nonzero and 256-byte aligned,
+with its whole extent within the 36-bit DMA mask. It is cleared and its first
+little-endian word initialized to `0x11111111`. Before submission the phase
+reads route ownership `0xd2c` and mask `0xd28`, preserves both and clears only
+`owned & mask` through `0xd24`, following the observed initial-loader policy.
+Errors before that first mask-write attempt free the unpublished ping buffer.
+After that point the buffer is retained on all outcomes under the upload's
+existing module/runtime references. No automatic mask restoration/retry or
+quiescence claim is made.
+
+After `dma_wmb()`, the actual C method sender sends **method 1**, data = ping
+IOVA >> 8, without response flags. This follows the now-executed original
+Windows direct wrapper; its success check is the DMA word, not a mailbox reply.
+The Linux loop uses READ_ONCE/little-endian conversion, followed by dma_rmb on
+success. Its explicit Linux policy is at most 5001 word reads with 1000-us
+sleeps between attempts. It does not infer Windows delay-helper units or copy
+the original final-delay boundary. Lowest-sender errors propagate immediately.
+A changed word `0x44444444` sets `ping_verified`; every other result, timeout or
+send error leaves it false. Even success retains storage until reboot because
+whole-device DMA quiescence is not established.
+
+Only the additional logical DLA registers required by this phase are admitted:
+reads `0x68`, `0xd28`, `0xd2c`; writes `0x68`, `0x6c`, `0xd24` (plus the earlier
+read-only idle offset). They use the recovered Windows-1 remapper and bounds.
+There is still no CPUCTL/reset write, IRQ handler, mailbox ACK, full IRQ enable,
+region/configuration initialization, task submission or inference UAPI. The
+success path of the raw-firmware model emits no response interrupt; live
+interrupt behavior for the opaque loaded image still needs qualification.
+
+The new status fields report ping enable/attempt/error, numeric word,
+verification and retained-buffer presence. An explicitly permitted pending
+manual test, **only after upload status is successful**, is:
+
+```sh
+printf 'ping\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/ping
+sudo cat /sys/bus/platform/devices/NVDA200A:00/status
+```
+
+Decide to enable the optional phase **before** the upload: after any upload
+attempt the module cannot normally be unloaded to change its load parameters.
+The earlier pending module-load example now includes both options and uses the
+current build at `results/npu1-bootstrap-ping-build/`. The old upload-only
+artifact remains a historical build, not the current ping-capable module.
+
+Validation: ten complete original Windows ping/direct-wrapper cases (six
+completion boundaries and four failures), original reset/trap/DMA firmware runs
+without function stubs on modeled completion cases; 29 exact Linux ping-function
+lifecycle cases linked to the real C method sender; 21 prior upload cases; and
+2592 DMA/MMIO guard cases plus machine/resource-end controls. Both kernel builds
+pass after correcting a collision with the kernel `current` macro. Target
+vermagic, source-copy hashes and no aliases checked. The new manifest records
+the initial failed build and corrected successful build. No module was loaded,
+no firmware installed and no physical ping/upload performed. These tests validate
+software contracts under mocks; hardware boot and inference remain open.

@@ -1699,3 +1699,40 @@ This fallback alone does not justify hardcoding the live Linux setting: the
 actual provider's earlier population, configuration overrides, and physical
 timer units still require evidence. No register is written on the machine by
 this test, and no Windows execution or physical NPU boot is claimed.
+
+## Full Windows ping / direct wrapper / raw HAL-1 cross-check
+
+`emulate_windows_ping.py` executes original KMD `0xd48110` and its actual
+method wrapper `0xd49fc0`, including the original stack-cookie helpers. Its
+lock shim selects the direct-send branch; OS allocation/cache/logging/delay
+and the lowest method sender are explicit synthetic boundaries. The latter
+records the actual wrapper-produced method/data and runs the pinned raw HAL-1
+image from reset through original trap and DMA functions without firmware
+function stubs. The register model supplies device effects, not real hardware.
+
+The ping allocates/clears 4096 bytes, writes challenge `0x11111111`, calls the
+cache helper with argument 1, sends **method 1 without 0x100/0x200 response
+flags**, then calls the cache helper with argument 0. The method data is the
+DMA address shifted right by eight. Original HAL-1 writes `0x44444444` into
+the first DMA word and returns through its trap without a response interrupt.
+A mailbox data word must not be confused with this numeric result; reply-enabled
+ping tests elsewhere preserve the encoded DMA address in the mailbox.
+
+The original Windows poll checks the word before each delay, up to 5000 times;
+the delay helper's argument is 100, with no established physical units here.
+The raw-firmware run finishes inside the modeled send boundary; the harness
+then controls when its resulting DMA word becomes visible to Windows RAM.
+Injected visibility after 0, 1, 17 or 4999 delays succeeds. Visibility after
+delay 5000 still returns Windows error `0x28`: there is no last re-read after
+the final delay. No injected visibility also returns `0x28`. This boundary is modeled
+explicitly rather than interpreting an emulator instruction limit as timeout.
+
+Allocation errors propagate, a null CPU address returns `0x1a`, and zero
+encoded DMA address returns `0x1f`. On the exercised direct wrapper path, an
+injected lowest-sender error is ignored by the wrapper, so the ping eventually
+returns `0x28` instead. A valid allocation is freed after both successful and
+timed-out polling. Those Windows behaviors do **not** establish safe Linux
+recovery or DMA quiescence. The Linux sender must propagate callback errors
+and retain potentially published storage; it does not copy those behaviors.
+The asynchronous wrapper branch, actual Windows coherency, opaque SROOT image
+identity, hardware ping and inference remain unverified.

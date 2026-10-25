@@ -21,7 +21,8 @@ checking and the write-free DLA idle wait. A separate, manual bootstrap module
 now connects that phase to guarded Linux MMIO and SROOT DMA storage. It builds
 for the isolated test kernel but has not been installed or run. It is a
 one-attempt experiment requiring retained DMA storage/reboot, and does not
-implement subsequent IRQ/ping/configuration steps or inference.
+complete IRQ/configuration initialization or inference. An additional opt-in
+DMA-word ping phase is implemented but also remains untested on hardware.
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI
 device nor write hardware registers.
 

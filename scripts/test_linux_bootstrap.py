@@ -18,7 +18,7 @@ def main():
     validator = source[source.index('static int n1x_boot_validate_firmware('):
                        source.index('/* Caller holds boot_lock.')]
     upload = source[source.index('static int n1x_boot_upload('):
-                    source.index('static ssize_t upload_store(')]
+                    source.index('/* Caller holds boot_lock. The upload already')]
     harness = r'''
 #include <assert.h>
 #include <stdbool.h>
