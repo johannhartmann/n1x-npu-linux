@@ -599,9 +599,9 @@ sudo rmmod n1x_npu_observe
 sudo install -Dm644 sources/dla-p16-sroot-v0.bin \
   /usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin
 # Use the module built for npu1, not the current-kernel build in driver/:
-sudo insmod results/npu1-bootstrap-lpwr-build/driver/n1x_npu_bootstrap.ko \
+sudo insmod results/npu1-bootstrap-bypass-build/driver/n1x_npu_bootstrap.ko \
   enable_upload=1 enable_ping=1 enable_region5=1 enable_config_snapshot=1 \
-  enable_config_apply=1 enable_lpwr_config=1
+  enable_config_apply=1 enable_lpwr_config=1 enable_bypass_task=1
 sudo cat /sys/bus/platform/devices/NVDA200A:00/status
 # This is the one write trigger; it requires retention/reboot afterward:
 printf 'upload\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/upload
@@ -794,7 +794,7 @@ lifecycle cases.
 The updated pending manual sequence is upload → DMA-word ping → region 5 →
 config export → default config apply. Select all needed options before upload.
 The module-load example above now uses
-`results/npu1-bootstrap-lpwr-build/`; earlier region/control-only builds
+`results/npu1-bootstrap-bypass-build/`; earlier region/control-only builds
 remain historical artifacts. Both kernel builds and affected regressions pass.
 No bootstrap has been loaded, firmware installed or physical import performed.
 The optional low-power configuration import is described below. IRQ
@@ -843,7 +843,7 @@ This is emulation with synthetic reset/DMA/IRQ effects, not physical validation
 or proof that the opaque SROOT image executes identical code.
 
 Both kernel module builds pass; the npu1 artifact and source manifest are in
-`results/npu1-bootstrap-lpwr-build/`. No module or firmware has been installed
+`results/npu1-bootstrap-bypass-build/`. No module or firmware has been installed
 by this addition, and no LPWR command has been sent to hardware.
 
 
@@ -856,6 +856,31 @@ fence write, dequeue and SWGEN0 in emulation. The same invalid zero network
 fails with the flag removed. A malformed postaction writes the fence but
 subsequently reports failure without SWGEN0, preventing the inference that
 fence equality alone means success. See [exact path and tests](bypass-task.md).
-This serializer is not a native submission UAPI; the bootstrap module still
-sends no task. Physical IRQ association, error/recovery ownership and numerical
+The bootstrap now offers a root-only one-attempt trigger for this fixed
+descriptor, described below; it has no arbitrary model/task UAPI. Physical IRQ association, error/recovery ownership and numerical
 execution remain open.
+
+
+### Native fixed-descriptor task qualification (built, not yet run)
+
+The optional `enable_bypass_task=1` / root `bypass_task` (`run`) phase now
+connects the recovered serializer to the actual bootstrap allocator, sender,
+mailbox polling and DMA fence observation. It requires accepted config and
+LPWR imports, rejects preexisting completion IRQs and admits exactly one own
+4096-byte DMA allocation. Acceptance, errors, fence and SWGEN0 are reported
+separately; all backing survives attempted submission until reboot. No model
+pointer or arbitrary descriptor is accepted from userspace.
+
+```sh
+# Only after all preceding phases in the pending hardware qualification succeeded:
+printf 'run\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/bypass_task
+sudo cat /sys/bus/platform/devices/NVDA200A:00/status
+```
+
+The exact native phase passes 44 lifecycle cases, including all 14 I/O fault
+positions and a late postaction error after fence/SWGEN0 observation. See
+[buffer layout, poll/error policy and test limits](bypass-task.md#native-one-attempt-bootstrap-phase).
+The newest target artifact is `results/npu1-bootstrap-bypass-build/`; no
+bootstrap module/firmware installation or physical submission occurred.
+This adds a fixed transport qualification operation, not a working inference
+UAPI, OS IRQ driver, recovery path or numerical computation.

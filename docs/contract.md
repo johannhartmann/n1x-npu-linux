@@ -1844,3 +1844,16 @@ controls establish that acceptance and even a written fence alone do not mean
 successful task completion. See [bypass path, exact instruction addresses,
 DMA sequence and qualification limits](bypass-task.md). This runs no network
 or accelerator computation and does not establish physical DMA quiescence.
+
+
+## Native single-task qualification connection
+
+The recovered bypass descriptor is now connected to the Linux bootstrap under
+an immutable opt-in flag and root/CAP_SYS_RAWIO trigger, after the previously
+qualified configuration phases. Forty-four tests compile the exact native
+phase with real serializers/send/response/ACK and exercise allocation, all 14
+I/O failure positions, acceptance-versus-fence-versus-SWGEN0, late errors and
+retained lifetime. [Native phase details](bypass-task.md#native-one-attempt-bootstrap-phase)
+distinguish its synthetic lifecycle test from the separate original-firmware
+scheduler test. No physical submission, IRQ routing, device quiescence,
+arbitrary-model UAPI or numerical execution is established.

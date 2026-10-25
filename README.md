@@ -234,5 +234,7 @@ inference or power-management driver.
 A [single-task bypass descriptor](docs/bypass-task.md) now exercises the original
 raw HAL-1 scheduler's successful fence/dequeue/SWGEN0 path in emulation, alongside
 execution-error, postaction-error and descriptor-rejection controls. It is a
-completion-transport qualification primitive; it performs no inference and is
-not yet exposed as a native Linux task-submission interface.
+completion-transport qualification primitive and performs no inference. The
+bootstrap now exposes it through an optional root-only one-attempt trigger for
+one internally built descriptor, with acceptance/error/fence/SWGEN0 checks and
+retained DMA backing. It accepts no arbitrary model/task pointers.

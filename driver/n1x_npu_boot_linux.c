@@ -23,6 +23,7 @@
 #include "n1x_dla_command.h"
 #include "n1x_dla_control.h"
 #include "n1x_dla_registers.h"
+#include "n1x_dla_task.h"
 
 #define N1X_BOOT_KERNEL "7.2.8-23-omarchy-p16-asus-npu1"
 #define N1X_BOOT_FIRMWARE "nvidia/n1x/p16-sroot-v0.bin"
@@ -56,6 +57,10 @@ MODULE_PARM_DESC(enable_config_apply, "Permit one explicit default config import
 static bool enable_lpwr_config;
 module_param(enable_lpwr_config, bool, 0400);
 MODULE_PARM_DESC(enable_lpwr_config, "Permit one explicit command-23 Windows fallback config import (default false)");
+
+static bool enable_bypass_task;
+module_param(enable_bypass_task, bool, 0400);
+MODULE_PARM_DESC(enable_bypass_task, "Permit one explicit single bypass task after config qualification (default false)");
 
 struct n1x_boot_endpoint {
 	struct device *dev;
@@ -107,6 +112,15 @@ static struct {
 	bool attempted, accepted;
 	int error;
 } boot_lpwr;
+
+static struct {
+	void *buffer;
+	dma_addr_t dma;
+	struct n1x_dla_response response;
+	u32 pending, fence;
+	bool attempted, response_valid, accepted, signal_seen, verified;
+	int error;
+} boot_task;
 
 static bool n1x_boot_machine(void)
 {
@@ -643,6 +657,133 @@ static ssize_t apply_lpwr_store(struct device *dev, struct device_attribute *att
 }
 static DEVICE_ATTR_WO(apply_lpwr);
 
+/* One owned diagnostic descriptor, not an arbitrary model/task UAPI.
+ * A changed fence alone is insufficient; require submission acceptance and
+ * SWGEN0, processing pending mailbox errors first. Never infer DMA quiescence.
+ */
+static int n1x_boot_bypass_task_once(void)
+{
+	struct n1x_dla_response_fields fields;
+	struct n1x_dla_task_args args = {0};
+	struct n1x_dla_io io;
+	u64 maximum = DMA_BIT_MASK(36), network;
+	u32 attempt;
+	int err;
+
+	if (!enable_bypass_task || !n1x_boot_machine())
+		return -EPERM;
+	if (!boot_sroot || !boot_dla || !boot_ping.verified ||
+	    !boot_region5.registered || !boot_config_apply.accepted || !boot_lpwr.accepted)
+		return -ENODEV;
+	if (boot_task.attempted)
+		return -EALREADY;
+	err = n1x_boot_dma_gate(boot_dla);
+	if (err)
+		return err;
+	err = n1x_boot_read(boot_dla, 8, &boot_task.pending);
+	if (err)
+		return err;
+	if (boot_task.pending & 0xc0)
+		return -EBUSY;
+	err = dma_set_mask_and_coherent(boot_dla->dev, maximum);
+	if (err)
+		return err;
+	boot_task.buffer = dma_alloc_coherent(boot_dla->dev, 4096,
+					    &boot_task.dma, GFP_KERNEL);
+	if (!boot_task.buffer)
+		return -ENOMEM;
+	if (!boot_task.dma || (boot_task.dma & 255) || boot_task.dma > maximum ||
+	    4095 > maximum - boot_task.dma) {
+		err = -ERANGE;
+		goto free;
+	}
+	memset(boot_task.buffer, 0, 4096);
+	args.address_list = boot_task.dma + 256;
+	args.num_addresses = 1;
+	network = boot_task.dma + 512;
+	err = n1x_dla_build_address_list(boot_task.buffer + 256, 256, &network, 1);
+	if (!err)
+		err = n1x_dla_build_bypass_fenced_task_v2(boot_task.buffer, 256, &args,
+						      boot_task.dma + 768, 0x12345678);
+	if (err)
+		goto free;
+	WRITE_ONCE(*(__le32 *)(boot_task.buffer + 768), cpu_to_le32(0xdeadbeef));
+	boot_task.fence = 0xdeadbeef;
+	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+	dma_wmb();
+	boot_task.attempted = true;
+	err = n1x_dla_send_method(&io, 0x307, boot_task.dma >> 8, 5001, 1000);
+	if (err)
+		return err;
+	for (attempt = 0; attempt < 5001; attempt++) {
+		err = n1x_boot_read(boot_dla, 8, &boot_task.pending);
+		if (err)
+			return err;
+		if (boot_task.pending & 0x80) {
+			err = n1x_dla_take_response(&io, &boot_task.response);
+			if (err)
+				return err;
+			boot_task.response_valid = true;
+			err = n1x_dla_decode_response(&boot_task.response, &fields);
+			if (err)
+				return err;
+			if (fields.command != 7 || fields.data != boot_task.dma >> 8)
+				return -EPROTO;
+			if (fields.status || fields.message == 1 || fields.message == 8 ||
+			    fields.message == 9 || fields.message == 10)
+				return -EREMOTEIO;
+			if (fields.upper || fields.message != 2 || boot_task.accepted)
+				return -EPROTO;
+			boot_task.accepted = true;
+		}
+		if (boot_task.pending & 0x40)
+			boot_task.signal_seen = true;
+		dma_rmb();
+		boot_task.fence = le32_to_cpu(READ_ONCE(*(__le32 *)(boot_task.buffer + 768)));
+		if (boot_task.accepted && boot_task.signal_seen && boot_task.fence == 0x12345678) {
+			/* A later error can coexist with a written fence. Recheck before
+			 * acknowledging SWGEN0; leave new mailbox work for the next poll.
+			 */
+			err = n1x_boot_read(boot_dla, 8, &boot_task.pending);
+			if (err)
+				return err;
+			if (!(boot_task.pending & 0x80)) {
+				err = n1x_boot_write(boot_dla, 4, 0x40);
+				if (err)
+					return err;
+				boot_task.verified = true;
+				return 0;
+			}
+		}
+		if (attempt + 1 < 5001)
+			n1x_boot_delay(boot_dla, 1000);
+	}
+	return -ETIMEDOUT;
+free:
+	dma_free_coherent(boot_dla->dev, 4096, boot_task.buffer, boot_task.dma);
+	boot_task.buffer = NULL;
+	boot_task.dma = 0;
+	return err;
+}
+
+static ssize_t bypass_task_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	int err;
+
+	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "run"))
+		return -EPERM;
+	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev)
+		err = -ENODEV;
+	else
+		err = n1x_boot_bypass_task_once();
+	boot_task.error = err;
+	mutex_unlock(&boot_lock);
+	return err ? err : count;
+}
+static DEVICE_ATTR_WO(bypass_task);
+
 static ssize_t config_snapshot_show(struct device *dev, struct device_attribute *attr,
 				    char *buf)
 {
@@ -705,7 +846,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 
 	mutex_lock(&boot_lock);
 	size = sysfs_emit(buf,
-		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x lpwr_enabled=%u lpwr_attempted=%u lpwr_error=%d lpwr_accepted=%u lpwr_reply_valid=%u lpwr_reply=%#x lpwr_retained=%u\n",
+		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x lpwr_enabled=%u lpwr_attempted=%u lpwr_error=%d lpwr_accepted=%u lpwr_reply_valid=%u lpwr_reply=%#x lpwr_retained=%u task_enabled=%u task_attempted=%u task_error=%d task_response_valid=%u task_reply=%#x task_data=%#x task_accepted=%u task_signal_seen=%u task_fence=%#x task_pending=%#x task_verified=%u task_retained=%u\n",
 		!!boot_dla, !!boot_sroot, enable_upload, boot_attempted, boot_error,
 		boot_result.reply_valid, boot_result.reply.header,
 		boot_result.idle_observed, !!boot_buffer, enable_ping, boot_ping.attempted,
@@ -717,14 +858,17 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 		boot_config_apply.attempted, boot_config_apply.error, boot_config_apply.accepted,
 		boot_config_apply.transaction.response_valid, boot_config_apply.transaction.response.word,
 		enable_lpwr_config, boot_lpwr.attempted, boot_lpwr.error, boot_lpwr.accepted,
-		boot_lpwr.transaction.response_valid, boot_lpwr.transaction.response.word, !!boot_lpwr.buffer);
+		boot_lpwr.transaction.response_valid, boot_lpwr.transaction.response.word, !!boot_lpwr.buffer,
+		enable_bypass_task, boot_task.attempted, boot_task.error, boot_task.response_valid,
+		boot_task.response.word, boot_task.response.data, boot_task.accepted, boot_task.signal_seen,
+		boot_task.fence, boot_task.pending, boot_task.verified, !!boot_task.buffer);
 	mutex_unlock(&boot_lock);
 	return size;
 }
 static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_show, NULL);
 static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
 	&dev_attr_config_snapshot.attr, &dev_attr_init_region5.attr,
-	&dev_attr_apply_config.attr, &dev_attr_apply_lpwr.attr, &dev_attr_status.attr, NULL};
+	&dev_attr_apply_config.attr, &dev_attr_apply_lpwr.attr, &dev_attr_bypass_task.attr, &dev_attr_status.attr, NULL};
 ATTRIBUTE_GROUPS(boot);
 
 static int n1x_boot_probe(struct platform_device *pdev)
