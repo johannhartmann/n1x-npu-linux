@@ -423,6 +423,21 @@ No reboot has been initiated by the installer or agent. Boot, graphics/input,
 successful DMA allocation, firmware start and inference remain unverified.
 Build manifests describe their generation-time state; the root-owned installation
 checkpoint and actual package/filesystem state are authoritative for deployment.
+
+Before selecting the test entry after further development, recheck the actual
+installation with the read-only audit:
+
+```sh
+sudo python3 scripts/audit_sroot_test.py > results/preboot-audit.json
+```
+
+It verifies the root-owned completion checkpoint, installed UKI and kernel
+hashes, exact append-only Limine menu, working fallback's BLAKE2b digest,
+installed module hashes/vermagics/dependencies, and the UKI's kernel, command
+line, ACPI overrides and required boot files. It neither repairs discrepancies
+nor changes the default, loads modules or reboots. A successful result permits
+the planned manual boot experiment; it does not prove that the kernel boots.
+The command needs root only because `/boot` and the checkpoint are protected.
 An unprivileged `pacman -Qk` can check headers/root files but cannot inspect the
 EFI mount's DTB paths because `/boot` is restricted; those permission errors
 must not be reported as proof that files are missing.
