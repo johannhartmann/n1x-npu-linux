@@ -69,3 +69,38 @@ separate DLA compiler DLL is listed. The complete download and code inspection
 are pending; the archive's advertised hash is not yet a locally verified hash.
 Windows binaries are not installed into the Linux Python environment. No
 compiler execution, generated DLA binary or physical inference is claimed.
+
+### Compiler dependency and parser audit
+
+The available, **incomplete** prefix of `nvinfer_11.dll` already contains the
+dynamic library name **`nvdla_compiler.dll`**, the queried symbol
+**`NvDlaCompilerGetSemVersion`**, compiler-compatibility error messages and a
+large `NvDlaTensor*`/`NvDlaLayer*` API string set. This is string evidence of a
+separate compiler dependency, not an executed loader or validated function
+binding. The Wheel directory does not list that dependency. Therefore the
+Windows wheel alone is not yet a demonstrated DLA compilation environment.
+
+The complete `nvonnxparser_11.dll` was extracted from its already downloaded
+ZIP entry. `scripts/inspect_tensorrt_parser.py` pins the acquired ARM64 PE hash:
+`ad44a8a9be9ab824540b6363b8cb6e63f0d879b97c27b71ef4fde50c59068207`.
+The wheel RECORD instead describes a 2260480-byte file. Removing the trailing
+10352-byte certificate table and zeroing only PE checksum/security-directory
+fields reconstructs that exact pre-sign size and RECORD SHA-256:
+`eb2896c3cfce1c91a2e4619b0296fc13b3a3447d9f7930c73a1aeca2a2990306`.
+The acquired signed file is preserved unchanged. This establishes consistency
+with the package record, **not certificate-chain trust validation**.
+
+Its imports are KERNEL32 and dbghelp; exports include the parser/refitter
+factories and parser-version getter. DLA capability and version-3.16 feature
+strings are present. These do not establish compilation or N1X compatibility.
+
+```sh
+venv/bin/python scripts/inspect_tensorrt_parser.py
+```
+
+NVIDIA's [Debian SBSA package index](https://developer.download.nvidia.com/compute/cuda/repos/debian12/sbsa/)
+also publishes `libnvinfer-dla-compiler11_11.4.0.106-1+cuda13.4_arm64.deb`.
+It is being acquired as a possible native analysis counterpart. Its existence
+does not override NVIDIA's stated absence of supported Linux SBSA DLA in this
+release; contents, exported ABI and usefulness remain to be inspected. Nothing
+from this package has been installed or executed.
