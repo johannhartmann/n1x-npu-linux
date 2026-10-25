@@ -64,10 +64,14 @@ code offsets `0x4168..0x4186` construct `0x144648`, `0x146d54` and `0x1480c4`;
 subtracting that base locates an IRQ synchronization error format, `[ERROR]`
 and newline in the second payload. Adjacent code also constructs `0x144630`
 and `0x14466c`, matching nearby error formats. This is static evidence only.
-The CPU code base, complete mapping and entry path still require reconstruction
-before a full firmware emulation can be treated as reliable. The bounded reply
-routine below can nevertheless run with a synthetic code base because its
-executed calls are PC-relative and its absolute data accesses are accounted for.
+The text base is now reconstructed as `0x15000`. Startup offsets `0xf0/0xf4`
+form a PC-relative address using `auipc 0x168` and `addi -0x84`; with that base
+they resolve to `0x17d06c`, the stack-cookie address independently used by the
+functions' absolute references. The routine at payload offset `0x87a00` scrubs
+text from `0x15000` up to `0x9ca00`, exactly its own start with that base. All
+ten static service pointers then resolve to valid function entries. These checks
+are enforced by `inspect_spark_osroot.py`. Full startup, peripheral state and
+authentication execution remain unmodeled.
 Descriptor words `0x10001000`/`0x10001100` are preserved without labeling them
 CPU execution addresses.
 
@@ -81,10 +85,11 @@ packing and error-return paths. Those reply meanings remain unresolved.
 
 `scripts/test_osroot_reply.py` executes the original RV32 routine at payload
 offset `0x341c`, its original register-address accessor at `0x31c0` and the
-original zero-return helper at `0x36b6`. There are no function stubs. The harness
-maps code at synthetic address zero, supplies stack and cookie memory, and
+original zero-return helper at `0x36b6`. These reply-only cases use no function
+stubs. The harness
+maps code at `0x15000`, supplies stack and cookie memory, and
 replaces the four register bases at `0x146d44` with emulator-owned memory.
-This is function-level execution, not a recovered full boot layout.
+This is function-level execution, not a replay of a complete boot.
 
 The input structure contains a 32-bit combined status at offset 0, command byte
 at offset 4, low-four-bit payload count at offset 8 and payload words at offset
@@ -110,8 +115,30 @@ accepts a count of 15; Linux's existing maximum of 14 is unchanged. The static
 service tables referenced by the dispatcher at offset `0x1186a` list commands
 `0x10/0x19/0x30/0x31` for mailbox 0, none for mailbox 1,
 `0x1b/0x22/0x23/0x25` for mailbox 2, and `0x02/0x03` for mailbox 3.
-They do not supply a handler for upload command `0x18`. Their code-pointer
-mapping and the actual SROOT upload error producers remain unresolved.
+They do not supply a handler for upload command `0x18`. The actual SROOT upload
+error producers remain unresolved.
+
+## Internal error conversion in the reference service
+
+The table entry for command `0x19` points to CPU address `0x259f4`, now resolved
+to payload offset `0x109f4`. Its log identifies it as `service_fuse_burning`;
+it is **not** the missing upload handler. Its inner operation is at offset
+`0x6088`. The service treats `0x55aa0000` as success, and otherwise converts an
+inner result into a combined mailbox status using:
+
+```text
+((inner >> 10) & 0x3f) << 12 | (inner & 0x3ff)
+```
+
+The test executes this complete service and its original reply constructor,
+error-ring bookkeeping and reply sender. Only the inner operation's return is
+injected and logging suppressed; no fuse operation or physical access occurs.
+Five controls establish the conversion, including hypothetical inner results
+`0xaa55a806 -> 0x2a006` and `0xaa5597ff -> 0x253ff`. These are candidate internal
+representations **if** SROOT uses the same conversion; neither raw value was
+observed on the P16. The mailbox fields alone cannot recover the discarded
+upper bits or prove the origin of the error. This provides the next code-search
+targets without labeling the observed failure as a signature or trust error.
 
 ## Reproduce without touching hardware
 

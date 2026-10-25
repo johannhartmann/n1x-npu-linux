@@ -112,12 +112,41 @@ def inspect(capsule):
              b'/proj/mtk22036/n1x/RoT_NativeSDK_0523_osroot_wagyu/')
     strings = {term.decode(): extracted['osroot-2200.bin'].find(term) for term in terms}
     assert all(offset >= 0 for offset in strings.values())
+    code, data = extracted['osroot-2100.bin'], extracted['osroot-2200.bin']
+    # Independent references constrain the text base, rather than treating
+    # descriptor transport addresses as CPU execution addresses.
+    startup = [(i.mnemonic, i.op_str) for i in engine.disasm(code[0xf0:0xf8], 0xf0)]
+    assert startup == [('auipc', 't0, 0x168'), ('addi', 't0, t0, -0x84')]
+    text_base = 0x17d06c - (0xf0 + 0x168000 - 0x84)
+    assert text_base == 0x15000
+    scrub = [(i.mnemonic, i.op_str) for i in engine.disasm(code[0x87a4e:0x87a60], 0x87a4e)]
+    assert scrub == [('c.lui', 'a5, 0x15'), ('mv', 'a5, a5'),
+                     ('lui', 'a3, 0x9d'), ('addi', 'a4, a3, -0x600'),
+                     ('bltu', 'a5, a4, 0x2e')]
+    assert text_base+0x87a00 == 0x9d000-0x600
+    services = []
+    for mailbox in range(4):
+        table = struct.unpack_from('<I', data, 0x4010+4*mailbox)[0]
+        count = data[0x40e8+mailbox]
+        for index in range(count):
+            command, target, mask, flag = struct.unpack_from('<4I', data,
+                                                            table-0x144000+16*index)
+            offset = target-text_base
+            assert 0 <= offset < 0x13000 and mask == 31 and flag == 1
+            first = next(engine.disasm(code[offset:offset+4], offset))
+            assert first.mnemonic in ('c.addi16sp', 'c.addi', 'c.beqz')
+            services.append({'mailbox': mailbox, 'command': hex(command),
+                             'handler_address': hex(target), 'handler_offset': hex(offset)})
+    assert len(services) == 10
     return {'passed': True, 'hardware_access': False, 'capsule_sha256': CAPSULE_HASH,
             'cose_offset': hex(PREFIX), 'algorithm': 'PS384', 'key_id': '14',
             'embedded_key_signature_verified': True, 'signature_negative_controls': 2,
             'body_digest_negative_controls': 3, 'components': rows,
             'riscv_vector_jump_targets_relative': [i.op_str for i in vectors],
             'data_string_offsets': strings,
+            'text_base_evidence': {'base': hex(text_base), 'startup_reference_offset': '0xf0',
+                                  'cookie_address': '0x17d06c', 'scrub_end': '0x9ca00'},
+            'static_services': services,
             'limitations': ['DGX Spark research input, not a P16 firmware update',
                 'Embedded-key verification does not validate the capsule certificate chain or P16 trust',
                 'Descriptor address words are preserved without assigning a CPU memory map',
