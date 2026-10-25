@@ -238,3 +238,10 @@ completion-transport qualification primitive and performs no inference. The
 bootstrap now exposes it through an optional root-only one-attempt trigger for
 one internally built descriptor, with acceptance/error/fence/SWGEN0 checks and
 retained DMA backing. It accepts no arbitrary model/task pointers.
+
+
+The [builtin Windows diagnostic audit](docs/diagnostic-contract.md) executes
+its original runtime selector, verifies the actual embedded pointer/hash, and
+maps the observed named buffers. The 32-byte diagnostic result layout and
+numerical comparison are still unresolved; neither a zero result buffer nor
+whole-buffer comparison with the blob named positive is treated as success.

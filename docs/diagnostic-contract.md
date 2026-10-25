@@ -1,0 +1,87 @@
+# Builtin diagnostic selection, buffers and result boundary
+
+The pinned Windows `nvdla_runtime.dll` contains a 5,939,144-byte builtin NVDA
+loadable at RVA 0xa6610. Runtime SHA-256:
+`c58e3425eeee93f89b1ae68f814552aa1cacaaf85d913ca12a9b14f83902d49b`.
+Loadable SHA-256:
+`51d26d83317807984d6a4b29be68e6e370175a0a0bd30fad2179a057e3c28543`.
+This is the same input used by the existing nine-allocation scheduler fixture;
+no additional model or vendor binary is distributed with this repository.
+
+## Original Windows selection
+
+`scripts/inspect_diagnostic_contract.py` executes the complete normal-return
+paths of original ARM64 function **0x15eb8**, called by exported
+`IRuntime::appendDiagnosticLoadable` at 0x262d0. Lock/log/CFG and the final
+model-parser callback are explicit emulation boundaries; the latter is not a
+real model parser or device operation.
+
+The original function locks context+8, logs, reads the u32 at context **+0x98**,
+and selects its builtin payload only when that field is **1**. It calls
+context vtable **+0x218** with context, the actual pointer `base+0xa6610`, size
+`0x5a9fc8` and the caller's output-handle pointer. The test hashes all bytes
+read through that original pointer. Selectors 0/2/3/4/UINT32_MAX return 2
+without calling the model parser. A modeled model-parser error or logging
+error 0x65 propagates; normal paths unlock before returning. Eight cases cover
+these branches. Lock failure/exception unwinding is not emulated here.
+
+The selector is an observed runtime field. It is not automatically the same
+identifier as the KMD hardware-profile number or raw firmware HAL selector.
+The model handle 42 used by the test is a synthetic parser output, not a live
+Windows or Linux allocation.
+
+## Observed buffers and table slots
+
+The bounded existing NVDLA-v1 projection exposes nine memory/address entries.
+The six root-vector-6 tables have raw names and scalar slots consistent with
+these memory entries. Their complete modern schema is still unverified; the
+following is a checked byte/size correspondence, not a full parser validation:
+
+| Raw table name | Slot 1 u16 | Slot 2 u16 / projected memory ID | Slot 3 u64 / bytes |
+| --- | --- | --- | --- |
+| task0_stats | 0 | 3 | 27264 |
+| working_buffer | 1 | 4 | 5729504 |
+| scratch_buffer | 2 | 5 | 2471680 |
+| positive | 3 | 6 | 27264 |
+| negative | 4 | 7 | 27264 |
+| sdl_out | 5 | 8 | 32 |
+
+The seven content blobs are negative, positive, task0-addr0, task0-db, task0-ib,
+task0_stats and working_buffer. Scratch and sdl_out have no initialized content
+blob. The audit checks original blob hashes, full fixture allocation extents,
+content placement and address-list sizes. The current fixture requires
+8,428,800 bytes including its alignment/cache padding for the existing HOST
+base; this is not a claim about Windows allocation overhead.
+
+`negative` is 27264 zero bytes. `positive` and `task0_stats` share their first
+**17604 bytes**: LE u32 25, followed by 25 raw name-bearing blocks at stride
+704. Names include fi_sdp1, fi_conv1 and fi_rubik0_concat_7x7x9_int8_mc2ub.
+They first differ at byte **17688**. An aligned-tail interpretation involving
+per-operation result records is a hypothesis; record field meanings, CRC
+polynomial/coverage and the actual comparison algorithm have not been proved.
+The entire positive blob therefore cannot yet serve as an unquestioned
+byte-for-byte numerical oracle for a future statistics buffer.
+
+In particular, an initially zero 32-byte sdl_out buffer is not a successful
+health result. Its field layout and pass/fail encoding remain unknown. Neither
+its name nor an accepted task/fence alone establishes numerical correctness.
+
+## Official API correspondence and remaining execution work
+
+NVIDIA documents an internally supplied diagnostics module and a dedicated
+submission flag. Applications supply queried output buffers, while the
+builtin diagnostics do not take input tensors. This supports investigating
+the Windows embedded model as a hardware-test path; it does not establish N1X
+Linux driver support or this binary's precise output layout. See the official
+[cuDLA module and task APIs](https://docs.nvidia.com/cuda/archive/13.4.2/cudla-api/cudla_api/group__CUDLA__API.html).
+
+The existing original-firmware fixture reaches its first engine wait, rather
+than completing accelerator work. Next requirements are reconstruction of the
+actual diagnostic output writer/comparison, verified engine IRQ/readiness and
+physical execution after test-kernel/DMA qualification. Numerical results must
+be checked independently of transport completion. This audit does not write
+registers, bind a driver, change boot configuration or submit a hardware task.
+
+```sh
+venv/bin/python scripts/inspect_diagnostic_contract.py
+```

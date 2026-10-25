@@ -1882,3 +1882,16 @@ correct status and retains DMA backing while error handlers can still be in
 flight after ACK. See [coupled test and precise boundaries](bypass-task.md#exact-native-phase-coupled-to-original-firmware).
 Kernel prerequisites and hardware device effects remain synthetic; physical
 boot/DMA/IRQ and numerical inference are still unverified.
+
+
+## Builtin Windows diagnostic selection and numerical-oracle boundary
+
+Eight original-runtime append cases now verify selector +0x98==1, the full
+builtin pointer/size/hash passed to vtable +0x218 and normal-return error
+propagation. The audit checks nine projected allocation/address entries and
+six raw named tensor-table correspondences, including 32-byte sdl_out. The
+positive and initial stats blobs share 17604 bytes of name-bearing prefix but
+first differ at 17688; no unverified whole-buffer equality or zero-output
+pass criterion is introduced. See [diagnostic contract](diagnostic-contract.md)
+for exact limits, primary API correspondence and remaining output-comparison
+reverse engineering. No real diagnostic completes in this evidence.
