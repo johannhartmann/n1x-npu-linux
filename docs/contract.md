@@ -1286,3 +1286,49 @@ is not task completion or inference**: address-list/model loading, instruction
 execution, postactions, error reporting during execution and hardware compute
 are not exercised here. Buffer lifetime must extend through actual completion
 or quiescence; the immediate 0x702 mailbox ACK is insufficient for reclamation.
+
+## Scheduler execution error after task acceptance
+
+The command emulator can now resume the **original scheduler** after command
+interrupt return. It first verifies the trap restored every integer register,
+then continues at the original WFI helper's return instruction 0x102198, with
+the original scheduler stack/caller state. It does not call a task handler
+directly. Machine interrupt delivery and this wakeup remain synthetic. The
+legacy `returned` result describes command/trap return before this optional
+scheduler phase; `scheduler_wfi` separately reports the later scheduler wait.
+
+The integration test builds a fenced descriptor with the Linux C serializer,
+a one-entry address list from the Linux C serializer, a deliberately invalid **zero-filled
+256-byte network**, and a sentinel fence word. The host payload is 1024 bytes:
+descriptor backing at +0, address list at +256, network at +512 and fence at
++768. No useful model or numerical computation is claimed for this input.
+
+After the C response helper ACKs submission response **0x702**, the scheduler
+executes 0x104766 -> original task execution 0x1014f6. The same original
+0x7c bit-0 handshake seen during reset occurs again during task execution;
+the explicit register model can acknowledge it or hold it pending. With that
+synthetic acknowledgement supplied, the observed path continues through
+postaction handling 0x103d56 and dequeue 0x103f9c, then returns to scheduler WFI.
+No firmware instruction is changed and no firmware function is stubbed.
+
+The C response helper receives and ACKs a **second** response,
+**0x8003070a**, carrying the same descriptor address HOST>>8. This is the
+observed task-execution error for the zero network, distinct from the earlier
+submission ACK. The test does not generalize all message-type/error/flag meanings
+from this single frame. All 13 programmed DMA commands are host reads (two
+60-byte descriptor fetches, one eight-byte address list, one 256-byte network);
+there is no fence write. Queue count and task slot state become zero, while the
+fence remains **0xdeadbeef**, not requested value 0x12345678. This independently
+checks the earlier finding that failed execution skips terminal postactions.
+
+The negative control withholds the scheduler's 0x7c acknowledgement. It gets
+only 0x702, remains in the original poll through the observation budget, retains
+queue count **1** and slot state **3** (observed running state), and leaves the
+fence unchanged. It supplies no execution-completion response and does not
+reach scheduler WFI. This is not a firmware timeout or recovery mechanism.
+
+These results demonstrate why a Linux backend must separate submission ACK,
+execution status and fence observation: neither the acceptance response nor an
+unchanged fence can establish completed/quiescent work. Successful task execution,
+real firmware boot, hardware status transitions, DMA/IOMMU/coherency and kernel
+interrupt handling remain unverified. No NPU device was accessed.

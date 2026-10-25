@@ -36,7 +36,9 @@ is unchanged, and only register/device effects are modeled. Method FIFO delivery
 machine IRQ entry, DMA copies/completion and reset readiness remain synthetic.
 The Linux C task descriptor also reaches the original firmware queue through
 this path; an invalid version is rejected without enqueue. Acceptance does not
-establish task execution. Physical boot, DMA and IRQ delivery remain untested. The HAL-1 word uploader
+establish successful execution. A deliberately invalid network now also runs
+through the original scheduler: it produces a separate execution-error response,
+skips its fence and is dequeued. Physical boot, DMA and IRQ delivery remain untested. The HAL-1 word uploader
 also matches Windows across 16,839 callback writes, and its shared core-selection
 routine and 78 accessor cases are verified. Physical boot remains unverified. Auxiliary-driver selection is traced below.
 HAL-1 common task headers and UMD version strides are now revalidated;

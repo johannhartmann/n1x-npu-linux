@@ -38,6 +38,11 @@ def main():
     send.argtypes = [ctypes.POINTER(IO)]+[ctypes.c_uint32]*4
     build_task = lib.n1x_dla_build_task_v2
     build_task.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(TaskArgs)]
+    build_fenced = lib.n1x_dla_build_fenced_task_v2
+    build_fenced.argtypes = build_task.argtypes+[ctypes.c_uint64, ctypes.c_uint32]
+    build_addresses = lib.n1x_dla_build_address_list
+    build_addresses.argtypes = [ctypes.c_void_p, ctypes.c_size_t,
+                                ctypes.POINTER(ctypes.c_uint64), ctypes.c_uint16]
     active_method = 0x301
 
     def host(uc=None, word=0x102, data=0x200010, pending=True, fail_at=None, modeled_irq=False):
@@ -246,6 +251,46 @@ def main():
     rejected_queue = bytes.fromhex(rejected['queue0'])
     assert struct.unpack_from('<I', rejected_queue, 20)[0] == 0
     assert struct.unpack_from('<I', bytes.fromhex(rejected['first_task_slot']), 124)[0] == 0
+    # Execute a fenced task with a deliberately invalid zero network image.
+    # The fence must remain untouched when original execution fails.
+    assert build_fenced(task, len(task), ctypes.byref(task_args), HOST+768, 0x12345678) == 0
+    payload = bytearray(1024)
+    payload[:256] = task.raw
+    address_bytes = ctypes.create_string_buffer(256)
+    addresses = (ctypes.c_uint64*1)(HOST+512)
+    assert build_addresses(address_bytes, len(address_bytes), addresses, 1) == 0
+    payload[256:512] = address_bytes.raw
+    struct.pack_into('<I', payload, 768, 0xdeadbeef)
+    captured.clear()
+    submissions.clear()
+    failed_task = firmware_profile1(profile1, method=active_method, host_payload=bytes(payload),
+                                     host_handler=initialized_interrupt, host_submit=submit,
+                                     boot_from_reset=True, via_trap=True, dma_register_model=True,
+                                     resume_scheduler=True)
+    assert failed_task['returned'] and failed_task['scheduler_wfi']
+    assert failed_task['firmware_code_unmodified'] and failed_task['function_stubs'] == []
+    assert len(submissions) == 1 and len(captured) == 2
+    assert all(row[0:2] == (0, expected) for row in captured)
+    assert [row[2] for row in captured] == [(0x702, HOST >> 8), (0x8003070a, HOST >> 8)]
+    assert failed_task['task_events'] == ['0x104766', '0x1014f6', '0x103d56', '0x103f9c']
+    assert failed_task['scheduler_handshakes'] == 2
+    assert struct.unpack_from('<I', bytes.fromhex(failed_task['queue0']), 20)[0] == 0
+    assert struct.unpack_from('<I', bytes.fromhex(failed_task['first_task_slot']), 124)[0] == 0
+    assert struct.unpack_from('<I', bytes.fromhex(failed_task['host_payload_final']), 768)[0] == 0xdeadbeef
+    assert len(failed_task['dma_commands']) == 13
+    assert all(item['direction'] == 'read' for item in failed_task['dma_commands'])
+    assert not failed_task['task_interrupts']
+    captured.clear()
+    stalled_task = firmware_profile1(profile1, method=active_method, host_payload=bytes(payload),
+                                      host_handler=initialized_interrupt, host_submit=submit,
+                                      boot_from_reset=True, via_trap=True, dma_register_model=True,
+                                      resume_scheduler=True, scheduler_handshake=False)
+    assert stalled_task['returned'] and not stalled_task['scheduler_wfi']
+    assert stalled_task['pc'] in ('0x100e4a', '0x100e4c', '0x100e4e')
+    assert [row[2] for row in captured] == [(0x702, HOST >> 8)]
+    assert struct.unpack_from('<I', bytes.fromhex(stalled_task['queue0']), 20)[0] == 1
+    assert struct.unpack_from('<I', bytes.fromhex(stalled_task['first_task_slot']), 124)[0] == 3
+    assert struct.unpack_from('<I', bytes.fromhex(stalled_task['host_payload_final']), 768)[0] == 0xdeadbeef
     print(json.dumps({'scope': 'Linux C response capture/clear/ACK with synthetic IRQSTAT and real FW mailbox code',
                       'ordered_callback_count': len(expected),
                       'persistent_hal1_commands': len(sequence),
@@ -258,6 +303,9 @@ def main():
                       'missing_dma_idle_blocks_original_transfer': True,
                       'linux_task_queued_through_original_dma_and_trap': True,
                       'invalid_task_version_rejected_without_enqueue': True,
+                      'task_execution_error_distinct_from_submission_ack': True,
+                      'execution_error_skips_fence_and_dequeues_task': True,
+                      'unacknowledged_reset_retains_running_task': True,
                       'firmware_rearms_swgen1_before_each_reply': True,
                       'persistent_commands_use_linux_method_sender': True,
                       'suppressed_mask_set_blocks_delivery': True, 'error_prefixes_checked': 6,

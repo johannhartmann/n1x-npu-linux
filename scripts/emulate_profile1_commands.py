@@ -13,7 +13,9 @@ CTX = 0x20010000
 
 
 def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=True,
-        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False, via_trap=False, trap_dma_ready=True, dma_register_model=False, host_payload=None):
+        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False, via_trap=False, trap_dma_ready=True, dma_register_model=False, host_payload=None, resume_scheduler=False, scheduler_handshake=True):
+    if resume_scheduler and not (via_trap and dma_register_model):
+        raise ValueError('Scheduler tests require original reset, trap and DMA paths')
     if host_payload is not None and (not 4 <= len(host_payload) <= 4096-(HOST & 4095)):
         raise ValueError('Host payload must fit the mapped synthetic page')
     host_bytes = 4 if host_payload is None else len(host_payload)
@@ -46,11 +48,21 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
     u.mem_write(MMIO+0x40, struct.pack('<II', 0x11223344, 0x55667788))
     transfers, interrupts, register_writes, completed, method_reads = [], [], [], [], []
     trap_entries, trap_returns, dispatches, dma_commands = [], [], [], []
+    scheduler_running = False
+    scheduler_waiting = False
+    task_events, task_interrupts = [], []
+    scheduler_handshakes = 0
 
     def reg(n):
         return u.reg_read(getattr(regs, f'UC_RISCV_REG_A{n}'))
 
     def hook(_, address, size, user):
+        nonlocal scheduler_waiting
+        if scheduler_running and address in (0x104766, 0x1014f6, 0x103d56, 0x103f9c):
+            task_events.append(hex(address))
+        if scheduler_running and address == 0x102194:
+            scheduler_waiting = True
+            u.emu_stop()
         if via_trap and address == 0x1002dc:
             trap_entries.append(address)
         if via_trap and address == 0x100324:
@@ -108,6 +120,8 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             pending = struct.unpack('<I', u.mem_read(MMIO+8, 4))[0] | value
             u.mem_write(MMIO+8, struct.pack('<I', pending))
             mask = struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0]
+            if value & mask & 64:
+                task_interrupts.append({'pending': pending, 'mask': mask})
             if not (pending & mask & 128):
                 return
             interrupts.append(struct.unpack('<II', u.mem_read(MMIO+0x40, 8)))
@@ -120,6 +134,13 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             u.mem_write(MMIO+8, struct.pack('<I', pending))
 
     def read(_, access, address, size, value, user):
+        nonlocal scheduler_handshakes
+        if scheduler_running and address == MMIO+0x7c:
+            previous = struct.unpack('<I', u.mem_read(address, 4))[0]
+            if previous & 1:
+                scheduler_handshakes += 1
+                if scheduler_handshake:
+                    u.mem_write(address, struct.pack('<I', previous & ~1))
         if dma_register_model and address == MMIO+0x118:
             # Synchronous fake DMA: not busy, idle bit set. No physical timing inferred.
             u.mem_write(address, struct.pack('<I', 2 if trap_dma_ready else 0))
@@ -167,12 +188,19 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
         if u.reg_read(regs.UC_RISCV_REG_PC) != STOP:
             break
         completed.append(struct.unpack('<I', u.mem_read(HOST, 4))[0])
+    command_returned = u.reg_read(regs.UC_RISCV_REG_PC) == STOP
+    if resume_scheduler and command_returned:
+        scheduler_running = True
+        # Trap restored the original WFI caller's registers and stack.
+        # Resume at the original WFI return instruction; no task handler is called directly.
+        u.emu_start(0x102198, STOP, count=200000)
     code_unmodified = bytes(u.mem_read(0x100000, 36864)) == blob[512:512+36864]
     if dma_register_model:
         assert code_unmodified
-    return {'returned': u.reg_read(regs.UC_RISCV_REG_PC) == STOP,
+    return {'returned': command_returned,
             'pc': hex(u.reg_read(regs.UC_RISCV_REG_PC)),
             'host_word': struct.unpack('<I', u.mem_read(HOST, 4))[0],
+            'host_payload_final': bytes(u.mem_read(HOST, host_bytes)).hex() if host_payload is not None else None,
             'transfers': transfers, 'interrupts': interrupts,
             'register_writes': register_writes, 'completed': completed,
             'boot_from_reset': boot_from_reset, 'boot_state': boot_state,
@@ -181,6 +209,8 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             'dma_commands': dma_commands, 'function_stubs': [hex(address) for address in stubs],
             'firmware_code_unmodified': code_unmodified,
             'first_task_slot': bytes(u.mem_read(0x180200, 256)).hex() if boot_from_reset else None,
+            'scheduler_wfi': scheduler_waiting, 'task_events': task_events, 'task_interrupts': task_interrupts,
+            'scheduler_handshakes': scheduler_handshakes,
             'queue0': bytes(u.mem_read(0x180100, 32)).hex() if boot_from_reset else None,
             'final_irq_mask': struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0],
             'final_irq_pending': struct.unpack('<I', u.mem_read(MMIO+8, 4))[0],
