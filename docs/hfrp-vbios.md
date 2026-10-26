@@ -678,8 +678,78 @@ sudo /usr/bin/python scripts/read_gsp_frts_cache.py
 Eight offline tests pass, covering segment boundaries, overlapping segments,
 short reads, invalid headers/pointers, changed-code rejection before cache
 access, matching instruction bytes in the installed module, and synthetic
-cache agreement/disagreement. The live reader has only reached its
-unavailable-symbol rejection without privilege. **No live FRTS offset or
-container has yet been obtained with it.** The existing privileged NVIDIA
-diagnostic process is still waiting for authentication; no second prompt or
-driver restart was initiated.
+cache agreement/disagreement, including a consistent zero host-requested size.
+The reader was successfully executed with root privilege on 2026-10-26;
+see the live results below. It has not acquired the container itself.
+
+### Live acquisition results, 2026-10-26
+
+The privileged cached-metadata reader passed its module/instruction guards
+and both snapshots agreed. It returned GPU instance 0, firmware-reported
+FRTS offset **`0xb9500000`**, and host/suspend-cache FRTS size **0**. The raw
+record is retained locally in `results/gsp-frts-cache-live-20261026.json`.
+
+The zero size is expected from the host HAL: generated
+`g_kernel_gsp_nvoc.c` selects `kgspGetFrtsSize_b2b553` for GB20B; that inline
+function in `g_kernel_gsp_nvoc.h` returns zero. The host WPR input and its
+suspend copy therefore do not supply the final firmware-side extent.
+The helper now labels this value **`host_requested_frts_size`**, rather than
+the ambiguous `frts_size`. Zero neither proves an absent ROM nor permits a
+guessed read length. The privileged `/proc/iomem` snapshot has no resource
+covering `0xb9500000`: the preceding listed region ends at `0xafffffff`,
+and the next starts at `0xb9600000`. That gap is not evidence of CPU access
+permission or of a zero firmware base. No physical read was attempted.
+
+The previously pending `nvidia-debugdump` completed successfully. Its archive
+SHA256 is `7dab37a21f28658c402f246fb7d441123450ea52269c7debd34eefa0b9f1e4de`;
+ZIP CRC validation passes. Six members are present: `system_info.pb` (42230
+bytes), `error_data.pb` (1091), `nvlog.log` (697084), `debug_buffers_00.pb` (2),
+`rm_00.pb` (54799), and `nvlog.gpu000.log` (697084). None contains a literal
+GFWI or BIT signature. The two logs are binary NvLog data, not decoded text;
+this check does not exclude information encoded in them. The archive remains
+local because its system-information records contain process/client data.
+
+`scripts/read_nvidia_vbios_dump.cpp` adds a targeted, read-only component-9
+diagnostic request using the matching public SDK. It queries the size and
+retrieves one dump; it does not reset hardware, change diagnostic settings,
+map physical memory or upload firmware. The live size estimate was 250 bytes.
+A buffer of exactly that size was rejected with `NV_ERR_BUFFER_TOO_SMALL`;
+a bounded 1 MiB buffer succeeded and returned **250 bytes**, saved locally as
+`results/nvd-vbios-component9.pb`, SHA256
+`12011d038889aa5a4dff3fe2a583513383797c6b12fbaefe53527f5b34798788`.
+The program creates its output exclusively and rejects failed/empty replies.
+
+That protobuf contains root field 3, with nested fields 1 (27 bytes), 101
+(89 bytes), and **111 (123 bytes)**. Field 111 contains version `0x9a0b3100`
+and OEM revision 4, consistent with `9a.0b.31.00.04`. Its raw-ROM field 10
+is absent. The returned bytes are diagnostic metadata, not the required ROM.
+
+The corresponding original GSP exporter is `0x11bd55c`, identified by its
+use of field-111 descriptor `0x1c4d848`. Ghidra and instruction inspection
+show a conditional bytes-field-10 descriptor at `0x1c4cac8`: the candidate
+ROM pointer/length are `OBJVBIOS+0x2a8/+0x2b0`. Copying is gated by pointer
+presence and available encoder space, divided by 4 or 2 according to the
+object flag at `+0xfa8`. A separate table-copy branch needs more than
+65536 bytes of encoder space. This is static evidence, not a replay of the
+complete exporter or a measurement of the live pointer/length.
+
+The host `rpcDumpProtobufComponent_v18_12` in `kernel/vgpu/rpc.c` caps the
+GSP output to `min(maxRpcSize - headers, encoder_space)`. The normal GSP queue
+initializer sets its maximum element to 16 RM pages (64 KiB), from which
+queue/RPC headers are subtracted. Thus a larger userspace buffer does not
+remove this per-message limit and cannot reach the >64 KiB table branch.
+The current dump does not distinguish a null ROM pointer from a size/budget
+rejection. No queue limits or driver memory were patched.
+
+```sh
+c++ -std=c++17 -Wall -Wextra \
+  -I/usr/src/nvidia-615.78.08/src/nvidia/arch/nvalloc/unix/include \
+  -I/usr/src/nvidia-615.78.08/src/common/sdk/nvidia/inc \
+  scripts/read_nvidia_vbios_dump.cpp -o results/read_nvidia_vbios_dump
+sudo results/read_nvidia_vbios_dump results/component9-new.pb
+```
+
+Still needed: the final firmware extent and verified CPU mapping, or a
+supported export of the cached ROM. Root authentication is no longer the
+observed blocker for these completed captures. No NPU upload or restart was
+performed, and physical NPU firmware boot remains unverified.

@@ -85,6 +85,9 @@ region; the handoff and ROM extraction are replayed with synthetic inputs.
 The alternative `KernelFsp` source is disabled by the original GB20B
 constructor, also verified by replay; it is not a second established source
 for this board.
+Live inspection now reports FRTS offset `0xb9500000`, but the host-requested
+size is zero and the final firmware extent/CPU mapping remain unknown. A
+successful privileged VBIOS diagnostic returns metadata, without raw ROM.
 Acquiring the actual board container remains open. See
 [GFWI evidence](docs/hfrp-vbios.md#gsp-rom-source-gfwi-container).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI

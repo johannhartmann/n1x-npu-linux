@@ -105,9 +105,10 @@ def inspect_cache(core, symbols):
     if offset != sr_offset or size != host_size:
         raise ValueError("Cached FRTS fields disagree; no coherent snapshot")
     return {"gpu_instance": instance, "frts_offset": hex(offset),
-            "frts_size": size, "static_and_suspend_cache_agree": True,
+            "host_requested_frts_size": size, "static_and_suspend_cache_agree": True,
             "meaning": "Firmware-region offset, not a verified CPU physical address; "
-                       "zero fields do not establish an available FRTS container."}
+                       "size comes from host WPR inputs, not the final firmware metadata. "
+                       "GB20B's host HAL requests zero; the live container size is unknown."}
 
 
 def main():

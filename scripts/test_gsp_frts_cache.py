@@ -119,7 +119,15 @@ class Tests(unittest.TestCase):
             put(*args)
         result = inspect_cache(Snapshot(), symbols)
         self.assertEqual(result["frts_offset"], "0x1234000")
-        self.assertEqual(result["frts_size"], 0x100000)
+        self.assertEqual(result["host_requested_frts_size"], 0x100000)
+        # The actual GB20B host HAL requests zero, although the firmware can
+        # return a nonzero offset. Preserve that observation without inventing
+        # a readable container extent.
+        put(kgsp + 0xb10, 0)
+        put(wpr + 0xa0, 0)
+        self.assertEqual(inspect_cache(Snapshot(), symbols)["host_requested_frts_size"], 0)
+        put(kgsp + 0xb10, 0x100000)
+        put(wpr + 0xa0, 0x100000)
         for address, size in ((kgsp + 0xb08, 8), (wpr + 0xa0, 8),
                               (gpu + 0x4a5, 1), (gpu + 0x4d0, 1),
                               (manager + 0x48960, 4)):
