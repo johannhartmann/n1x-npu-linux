@@ -48,6 +48,8 @@ def main():
     if not build.is_relative_to(ROOT / "results"):
         parser.error("Expected repository build directory")
     report = json.loads((build / "frts-build.json").read_text())
+    if report.get("uki_sha256") == "16ac622a8832ef10a9d1a9da9cfbf2d2301591269245bdb325b0fb96bbc619c1":
+        parser.error("This capture UKI hung on the P16; use the capture-OFF diagnostic procedure")
     kernel, uki = build / "kernel", build / "uki"
     image = uki / "linux-p16-asus-23-npu1.efi"
     if report["stage"] != "verified" or report["release"] != RELEASE:

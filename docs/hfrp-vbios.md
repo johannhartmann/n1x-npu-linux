@@ -756,6 +756,13 @@ performed, and physical NPU firmware boot remains unverified.
 
 ### Scratch candidate and early RAM capture
 
+**Physical test status, 2026-10-26:** the first capture UKI hung with a black
+screen immediately after menu selection. The machine recovered by booting the
+original npu1 Image. Neither the persistent journal nor pstore contains that
+failed boot. The root cause is unresolved; successful builds, symbol CRCs and
+mocked guard tests did not establish physical bootability. A capture-OFF
+diagnostic is prepared below to replace the failed menu entry.
+
 The component-9 capture contains another useful field: VBIOS field 12 is a
 register dump, not another ROM. The original GB20B-selected callback
 `0x11c1ac8` calls the register encoder at `0x1b9f8f0`. Its loop reads **64
@@ -861,20 +868,94 @@ Build artifacts, retained locally:
 | capture Image | `d775641d7001dcf0ffb07fda59ee7ed57dccf6bf65ef44b88d4f1759d62db6d9` |
 | capture UKI | `16ac622a8832ef10a9d1a9da9cfbf2d2301591269245bdb325b0fb96bbc619c1` |
 
-`scripts/install_frts_snapshot.py` verifies the artifacts and existing default
-Image hash before adding the manual **N1X FRTS capture** entry. It does not
+`scripts/install_frts_snapshot.py` now rejects the above physically failed UKI
+hash. Its original deployment verified the artifacts and existing default
+Image hash before adding the manual **N1X FRTS capture** entry. It did not
 change the default, timeout, installed npu1 Image/modules or original entries,
 and never reboots. Its checkpoint is `/var/lib/n1x-npu-test/frts-capture`.
-Use absolute paths with `pkexec`, which may change the working directory:
+The following was the original installation command; the failed Image is now
+explicitly rejected. Use the diagnostic procedure below instead. Absolute
+paths are necessary with `pkexec`, which may change the working directory:
 
 ```sh
 pkexec /usr/bin/python3 /home/johann/n1x-lab/npu/scripts/install_frts_snapshot.py \
   /home/johann/n1x-lab/npu/results/frts-early-v1
 ```
 
-After manually booting **N1X FRTS capture**, check `journalctl -k -b` for
+For a future successfully qualified capture boot, check `journalctl -k -b` for
 `n1x-frts:` and acquire the sysfs snapshot if present. Run
 `scripts/extract_gfwi_vbios.py` on the saved container, then validate board
 identity and BIT token `l` using the existing bounded decoder. Do not load or
 trigger the NPU bootstrap as part of this capture. To recover from a failed
 boot, select the unchanged **Omarchy/linux-p16-asus-23** default entry.
+
+#### Black-screen investigation and capture-OFF diagnostic
+
+The failed boot left no persistent journal boot ID and no files in either
+`/sys/fs/pstore` or `/var/lib/systemd/pstore`. The recovered system runs the
+original npu1 kernel, build `#2`, without the capture parameter. Its power
+profile was restored from `balanced` to the user's requested `performance`.
+These observations do not locate the hang within the EFI loader, early
+kernel, or physical RAM access.
+
+An additional whole-kernel VM test executes the actual built capture Image
+through EDK II, using QEMU 11.1.2's ARM64 `virt` platform, TCG, one `max` CPU
+and 4 GiB RAM. A synthetic 36 KiB `GFWI` container is loaded into guest RAM at
+`0xfc000000`; a tiny static init reads the resulting sysfs file until EOF and
+compares all 36 KiB. It prints **`FRTS_VM_CAPTURE_PASS`**, then powers down.
+This tests early mapping, capture, later publication and reading after kernel
+initialization. It does not validate the P16's physical address interpretation
+or firmware. It boots the kernel Image through EFI, not the complete P16 UKI.
+Several KVM/old-EDK-II trials encountered firmware exceptions, including the
+known-working base UKI control; those trials do not diagnose the P16 hang.
+
+The VM init source is `tests/frts_vm_init.c`. Local artifacts/logs are
+`results/frts-qemu-fixture.gfwi`, `results/frts-vm-initrd`, and
+`results/frts-v1-qemu-sysfs-tcg.log`. Firmware comes from Debian's
+[`qemu-efi-aarch64_2022.11-6+deb12u2_all.deb`](https://packages.debian.org/bookworm/all/qemu-efi-aarch64/download),
+verified against published SHA256
+`9a55c7b94fdf13a28928359a77d42e5364aa3ae2e558bd1fd5361955bf479d81`.
+It is extracted under `results/qemu-efi`, not installed as host firmware.
+
+```sh
+mkdir -p results/frts-vm-root
+cc -static -O2 -Wall -Wextra -Werror tests/frts_vm_init.c -o results/frts-vm-root/init
+bsdtar --format=newc -cf results/frts-vm-initrd -C results/frts-vm-root init
+# Fixture: 0x9000 zero bytes, 'GFWI' at +0, LE32 40/64 at +32/+36,
+# and bytes 0..63 at +40. No real firmware or host disk is attached.
+timeout 45s qemu-system-aarch64 \
+  -machine virt,accel=tcg,gic-version=3 -cpu max -m 4G -smp 1 \
+  -nographic -nodefaults -serial mon:stdio -nic none -no-reboot \
+  -bios results/qemu-efi/usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+  -device loader,file=results/frts-qemu-fixture.gfwi,addr=0xfc000000,force-raw=on \
+  -kernel results/frts-early-v1/kernel/arch/arm64/boot/Image \
+  -initrd results/frts-vm-initrd \
+  -append 'console=ttyAMA0 earlycon=pl011,0x9000000 loglevel=7 nokaslr n1x_frts_snapshot=p16-bios300 rdinit=/init panic=0'
+```
+
+The next physical test is **N1X FRTS diagnostics - capture OFF**. It uses the
+same capture-kernel Image and the same initramfs bytes, with only the UKI
+command line changed. The capture opt-in is absent. `quiet`, `splash` and
+silent log settings are replaced by `earlycon=efifb`, visible messages and
+`initcall_debug`. The original root options and quoted ACPI option are preserved.
+This is fault isolation, **not a demonstrated fix**. If it boots, the active
+capture path becomes the main differentiator; if it still fails, the next
+investigation must include the rebuilt Image/EFI path independently of capture.
+
+```sh
+venv/bin/python scripts/test_frts_diagnostic.py -v
+venv/bin/python scripts/prepare_frts_diagnostic.py \
+  results/frts-early-v1 results/frts-diagnostic-v2
+pkexec /usr/bin/python3 /home/johann/n1x-lab/npu/scripts/install_frts_diagnostic.py \
+  /home/johann/n1x-lab/npu/results/frts-diagnostic-v2 \
+  /home/johann/n1x-lab/npu/results/frts-early-v1
+```
+
+The preparer verifies every non-command-line PE section is unchanged, retains
+virtual addresses/entry point, updates `.cmdline` VirtualSize (BFD otherwise
+retains the old size), and runs the existing boot-content verifier. Diagnostic
+UKI SHA256: `6a1a8d8a42832929a1093d1189f714ce1aa5c49bdfa7c9e1898fa3354a8929d2`.
+The installer replaces only the old capture entry, retains its EFI file, and
+backs up the menu under `/var/lib/n1x-npu-test/frts-diagnostic`. It preserves
+the normal default and timeout and never reboots. Physical diagnostic boot
+remains pending.
