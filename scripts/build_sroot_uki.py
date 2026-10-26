@@ -12,7 +12,7 @@ import shlex
 import shutil
 import subprocess
 from build_sroot_kernel import digest
-from package_sroot_kernel import audit_package, PKGBASE
+from package_sroot_kernel import audit_package, package_base
 from verify_sroot_uki import verify
 
 PINS = {'DSDT.aml': '80e0ad4a051704003d09029cb600a9814e1cd370ce774b9749dc09d2232b5aaf',
@@ -25,6 +25,7 @@ def main():
     parser.add_argument('packages', type=Path)
     parser.add_argument('external_modules', type=Path)
     parser.add_argument('destination', type=Path)
+    parser.add_argument('--bootlog-cmdline', type=Path, help='Capture-OFF diagnostic options with n1x_bootlog=1')
     args = parser.parse_args()
     kernel = args.kernel.resolve()
     output = args.destination.absolute()
@@ -32,7 +33,8 @@ def main():
         parser.error('destination must be new; inspect existing build logs before resuming')
     manifest = json.loads((kernel/'npu-build-manifest.json').read_text())
     release = manifest['expected_release']
-    if release != '7.2.8-23-omarchy-p16-asus-npu1' or manifest['stage'] != 'built':
+    pkgbase = package_base(release)
+    if manifest['stage'] != 'built':
         parser.error('requires the completed isolated NPU kernel build')
     external = json.loads((args.external_modules/'external-module-build.json').read_text())
     if external['release'] != release or external['stage'] != 'built':
@@ -42,7 +44,7 @@ def main():
         parser.error('package release mismatch')
     package = next(Path(p['path']) for p in packages['packages']
                    if audit_package(Path(p['path']), release, manifest['image_sha256'],
-                                    manifest['source_pins']['.config'])['name'] == PKGBASE)
+                                    manifest['source_pins']['.config'])['name'] == pkgbase)
     for row in external['modules']:
         if digest(Path(row['path'])) != row['sha256'] or row['vermagic'].split()[0] != release:
             parser.error('external module hash/release mismatch')
@@ -73,13 +75,13 @@ def main():
     for name in PINS:
         shutil.copy2(Path('/etc/initcpio/p16-acpi')/name, tables/name)
         additions.append('    add_file_early '+shlex.quote(str(tables/name))+' /kernel/firmware/acpi/'+name)
-    (hooks/'install/npu-test-acpi').write_text('''#!/usr/bin/env bash
+    (hooks/'install/npu-test-acpi').write_text(('''#!/usr/bin/env bash
 build() {
-    [[ $KERNELVERSION == 7.2.8-23-omarchy-p16-asus-npu1 ]] || return 1
+    [[ $KERNELVERSION == RELEASE_PLACEHOLDER ]] || return 1
 '''+ '\n'.join(additions)+'''
 }
 help() { echo 'Pinned P16 ACPI overrides for the isolated NPU test kernel'; }
-''')
+''').replace('RELEASE_PLACEHOLDER', release))
     configs = [Path('/etc/mkinitcpio.conf')]
     directory = Path('/etc/mkinitcpio.conf.d')
     names = subprocess.check_output(['sort', '-Vu'], input='\n'.join(p.name for p in directory.glob('*.conf'))+'\n', text=True).splitlines()
@@ -89,16 +91,26 @@ help() { echo 'Pinned P16 ACPI overrides for the isolated NPU test kernel'; }
     conf.write_bytes(b'\n'.join(data for _, data in snapshots)+
                      b'\nMODULES+=(spi_hid_acpi)\nHOOKS+=(npu-test-acpi)\n')
     cmdline = output/'cmdline'
-    cmdline.write_text(Path('/proc/cmdline').read_text())
-    image = output/'linux-p16-asus-23-npu1.efi'
-    command = ['pkexec', '/usr/bin/python3', str(Path(__file__).with_name('run_sroot_mkinitcpio.py')), str(output)]
+    options = args.bootlog_cmdline.read_text() if args.bootlog_cmdline else Path('/proc/cmdline').read_text()
+    if args.bootlog_cmdline and ('n1x_frts_snapshot' in options or 'n1x_bootlog=1' not in options.split()
+                                or 'keep_bootcon' not in options.split()):
+        parser.error('boot logger requires capture-OFF options and keep_bootcon')
+    cmdline.write_text(options)
+    image = output/(pkgbase + '.efi')
+    command = ['pkexec', '/usr/bin/python3', str(Path(__file__).with_name('run_sroot_mkinitcpio.py')),
+               str(output), '--release', release]
     log = output/'mkinitcpio.log'
-    with log.open('w') as stream:
-        subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=True)
+    if args.bootlog_cmdline:
+        from build_logged_initramfs import finish
+        (hooks / 'hooks').mkdir()
+        finish(output, modules/'vmlinuz', release)
+    else:
+        with log.open('w') as stream:
+            subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=True)
     text = log.read_text()
     if any(token in text for token in ('==> ERROR:', 'errors were encountered during the build', 'libfakeroot internal error')):
         raise RuntimeError('mkinitcpio reported build errors despite its exit status; inspect '+str(log))
-    verified = verify(image, modules/'vmlinuz', cmdline)
+    verified = verify(image, modules/'vmlinuz', cmdline, release)
     report = {'release': release, 'installed': False, 'uki': str(image),
               'sha256': digest(image), 'kernel_image_sha256': manifest['image_sha256'],
               'configs': {str(p): hashlib.sha256(data).hexdigest() for p, data in snapshots},

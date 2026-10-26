@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import tempfile
 from build_sroot_kernel import digest
-from package_sroot_kernel import audit_package
+from package_sroot_kernel import audit_package, package_base
 from verify_sroot_uki import verify
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,18 +25,21 @@ TITLE = 'N1X NPU test'
 EFI_NAME = 'omarchy_linux-p16-asus-23-npu1.efi'
 
 
-def render_entry(before, blake, cmdline):
+def render_entry(before, blake, cmdline, release=RELEASE):
+    pkgbase = package_base(release)
+    title = TITLE if release == RELEASE else 'N1X NPU diagnostics - disk log (capture OFF)'
+    efi_name = 'omarchy_' + pkgbase + '.efi'
     if not re.fullmatch('[0-9a-f]{128}', blake):
         raise ValueError('invalid EFI BLAKE2b digest')
     if any(c in cmdline for c in '\n\r\0'):
         raise ValueError('invalid kernel command line')
-    if re.search(r'^/'+re.escape(TITLE)+r'\s*$', before, re.M) or EFI_NAME in before:
+    if re.search(r'^/'+re.escape(title)+r'\s*$', before, re.M) or efi_name in before:
         raise ValueError('test entry already exists')
     if re.findall(r'^default_entry:\s*(.*?)\s*$', before, re.M) != ['Omarchy/linux-p16-asus-23']:
         raise ValueError('working kernel is not the recorded boot default')
-    addition = ('\n' if not before.endswith('\n') else '')+'\n/'+TITLE+'\n'
+    addition = ('\n' if not before.endswith('\n') else '')+'\n/'+title+'\n'
     addition += 'comment: Experimental SROOT DMA kernel; select manually\nprotocol: efi\n'
-    addition += 'path: boot():/EFI/Linux/'+EFI_NAME+'#'+blake+'\ncmdline: '+cmdline+'\n'
+    addition += 'path: boot():/EFI/Linux/'+efi_name+'#'+blake+'\ncmdline: '+cmdline+'\n'
     after = before+addition
     keys = r'^(?:default_entry|timeout|quiet):.*$'
     if re.findall(keys, before, re.M) != re.findall(keys, after, re.M):
@@ -63,7 +66,11 @@ def main():
     parser.add_argument('kernel_directory', type=Path)
     parser.add_argument('package_directory', type=Path)
     parser.add_argument('external_directory', type=Path)
+    parser.add_argument('--release', default=RELEASE)
+    parser.add_argument('--vm-result', type=Path)
     args = parser.parse_args()
+    release = args.release
+    pkgbase = package_base(release)
     if os.geteuid() != 0:
         parser.error('requires root')
     if platform.release() != '7.2.8-23-omarchy-p16-asus':
@@ -80,25 +87,38 @@ def main():
     uki = json.loads((uki_dir/'uki-build-manifest.json').read_text())
     packages = json.loads((args.package_directory/'package-manifest.json').read_text())
     external = json.loads((args.external_directory/'external-module-build.json').read_text())
-    if any(m.get('release', m.get('expected_release')) != RELEASE for m in (manifest, uki, packages, external)):
+    if any(m.get('release', m.get('expected_release')) != release for m in (manifest, uki, packages, external)):
         parser.error('artifact release mismatch')
     if uki.get('valid') is False or digest(Path(uki['uki'])) != uki['sha256']:
         parser.error('UKI is rejected or its hash differs')
-    verify(Path(uki['uki']), kernel/'arch/arm64/boot/Image', uki_dir/'cmdline')
+    verify(Path(uki['uki']), kernel/'arch/arm64/boot/Image', uki_dir/'cmdline', release)
+    if release.endswith('-npu2'):
+        options = (uki_dir/'cmdline').read_text()
+        if 'n1x_frts_snapshot' in options or not {'keep_bootcon', 'n1x_bootlog=1'} <= set(options.split()):
+            parser.error('npu2 requires capture-OFF disk logging and keep_bootcon')
+        if not args.vm_result:
+            parser.error('npu2 requires the successful VM disk-log test result')
+        vm = json.loads(args.vm_result.read_text())
+        if (vm.get('uki_sha256') != uki['sha256'] or vm.get('kernel_sha256') != manifest['image_sha256']
+                or not vm.get('initramfs_nvme_write_and_recovery_passed')):
+            parser.error('VM result does not qualify this UKI')
+        logger = json.loads((uki_dir/'bootlog-build.json').read_text())
+        if logger['sha256'] != uki['sha256'] or not logger['earlyhook_order_verified']:
+            parser.error('logger verification does not match this UKI')
     for path, pin in uki['configs'].items():
         if digest(Path(path)) != pin:
             parser.error('host initramfs configuration changed since UKI creation')
     for row in packages['packages']:
         if digest(Path(row['path'])) != row['sha256']:
             parser.error('package checksum mismatch')
-        audit_package(Path(row['path']), RELEASE, manifest['image_sha256'], manifest['source_pins']['.config'])
+        audit_package(Path(row['path']), release, manifest['image_sha256'], manifest['source_pins']['.config'])
     module_rows = external['modules']+[manifest['observation_module']]
     for row in module_rows:
-        if digest(Path(row['path'])) != row['sha256'] or row['vermagic'].split()[0] != RELEASE:
+        if digest(Path(row['path'])) != row['sha256'] or row['vermagic'].split()[0] != release:
             parser.error('prebuilt module checksum/release mismatch')
-    modules = Path('/usr/lib/modules')/RELEASE
-    target = Path('/boot/EFI/Linux')/EFI_NAME
-    checkpoint = Path('/var/lib/n1x-npu-test/npu1')
+    modules = Path('/usr/lib/modules')/release
+    target = Path('/boot/EFI/Linux')/('omarchy_' + pkgbase + '.efi')
+    checkpoint = Path('/var/lib/n1x-npu-test')/release.rsplit('-', 1)[1]
     if modules.exists() or target.exists() or checkpoint.exists():
         parser.error('test installation or checkpoint already exists; inspect it rather than restarting')
     if shutil.disk_usage('/boot').free < Path(uki['uki']).stat().st_size+64*1024*1024:
@@ -117,10 +137,10 @@ def main():
         if len(old) != 1 or hashlib.blake2b((Path('/boot')/old[0][0].lstrip('/')).read_bytes()).hexdigest() != old[0][1]:
             parser.error('existing default EFI hash is not valid')
         blake = hashlib.blake2b(Path(uki['uki']).read_bytes()).hexdigest()
-        after = render_entry(before.decode(), blake, (uki_dir/'cmdline').read_text().strip()).encode()
+        after = render_entry(before.decode(), blake, (uki_dir/'cmdline').read_text().strip(), release).encode()
         checkpoint.mkdir(mode=0o700, parents=True)
         (checkpoint/'limine.conf.before').write_bytes(before)
-        state = {'release': RELEASE, 'stage': 'preflight-complete', 'uki_sha256': uki['sha256'],
+        state = {'release': release, 'stage': 'preflight-complete', 'uki_sha256': uki['sha256'],
                  'efi_path': str(target), 'default_unchanged': True,
                  'modules': [{'path': str(modules/'updates/npu-test'/Path(r['path']).name),
                               'sha256': r['sha256']} for r in module_rows]}
@@ -146,11 +166,13 @@ def main():
             path.chmod(0o644)
             if digest(path) != row['sha256']:
                 raise RuntimeError('installed module checksum mismatch')
-        subprocess.run(['depmod', '-a', RELEASE], check=True)
+        subprocess.run(['depmod', '-a', release], check=True)
+        from build_frts_snapshot import verify_installed_btf
+        verify_installed_btf(kernel, modules)
         for name in ('nvidia', 'nvidia_drm', 'spbm', 'cpuid', 'spi_hid_acpi', 'hid_asus', 'n1x_npu_observe'):
-            if subprocess.check_output(['modinfo', '-k', RELEASE, '-F', 'vermagic', name], text=True).split()[0] != RELEASE:
+            if subprocess.check_output(['modinfo', '-k', release, '-F', 'vermagic', name], text=True).split()[0] != release:
                 raise RuntimeError('installed module release mismatch: '+name)
-            dependencies = subprocess.check_output(['modprobe', '-S', RELEASE, '--show-depends', name], text=True)
+            dependencies = subprocess.check_output(['modprobe', '-S', release, '--show-depends', name], text=True)
             for line in dependencies.splitlines():
                 if line.startswith('insmod ') and not Path(line.split()[1]).is_file():
                     raise RuntimeError('missing installed module dependency: '+line)

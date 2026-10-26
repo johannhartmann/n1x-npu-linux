@@ -16,8 +16,14 @@ RECIPE_HASH = '7f878f7b87b96dfccb8e31ed36a69a341c1a370e7f336dfb9e48421e3868fbda'
 PKGBASE = 'linux-p16-asus-23-npu1'
 
 
+def package_base(release):
+    if release not in ('7.2.8-23-omarchy-p16-asus-npu1', '7.2.8-23-omarchy-p16-asus-npu2'):
+        raise ValueError('unsupported isolated kernel release')
+    return 'linux-p16-asus-23-' + release.rsplit('-', 1)[1]
+
 
 def audit_package(package, release, image_pin, config_pin):
+    pkgbase = package_base(release)
     names = subprocess.check_output(['bsdtar', '-tf', str(package)], text=True).splitlines()
     info = subprocess.check_output(['bsdtar', '-xOf', str(package), '.PKGINFO'], text=True)
     fields = {}
@@ -26,11 +32,11 @@ def audit_package(package, release, image_pin, config_pin):
             key, value = line.split(' = ', 1)
             fields.setdefault(key, []).append(value)
     name = fields.get('pkgname', [''])[0]
-    if name not in (PKGBASE, PKGBASE+'-headers') or fields.get('arch') != ['aarch64']:
+    if name not in (pkgbase, pkgbase+'-headers') or fields.get('arch') != ['aarch64']:
         raise ValueError('unexpected package identity/architecture')
     if 'conflict' in fields or 'replaces' in fields:
         raise ValueError('test package must not replace/conflict with existing kernels')
-    allowed = ('usr/lib/modules/'+release+'/', 'boot/dtbs/'+PKGBASE+'/', 'usr/src/'+PKGBASE)
+    allowed = ('usr/lib/modules/'+release+'/', 'boot/dtbs/'+pkgbase+'/', 'usr/src/'+pkgbase)
     parents = {'usr/', 'usr/lib/', 'usr/lib/modules/', 'usr/src/', 'boot/', 'boot/dtbs/',
                '.PKGINFO', '.BUILDINFO', '.MTREE'}
     for entry in names:
@@ -40,7 +46,7 @@ def audit_package(package, release, image_pin, config_pin):
     prefix = 'usr/lib/modules/'+release+'/'
     def read(entry):
         return subprocess.check_output(['bsdtar', '-xOf', str(package), prefix+entry])
-    if name == PKGBASE:
+    if name == pkgbase:
         if hashlib.sha256(read('vmlinuz')).hexdigest() != image_pin:
             raise ValueError('packaged kernel Image differs from the verified build')
         if not any('spi-hid' in entry and '.ko' in entry for entry in names):
@@ -66,7 +72,8 @@ def main():
         parser.error('P16 packaging recipe differs from the reviewed version')
     manifest = json.loads((kernel/'npu-build-manifest.json').read_text())
     release = manifest['expected_release']
-    if manifest['stage'] != 'built' or release != '7.2.8-23-omarchy-p16-asus-npu1':
+    pkgbase = package_base(release)
+    if manifest['stage'] != 'built':
         parser.error('requires the completed isolated kernel build')
     if digest(kernel/'arch/arm64/boot/Image') != manifest['image_sha256']:
         parser.error('kernel Image differs from the verified build')
@@ -79,7 +86,7 @@ def main():
         old = key+'=linux-p16-asus-23\n'
         if text.count(old) != 1:
             parser.error('unexpected package-name assignment')
-        text = text.replace(old, key+'='+PKGBASE+'\n')
+        text = text.replace(old, key+'='+pkgbase+'\n')
     # Repackage already built artifacts; there are no source downloads/build
     # dependencies in this derived recipe. The actual packaging functions are
     # retained, including versioned file placement and ARM64 Image selection.

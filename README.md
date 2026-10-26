@@ -96,7 +96,9 @@ A separate opt-in early RAM capture kernel/UKI passed offline checks but
 A VM boot test subsequently exposed stale split-BTF metadata in the reused
 modules, including an NVMe dependency. The invalid diagnostic menu entry was
 withdrawn. Bounded SSD logging with rebuilt modules passed a VM shutdown/recovery test;
-there is no guarantee of logs before initramfs starts. See
+the separately packaged `7.2.8-23-omarchy-p16-asus-npu2` kernel, rebuilt external
+drivers and capture-OFF logging entry are now installed and checked. Physical
+boot remains unverified, and logs before initramfs starts are not guaranteed. See
 [boot logging and deployment requirements](docs/boot-logging.md) and the
 [early capture procedure](docs/hfrp-vbios.md#scratch-candidate-and-early-ram-capture).
 Acquiring the actual board container remains open. See

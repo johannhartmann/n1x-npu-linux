@@ -35,7 +35,7 @@ def early_files(data):
     raise ValueError('early CPIO trailer missing')
 
 
-def verify(image, kernel_image, cmdline):
+def verify(image, kernel_image, cmdline, release=RELEASE):
     with tempfile.TemporaryDirectory(prefix='n1x-uki-check-') as tmp:
         tmp = Path(tmp)
         sections = ('.uname', '.linux', '.cmdline', '.initrd')
@@ -46,7 +46,7 @@ def verify(image, kernel_image, cmdline):
         # rewrite the input UKI while extracting its sections.
         args += [str(image), str(tmp/'copy.efi')]
         subprocess.run(args, check=True)
-        if (tmp/'uname').read_bytes().rstrip(b'\0\n').decode() != RELEASE:
+        if (tmp/'uname').read_bytes().rstrip(b'\0\n').decode() != release:
             raise ValueError('UKI kernel release mismatch')
         actual, expected = (tmp/'linux').read_bytes(), kernel_image.read_bytes()
         if actual[:len(expected)] != expected or any(actual[len(expected):]):
@@ -67,7 +67,7 @@ def verify(image, kernel_image, cmdline):
                 raise ValueError('UKI boot file missing '+name)
         if 'n1x_npu_observe.ko' in listing:
             raise ValueError('observation module must not bind devices from the initramfs')
-    return {'release': RELEASE, 'kernel_image_matches': True, 'cmdline_matches': True,
+    return {'release': release, 'kernel_image_matches': True, 'cmdline_matches': True,
             'acpi_matches': True, 'required_modules_and_boot_files': True,
             'physical_boot_verified': False}
 

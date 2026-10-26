@@ -22,7 +22,19 @@ def main():
             pass
         else:
             raise AssertionError('invalid entry input accepted')
-    print('Two append-only menu fixtures and five rejection cases passed; no boot writes')
+    npu1 = render_entry(before, pin, 'root=/dev/mapper/root')
+    npu2 = render_entry(npu1, pin, 'root=/dev/mapper/root keep_bootcon n1x_bootlog=1',
+                        '7.2.8-23-omarchy-p16-asus-npu2')
+    assert npu2.startswith(npu1)
+    assert 'omarchy_linux-p16-asus-23-npu2.efi#' + pin in npu2
+    assert npu2.count('default_entry:') == npu2.count('timeout:') == 1
+    try:
+        render_entry(npu2, pin, 'keep_bootcon n1x_bootlog=1', '7.2.8-23-omarchy-p16-asus-npu2')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('duplicate npu2 entry accepted')
+    print('npu1/npu2 append-only menu fixtures and rejection cases passed; no boot writes')
 
 
 if __name__ == '__main__':

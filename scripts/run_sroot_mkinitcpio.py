@@ -4,6 +4,7 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
+from package_sroot_kernel import package_base
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = '7.2.8-23-omarchy-p16-asus-npu1'
@@ -12,8 +13,10 @@ RELEASE = '7.2.8-23-omarchy-p16-asus-npu1'
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--release', default=RELEASE)
     args = parser.parse_args()
     output = args.output.resolve(strict=True)
+    pkgbase = package_base(args.release)
     if os.geteuid() != 0:
         parser.error('requires root for real initramfs metadata')
     if not output.is_relative_to((ROOT/'results').resolve()):
@@ -23,8 +26,8 @@ def main():
     menu.write_bytes(Path('/boot/limine.conf').read_bytes())
     menu.chmod(0o600)
     os.chown(menu, owner.st_uid, owner.st_gid)
-    image = output/'linux-p16-asus-23-npu1.efi'
-    command = ['mkinitcpio', '--nocolor', '--nopost', '--kernel', RELEASE,
+    image = output/(pkgbase + '.efi')
+    command = ['mkinitcpio', '--nocolor', '--nopost', '--kernel', args.release,
                '--moduleroot', str(output/'root'), '--config', str(output/'mkinitcpio.conf'),
                '--hookdir', str(output/'initcpio'), '--hookdir', '/etc/initcpio',
                '--hookdir', '/usr/lib/initcpio', '--cmdline', str(output/'cmdline'),

@@ -9,6 +9,7 @@ import tempfile
 
 from build_sroot_kernel import digest
 from verify_sroot_uki import verify, RELEASE
+from package_sroot_kernel import package_base
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -55,7 +56,7 @@ def main():
     finish(output, kernel)
 
 
-def finish(output, kernel):
+def finish(output, kernel, release=RELEASE):
     """Pack and verify a staged matching kernel/module root; never deploy it."""
     hooks = output / 'initcpio'
     (hooks / 'hooks').mkdir(exist_ok=True)
@@ -82,11 +83,11 @@ unset _bootlog_hooks _bootlog_hook _bootlog_inserted
 ''')
     with (output / 'mkinitcpio.log').open('w') as log:
         subprocess.run(['pkexec', '/usr/bin/python3', str(ROOT / 'scripts/run_sroot_mkinitcpio.py'),
-                        str(output)], stdout=log, stderr=subprocess.STDOUT, check=True)
+                        str(output), '--release', release], stdout=log, stderr=subprocess.STDOUT, check=True)
     if '==> ERROR:' in (output / 'mkinitcpio.log').read_text():
         raise RuntimeError('mkinitcpio reported an error')
-    image = output / 'linux-p16-asus-23-npu1.efi'
-    checked = verify(image, kernel, output / 'cmdline')
+    image = output / (package_base(release) + '.efi')
+    checked = verify(image, kernel, output / 'cmdline', release)
     with tempfile.TemporaryDirectory(prefix='n1x-bootlog-check-') as temporary:
         extracted = Path(temporary)
         subprocess.run(['lsinitcpio', '--extract', str(image)], cwd=extracted,

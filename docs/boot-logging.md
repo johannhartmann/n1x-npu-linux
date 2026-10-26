@@ -1,7 +1,7 @@
 # Diagnostic boot logging on the P16
 
-The early-capture and capture-OFF UKIs are **not qualified for another physical
-boot**. An initramfs VM test exposed an additional packaging defect: modules
+The old early-capture and capture-OFF UKIs must not be retried. An initramfs VM
+test exposed an additional packaging defect: modules
 copied from the original npu1 kernel have split BTF metadata referring to a
 different vmlinux. The kernel rejects them, including `nvme_auth`, `hid`, and
 `i2c_mt65xx`. Matching release names and exported symbol CRCs did not catch this.
@@ -91,9 +91,85 @@ The build remains outside `/boot`. No physical reboot has qualified it.
 The corrected initramfs alone is insufficient for normal boot: after switching
 root, later modules must match the same kernel too. Existing UKI-only installers
 now reject a BTF mismatch against the installed kernel build. Before another
-physical test, package the corrected kernel and complete module set under a
-separate release, including matching external modules, and qualify the logging
-path. Do not replace the original npu1 module tree or the working default.
+physical test, the corrected kernel and complete module set must be packaged
+under a separate release, including matching external modules, and the logging
+path qualified. The `npu2` procedure below does this without replacing the
+original npu1 module tree or the working default.
 
-Current logging sources and staged builds do not guarantee a recoverable log
+This logging implementation does not guarantee a recoverable log
 from the originally photographed early-boot failure.
+
+## Separate npu2 package and boot entry
+
+`7.2.8-23-omarchy-p16-asus-npu2` retains the reviewed configuration and patches
+from the corrected source and changes its release suffix. Kernel Image and
+in-tree modules are built together. NVIDIA 615.78.08, spbm
+0.3.0.rtxspark.5 and cpuid 0.8.2 are rebuilt against that same tree. The
+observation module is installed for explicit later use, not included in the
+initramfs. The FRTS capture parameter remains absent and no firmware upload is
+triggered by this installation.
+
+The existing scripts support both the original npu1 and the new npu2 release;
+no general kernel packaging framework is introduced. Use new output directories
+for a fresh build:
+
+```sh
+python scripts/build_logged_kernel.py \
+  results/frts-logged-initramfs-v3 results/linux-7.2.8-p16-npu2
+python scripts/package_sroot_kernel.py \
+  results/linux-7.2.8-p16-npu2 /home/johann/p16rtx_linux/kernel/PKGBUILD \
+  results/npu2-kernel-packages
+python scripts/build_sroot_external_modules.py \
+  results/linux-7.2.8-p16-npu2 results/npu2-external-modules --jobs 8
+python scripts/build_sroot_uki.py \
+  results/linux-7.2.8-p16-npu2 results/npu2-kernel-packages \
+  results/npu2-external-modules results/npu2-uki \
+  --bootlog-cmdline results/frts-logged-initramfs-v3/cmdline
+python scripts/test_bootlog_vm.py \
+  results/npu2-uki/linux-p16-asus-23-npu2.efi \
+  results/linux-7.2.8-p16-npu2/arch/arm64/boot/Image \
+  results/qemu-efi/usr/share/qemu-efi-aarch64/QEMU_EFI.fd results/npu2-bootlog-vm
+pkexec /usr/bin/python3 /home/johann/n1x-lab/npu/scripts/install_sroot_test.py \
+  /home/johann/n1x-lab/npu/results/npu2-uki \
+  /home/johann/n1x-lab/npu/results/linux-7.2.8-p16-npu2 \
+  /home/johann/n1x-lab/npu/results/npu2-kernel-packages \
+  /home/johann/n1x-lab/npu/results/npu2-external-modules \
+  --release 7.2.8-23-omarchy-p16-asus-npu2 \
+  --vm-result /home/johann/n1x-lab/npu/results/npu2-bootlog-vm/result.json
+pkexec /usr/bin/python3 /home/johann/n1x-lab/npu/scripts/audit_sroot_test.py \
+  --release 7.2.8-23-omarchy-p16-asus-npu2 \
+  --uki-directory /home/johann/n1x-lab/npu/results/npu2-uki
+```
+
+Installation requires the matching VM result, package checksums, host-config
+snapshot, root-module BTF and a valid working fallback. Package hooks are masked
+only for this explicit transaction, then the verified UKI is added manually.
+The entry is **N1X NPU diagnostics - disk log (capture OFF)**. It is not made
+the default, and the installer never reboots. Checkpoint and original menu are
+under `/var/lib/n1x-npu-test/npu2`.
+
+The npu2 procedure completed on 2026-10-26. Both pacman packages are installed
+as version `7.2.8-23`. All seven rebuilt external modules plus the explicit-load
+observation module were verified after installation. Packaged vmlinux BTF
+matches the build. The final read-only audit is
+`results/npu2-installed-audit.json`; it confirms the installed UKI, module
+dependencies, unchanged menu defaults and valid working fallback digest.
+The physical test has **not** happened yet.
+
+The VM recovered a 54859-byte disk log after guest shutdown with the kernel
+backlog, injected marker and clean recorder trailer; no module-BTF rejection
+was present. Results are in `results/npu2-bootlog-vm/result.json`. UKI SHA256:
+`9e04205026c23021d15d06d8ecf74d5f72ecd06f9ee9a9ffc37617dff74cf8f4`.
+Kernel Image SHA256:
+`a4a6bfca3fcab0fb6bff10a9c0232113fdbc88b31830c965f807187b961f0235`.
+
+The unreferenced `-keep-console.efi` was copied, checksum-checked and archived
+at `/var/lib/n1x-npu-test/frts-diagnostic-keep-console/retired-diagnostic.efi`
+before removing its EFI-partition copy to make space. No referenced boot image
+was removed.
+
+After a physical test, return to `Omarchy/linux-p16-asus-23` if necessary and
+read `/data/n1x-bootlogs/` with root permissions. A new file proves that the
+logger reached userspace; no file does not identify why boot stopped. Preserve
+a photo of the last visible messages as well. Physical boot success must be
+recorded separately from the VM/package checks.

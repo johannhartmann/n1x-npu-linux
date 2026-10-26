@@ -4,6 +4,7 @@
 Requires access to /boot and the installation checkpoint. Writes only objcopy
 scratch files in a temporary directory; does not install, load or reboot.
 """
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -13,6 +14,7 @@ import subprocess
 
 from install_sroot_test import RELEASE, TITLE, EFI_NAME, render_entry
 from verify_sroot_uki import verify
+from package_sroot_kernel import package_base
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,13 +29,19 @@ def sha(path):
 
 
 def main():
-    checkpoint = Path('/var/lib/n1x-npu-test/npu1')
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--release', default=RELEASE)
+    parser.add_argument('--uki-directory', type=Path, default=ROOT/'results/npu1-uki-v3')
+    args = parser.parse_args()
+    release = args.release
+    pkgbase = package_base(release)
+    checkpoint = Path('/var/lib/n1x-npu-test')/release.rsplit('-', 1)[1]
     state = json.loads((checkpoint/'state.json').read_text())
-    uki_dir = ROOT/'results/npu1-uki-v3'
+    uki_dir = args.uki_directory.resolve()
     manifest = json.loads((uki_dir/'uki-build-manifest.json').read_text())
-    modules = Path('/usr/lib/modules')/RELEASE
-    image = Path('/boot/EFI/Linux')/EFI_NAME
-    require(state['release'] == manifest['release'] == RELEASE, 'release mismatch')
+    modules = Path('/usr/lib/modules')/release
+    image = Path('/boot/EFI/Linux')/('omarchy_' + pkgbase + '.efi')
+    require(state['release'] == manifest['release'] == release, 'release mismatch')
     require(state['stage'] == 'ready-for-manual-boot', 'installation did not finish')
     require(state['efi_path'] == str(image), 'unexpected installed EFI path')
     require(sha(image) == state['uki_sha256'] == manifest['sha256'], 'installed UKI changed')
@@ -49,7 +57,7 @@ def main():
             'original menu snapshot mismatch')
     blake = hashlib.blake2b(image.read_bytes()).hexdigest()
     menu = Path('/boot/limine.conf').read_text()
-    require(menu == render_entry(before, blake, (uki_dir/'cmdline').read_text().strip()),
+    require(menu == render_entry(before, blake, (uki_dir/'cmdline').read_text().strip(), release),
             'live menu differs from the verified append-only installation')
     fallback = re.findall(r'boot\(\):(/EFI/Linux/omarchy_linux-p16-asus-23\.efi)#([a-f0-9]{128})', before)
     require(len(fallback) == 1, 'missing or ambiguous working-kernel fallback')
@@ -66,19 +74,20 @@ def main():
         require(path.parent == modules/'updates/npu-test', 'unexpected installed module path')
         require(sha(path) == row['sha256'], 'installed module changed: '+path.name)
         require(subprocess.check_output(['modinfo', '-F', 'vermagic', str(path)],
-                                       text=True).split()[0] == RELEASE, 'module release mismatch')
+                                       text=True).split()[0] == release, 'module release mismatch')
     for name in ('nvidia', 'nvidia_drm', 'spbm', 'cpuid', 'spi_hid_acpi', 'hid_asus', 'n1x_npu_observe'):
-        require(subprocess.check_output(['modinfo', '-k', RELEASE, '-F', 'vermagic', name],
-                                       text=True).split()[0] == RELEASE,
+        require(subprocess.check_output(['modinfo', '-k', release, '-F', 'vermagic', name],
+                                       text=True).split()[0] == release,
                 'resolved module release mismatch: '+name)
-        lines = subprocess.check_output(['modprobe', '-S', RELEASE, '--show-depends', name], text=True)
+        lines = subprocess.check_output(['modprobe', '-S', release, '--show-depends', name], text=True)
         for line in lines.splitlines():
             if line.startswith('insmod '):
                 require(Path(line.split()[1]).is_file(), 'missing dependency: '+line)
-    verified = verify(image, modules/'vmlinuz', uki_dir/'cmdline')
+    verified = verify(image, modules/'vmlinuz', uki_dir/'cmdline', release)
     require(Path('/boot/limine.conf').read_text() == menu and sha(image) == manifest['sha256'],
             'boot files changed during audit')
-    print(json.dumps(dict(ready_for_manual_boot=True, entry=TITLE, target_kernel=RELEASE,
+    title = TITLE if release == RELEASE else 'N1X NPU diagnostics - disk log (capture OFF)'
+    print(json.dumps(dict(ready_for_manual_boot=True, entry=title, target_kernel=release,
         running_kernel=platform.release(), uki_sha256=sha(image),
         fallback_digest_valid=True, menu_defaults_preserved=True,
         installed_modules_checked=len(state['modules']), uki_verification=verified,
