@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+build() {
+    add_module nvme
+    add_module ext4
+    add_binary "${BASH_SOURCE[0]%/*}/../n1x-bootlog" /usr/bin/n1x-bootlog
+    add_runscript
+}
+help() {
+    echo 'Opt-in bounded kernel log to the audited /data NVMe before graphics modules and root unlock'
+}

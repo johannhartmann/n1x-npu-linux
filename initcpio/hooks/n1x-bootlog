@@ -1,0 +1,45 @@
+#!/usr/bin/ash
+# Only this audited P16 data partition; never formats or repairs a filesystem.
+run_earlyhook() {
+    [ "$(getarg n1x_bootlog)" = 1 ] || return 0
+    local device=/dev/disk/by-uuid/e4b5f9f3-205f-469f-a75d-a09a67786a92
+    local target=/run/n1x-bootlog-data count=0 bootid
+    if ! modprobe -q nvme; then
+        echo 'n1x-bootlog: NVMe module failed; persistent capture NOT active' >/dev/kmsg
+        return 0
+    fi
+    udevadm trigger --action=add --subsystem-match=block
+    while [ ! -b "$device" ] && [ "$count" -lt 10 ]; do
+        sleep 1
+        count=$((count + 1))
+    done
+    if [ ! -b "$device" ]; then
+        echo 'n1x-bootlog: data disk unavailable; persistent capture NOT active' >/dev/kmsg
+        return 0
+    fi
+    mkdir -p "$target"
+    if ! mount -t ext4 -o rw,nosuid,nodev,noexec "$device" "$target"; then
+        echo 'n1x-bootlog: data mount failed; persistent capture NOT active' >/dev/kmsg
+        return 0
+    fi
+    if [ -L "$target/n1x-bootlogs" ]; then
+        umount "$target"
+        return 0
+    fi
+    if ! mkdir -m 700 -p "$target/n1x-bootlogs"; then
+        umount "$target"
+        return 0
+    fi
+    bootid=$(cat /proc/sys/kernel/random/boot_id)
+    /usr/bin/n1x-bootlog "$target/n1x-bootlogs/$bootid.log" 600 &
+    echo "$!" >/run/n1x-bootlog.pid
+    echo "n1x-bootlog: recorder started for boot $bootid (8 MiB / 600 seconds maximum)" >/dev/kmsg
+}
+run_cleanuphook() {
+    if [ -f /run/n1x-bootlog.pid ]; then
+        kill "$(cat /run/n1x-bootlog.pid)" 2>/dev/null
+        # Do not block the root switch if a failed disk stalls the recorder.
+        sleep 1
+        umount /run/n1x-bootlog-data || true
+    fi
+}

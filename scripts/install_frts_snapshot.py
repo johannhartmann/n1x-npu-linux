@@ -11,7 +11,7 @@ import re
 import shutil
 import subprocess
 
-from build_frts_snapshot import ROOT, PINS, PARAMETER, verify_exports
+from build_frts_snapshot import ROOT, PINS, PARAMETER, verify_exports, verify_installed_btf
 from build_sroot_kernel import digest
 from install_sroot_test import atomic_write
 from verify_sroot_uki import verify, RELEASE
@@ -62,6 +62,7 @@ def main():
         if digest(file) != pin:
             parser.error("Artifact changed: " + str(file))
     installed = Path("/usr/lib/modules") / RELEASE
+    verify_installed_btf(kernel, installed)
     if digest(installed / "build/Module.symvers") != PINS["Module.symvers"]:
         parser.error("Installed module ABI differs")
     exports = verify_exports(kernel, installed / "build/Module.symvers")

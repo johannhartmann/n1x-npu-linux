@@ -13,8 +13,9 @@ import re
 import shutil
 
 from build_sroot_kernel import digest
+from build_frts_snapshot import verify_installed_btf
 from install_sroot_test import atomic_write
-from verify_sroot_uki import verify
+from verify_sroot_uki import verify, RELEASE
 
 ROOT = Path(__file__).resolve().parents[1]
 TITLE = 'N1X FRTS diagnostics - capture OFF'
@@ -59,6 +60,7 @@ def main():
     diagnostic, build = args.diagnostic.resolve(strict=True), args.build.resolve(strict=True)
     if not all(p.is_relative_to(ROOT / 'results') for p in (diagnostic, build)):
         parser.error('Expected local research build directories')
+    verify_installed_btf(build / 'kernel', Path('/usr/lib/modules') / RELEASE)
     record = json.loads((diagnostic / 'diagnostic.json').read_text())
     source = diagnostic / 'frts-diagnostic.efi'
     if record['capture_enabled'] is not False or digest(source) != record['sha256']:

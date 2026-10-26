@@ -933,7 +933,9 @@ timeout 45s qemu-system-aarch64 \
   -append 'console=ttyAMA0 earlycon=pl011,0x9000000 loglevel=7 nokaslr n1x_frts_snapshot=p16-bios300 rdinit=/init panic=0'
 ```
 
-The next physical test is **N1X FRTS diagnostics - capture OFF**. It uses the
+The initially proposed next physical test was **N1X FRTS diagnostics - capture OFF**.
+**It has since been withdrawn after the VM module-BTF failure; see
+[boot logging](boot-logging.md).** It used the
 same capture-kernel Image and the same initramfs bytes, with only the UKI
 command line changed. The capture opt-in is absent. `quiet`, `splash` and
 silent log settings are replaced by `earlycon=efifb`, visible messages and
@@ -971,7 +973,7 @@ disabled at that point. The earlier VHE/EL2 timer warning also occurs in the
 successfully booted stock P16 kernel and is not sufficient to explain this
 failure.
 
-The diagnostic now includes **`keep_bootcon`** alongside `earlycon=efifb`.
+The diagnostic revision included **`keep_bootcon`** alongside `earlycon=efifb`.
 The matching kernel's EFI early-console implementation supports remapping the
 framebuffer for this mode. Capture remains disabled. This preserves the early
 output channel for further fault isolation; it is not a demonstrated fix for

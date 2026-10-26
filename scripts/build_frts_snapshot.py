@@ -10,6 +10,7 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import tempfile
 
 from build_sroot_kernel import digest
 from verify_sroot_uki import verify, RELEASE
@@ -32,6 +33,21 @@ def verify_exports(kernel, base_symvers):
     if not original or rebuilt != original:
         raise RuntimeError("Rebuilt vmlinux exports/CRCs differ from the installed module ABI")
     return len(rebuilt)
+
+
+def verify_installed_btf(kernel, installed):
+    """A UKI-only replacement must not invalidate the root filesystem's modules."""
+    with tempfile.TemporaryDirectory(prefix='n1x-btf-check-') as temporary:
+        hashes = []
+        for name, image in (('new', kernel / 'vmlinux'), ('installed', installed / 'build/vmlinux')):
+            target = Path(temporary) / name
+            subprocess.run(['objcopy', '-O', 'binary', '--only-section=.BTF', str(image), str(target)], check=True)
+            if not target.stat().st_size:
+                raise RuntimeError('Missing BTF metadata in ' + str(image))
+            hashes.append(digest(target))
+        if hashes[0] != hashes[1]:
+            raise RuntimeError('BTF differs from installed modules. A UKI-only update is unsafe; '
+                               'package a separate kernel release with matching root modules first.')
 
 
 def main():
@@ -80,9 +96,9 @@ def main():
     manifest = dest / "frts-build.json"
     manifest.write_text(json.dumps(report, indent=2) + "\n")
     with (dest / "kernel-build.log").open("w") as log:
-        subprocess.run(["make", f"-j{args.jobs}", "Image"], cwd=kernel,
+        subprocess.run(["make", f"-j{args.jobs}", "Image", "modules"], cwd=kernel,
                        stdout=log, stderr=subprocess.STDOUT, check=True)
-    for name in (".config", "Module.symvers"):
+    for name in (".config",):
         if digest(kernel / name) != PINS[name]:
             raise RuntimeError("Kernel configuration/exported module ABI changed: " + name)
     exports = verify_exports(kernel, source / "Module.symvers")
@@ -96,6 +112,13 @@ def main():
         (uki / name).unlink(missing_ok=True)
     image = kernel / "arch/arm64/boot/Image"
     shutil.copy2(image, uki / "root/usr/lib/modules" / RELEASE / "vmlinuz")
+    # Symbol CRC equality does not cover split BTF type IDs. Rebuild all
+    # in-tree modules against this exact vmlinux before packing the initramfs.
+    with (dest / 'modules-build.log').open('w') as log:
+        subprocess.run(['make', f'-j{args.jobs}', 'modules_install', 'INSTALL_MOD_STRIP=1',
+                        'DEPMOD=/bin/true', 'INSTALL_MOD_PATH=' + str(uki / 'root')],
+                       cwd=kernel, stdout=log, stderr=subprocess.STDOUT, check=True)
+    subprocess.run(['depmod', '-b', str(uki / 'root'), RELEASE], check=True)
     (uki / "cmdline").write_text(command_line + " " + PARAMETER + "\n")
     with (uki / "mkinitcpio.log").open("w") as log:
         subprocess.run(["pkexec", "/usr/bin/python3", str(ROOT / "scripts/run_sroot_mkinitcpio.py"),
@@ -107,6 +130,7 @@ def main():
     report.update(stage="verified", image_sha256=digest(image), uki=str(output),
                   uki_sha256=digest(output), verification=verification,
                   matching_kernel_exports=exports,
+                  in_tree_modules_rebuilt_against_exact_vmlinux=True,
                   boot_menu_sha256=digest(uki / "boot-menu-before.txt"))
     manifest.write_text(json.dumps(report, indent=2) + "\n")
     print("Verified separate capture UKI; no installation or reboot.")

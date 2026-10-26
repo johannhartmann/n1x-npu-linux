@@ -93,8 +93,11 @@ Its scratch registers suggest an insecure sysmem copy at `0xfc000000`, size
 the running kernel's SWIOTLB pool, which is cleared during initialization.
 A separate opt-in early RAM capture kernel/UKI passed offline checks but
 **hung with a black screen on the physical P16**. No capture was obtained.
-A verbose diagnostic with capture disabled is prepared to isolate the failure;
-its physical boot still needs verification. See the
+A VM boot test subsequently exposed stale split-BTF metadata in the reused
+modules, including an NVMe dependency. The invalid diagnostic menu entry was
+withdrawn. Bounded SSD logging with rebuilt modules passed a VM shutdown/recovery test;
+there is no guarantee of logs before initramfs starts. See
+[boot logging and deployment requirements](docs/boot-logging.md) and the
 [early capture procedure](docs/hfrp-vbios.md#scratch-candidate-and-early-ram-capture).
 Acquiring the actual board container remains open. See
 [GFWI evidence](docs/hfrp-vbios.md#gsp-rom-source-gfwi-container).
