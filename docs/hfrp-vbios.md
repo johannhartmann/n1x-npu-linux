@@ -959,3 +959,43 @@ The installer replaces only the old capture entry, retains its EFI file, and
 backs up the menu under `/var/lib/n1x-npu-test/frts-diagnostic`. It preserves
 the normal default and timeout and never reboots. Physical diagnostic boot
 remains pending.
+
+#### Diagnostic console handoff correction
+
+The capture-OFF boot photo (`Downloads/boot.jpg`, retained outside the repo)
+ends at about 0.309 seconds with `legacy bootconsole [efifb0] disabled`, after
+enabling `tty0` on a `colour dummy device 80x25`. The screen remained unchanged
+for five minutes. This is an unsuccessful visible boot, but the last displayed
+line does not identify a kernel stall: the output channel was explicitly
+disabled at that point. The earlier VHE/EL2 timer warning also occurs in the
+successfully booted stock P16 kernel and is not sufficient to explain this
+failure.
+
+The diagnostic now includes **`keep_bootcon`** alongside `earlycon=efifb`.
+The matching kernel's EFI early-console implementation supports remapping the
+framebuffer for this mode. Capture remains disabled. This preserves the early
+output channel for further fault isolation; it is not a demonstrated fix for
+the failed boot. Kernel and initramfs bytes remain unchanged.
+
+```sh
+venv/bin/python scripts/prepare_frts_diagnostic.py \
+  results/frts-early-v1 results/frts-diagnostic-keep-console
+pkexec /usr/bin/python3 /home/johann/n1x-lab/npu/scripts/install_frts_diagnostic.py \
+  /home/johann/n1x-lab/npu/results/frts-diagnostic-keep-console \
+  /home/johann/n1x-lab/npu/results/frts-early-v1 --replace-diagnostic
+```
+
+The menu title stays **N1X FRTS diagnostics - capture OFF**. The replacement
+uses a new EFI filename ending in `-keep-console.efi`, retaining the previous
+file and backing up the menu in
+`/var/lib/n1x-npu-test/frts-diagnostic-keep-console`. Tests cover replacement
+scope, preservation of surrounding entries/defaults, and rejection of a
+replacement without `keep_bootcon`.
+
+Deployment needed space on the 2 GiB EFI partition. The already unreferenced
+failed capture Image was copied to
+`/var/lib/n1x-npu-test/frts-capture/failed-capture.efi`, SHA256 checked against
+the original record, and only then removed from `/boot/EFI/Linux`. Its record
+now points to the archive. No working kernel or referenced EFI image was
+removed. The keep-console diagnostic UKI SHA256 is
+`ddac84d8a05bbb608dfb9dc5e8004482fc9443d6e4fe8289027483b79dd39d04`.

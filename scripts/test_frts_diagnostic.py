@@ -16,6 +16,7 @@ class DiagnosticTests(unittest.TestCase):
         self.assertNotIn('quiet', result.split())
         self.assertNotIn('splash', result.split())
         self.assertIn('earlycon=efifb', result.split())
+        self.assertIn('keep_bootcon', result.split())
         self.assertEqual([s for s in result.split() if s.startswith('loglevel=')], ['loglevel=7'])
 
     def test_replaces_only_capture_entry(self):
@@ -39,6 +40,19 @@ class DiagnosticTests(unittest.TestCase):
                 (before, 'a' * 128, 'earlycon=efifb\n')):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 replace_entry(menu, checksum, 'b' * 128, options)
+
+    def test_updates_diagnostic_without_changing_defaults(self):
+        prefix = 'timeout: 5\ndefault_entry: Omarchy/linux-p16-asus-23\n'
+        old = '/' + TITLE + '\npath: boot():/EFI/Linux/omarchy_n1x-frts-diagnostic.efi#' + 'a' * 128 + '\n'
+        suffix = '/Other\nprotocol: efi\n'
+        result = replace_entry(prefix + old + suffix, 'a' * 128, 'b' * 128,
+                               'earlycon=efifb keep_bootcon', True)
+        self.assertTrue(result.startswith(prefix))
+        self.assertTrue(result.endswith(suffix))
+        self.assertIn('omarchy_n1x-frts-diagnostic-keep-console.efi#' + 'b' * 128, result)
+        self.assertEqual(result.count('/' + TITLE + '\n'), 1)
+        with self.assertRaises(ValueError):
+            replace_entry(prefix + old, 'a' * 128, 'b' * 128, 'earlycon=efifb', True)
 
 
 if __name__ == '__main__':

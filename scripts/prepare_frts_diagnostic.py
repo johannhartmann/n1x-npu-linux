@@ -19,7 +19,7 @@ def diagnostic_cmdline(text):
     text = re.sub(r'(?<!\S)(?:quiet|splash|loglevel=\S+|systemd.show_status=\S+|'
                   r'rd.udev.log_level=\S+|n1x_frts_snapshot=\S+)(?!\S)', '', text.strip())
     return re.sub(' +', ' ', text).strip() + (
-        ' earlycon=efifb loglevel=7 ignore_loglevel initcall_debug'
+        ' earlycon=efifb keep_bootcon loglevel=7 ignore_loglevel initcall_debug'
         ' systemd.show_status=true rd.udev.log_level=info plymouth.enable=0 panic=0')
 
 
