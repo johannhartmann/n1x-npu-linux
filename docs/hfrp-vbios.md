@@ -753,3 +753,128 @@ Still needed: the final firmware extent and verified CPU mapping, or a
 supported export of the cached ROM. Root authentication is no longer the
 observed blocker for these completed captures. No NPU upload or restart was
 performed, and physical NPU firmware boot remains unverified.
+
+### Scratch candidate and early RAM capture
+
+The component-9 capture contains another useful field: VBIOS field 12 is a
+register dump, not another ROM. The original GB20B-selected callback
+`0x11c1ac8` calls the register encoder at `0x1b9f8f0`. Its loop reads **64
+32-bit words**, at four-byte strides, from a base returned by the bus device
+descriptor plus `0x400`. The live protobuf reports base `0x1400`, space 1,
+and field 4 contains those words as packed varints. The public GB20B
+`dev_bus.h` identifies this range as `NV_PBUS_SW_SCRATCH`.
+
+`scripts/decode_vbios_scratch.py` decodes this exact message shape offline.
+It rejects duplicate required fields, invalid register counts, wrong bases,
+truncated messages and integer overflow. Unknown configuration bits remain
+visible. It performs no memory access or address translation.
+
+The live final three words are:
+
+| Scratch index | Register | Value |
+| --- | --- | --- |
+| 61 | `0x14f4` | `0xfc000000` |
+| 62 | `0x14f8` | `0x00000000` |
+| 63 | `0x14fc` | `0x00010009` |
+
+NVIDIA's published GB100 `dev_bus_addendum.h` assigns these to the insecure
+FRTS low/high address and configuration. Under that layout, these values
+describe **sysmem at `0xfc000000`, length `0x9000` (36 KiB)**. This is an
+inferred GB20B interpretation, not proof that the GPU address is a CPU physical
+address. GPU IOMMU group 23 uses a DMA domain; this address is outside its
+reported direct-mapping reservations. No GPU address was blindly mapped.
+
+The independently checked CPU-address candidate lies in Linux System RAM,
+within its reserved `0xfbd00000..0xffcfffff` range. A bounded 40-byte read
+through the matching `/proc/kcore` physical PT_LOAD returned zeros, SHA256
+`2c34ce1df23b838c5abf2a7f6437cca3d3067ed509ff25f11df6b11b582b51eb`.
+No full container was acquired. The nine `/proc/kpageflags` entries are
+`0x100000000` (reserved), and memblock marks the encompassing memory as
+ordinary mapped RAM (`NONE`), rather than `NOMAP`.
+
+The boot journal identifies the reservation precisely:
+
+```text
+software IO TLB: mapped [mem 0x00000000fbd00000-0x00000000ffd00000] (64MB)
+```
+
+The matching kernel's `kernel/dma/swiotlb.c`, function
+`swiotlb_init_io_tlb_pool`, clears the entire pool with `memset(vaddr, 0, bytes)`.
+Therefore any earlier firmware data at this **CPU physical address** would
+have been destroyed during initialization. The observed overlap and clearing
+are established; the prior presence of the desired FRTS container is not.
+Further scanning of this live DMA pool would not recover the pre-boot data.
+For comparison, upstream [SWIOTLB source](https://github.com/torvalds/linux/blob/master/kernel/dma/swiotlb.c)
+contains the same clearing operation. [`kcore.c`](https://github.com/torvalds/linux/blob/master/fs/proc/kcore.c)
+also has zero-fill paths, so a zero-only kcore read by itself is insufficient
+to establish the contents of arbitrary reserved memory.
+
+#### Capture implementation
+
+`driver/n1x_frts_snapshot.c` is built into a **separate test Image**, not into
+the observation/bootstrap modules. The integration patch calls it immediately
+after `arm64_memblock_init()`, before paging initialization and SWIOTLB.
+It is inactive without the exact parameter
+`n1x_frts_snapshot=p16-bios300`. DMI discovery runs later on ARM64, so the
+build/installer check the exact ASUS product and BIOS; the early function
+requires this explicit board-specific parameter instead of claiming an early
+DMI check.
+
+The fixed candidate is read only if EFI is active and the whole 36 KiB lies
+in one ordinary memblock RAM region with no overlapping reservation. The
+function uses a temporary **read-only RAM mapping**. It first reads 40 bytes,
+requires `GFWI` and a nonempty, in-bounds ROM member, then copies the fixed
+extent into kernel-owned storage and checks stability. Invalid/changing data
+is not published. It does not reserve or alter the source memory, bind an
+NPU, access device registers, upload firmware or issue a reset.
+
+A successful copy appears as the root-readable, read-only file
+`/sys/firmware/n1x_frts_snapshot`. The log prefix is `n1x-frts:`. The snapshot
+storage becomes read-only after kernel initialization. A missing file is a
+failed acquisition, not permission to retry NPU startup with guessed policy.
+
+Build from the audited npu1 tree and verified UKI staging directory:
+
+```sh
+python scripts/test_vbios_scratch.py -v
+python scripts/test_frts_snapshot.py
+python scripts/build_frts_snapshot.py \
+  results/linux-7.2.8-p16-npu1 results/npu1-uki-v3 \
+  results/frts-early-v1 --jobs 8
+```
+
+The builder uses isolated copies, retains the npu1 kernel release and
+configuration, and compares freshly generated `vmlinux.symvers` against the
+original built-in exports in `Module.symvers`. The live build matches all
+**15,527 exports and CRCs**. Its existing input/display/network modules can
+therefore be reused; no installed kernel/module package is replaced.
+The rebuilt UKI passes the existing verifier for kernel contents, command
+line, ACPI overrides, NVIDIA/input modules, and encrypted-root boot files.
+Sixteen mocked C guard cases pass with address/undefined-behavior sanitizers;
+four protobuf test groups include every truncated prefix of a valid fixture.
+These checks do not establish a successful physical boot or capture.
+
+Build artifacts, retained locally:
+
+| Artifact | SHA256 |
+| --- | --- |
+| capture Image | `d775641d7001dcf0ffb07fda59ee7ed57dccf6bf65ef44b88d4f1759d62db6d9` |
+| capture UKI | `16ac622a8832ef10a9d1a9da9cfbf2d2301591269245bdb325b0fb96bbc619c1` |
+
+`scripts/install_frts_snapshot.py` verifies the artifacts and existing default
+Image hash before adding the manual **N1X FRTS capture** entry. It does not
+change the default, timeout, installed npu1 Image/modules or original entries,
+and never reboots. Its checkpoint is `/var/lib/n1x-npu-test/frts-capture`.
+Use absolute paths with `pkexec`, which may change the working directory:
+
+```sh
+pkexec /usr/bin/python3 /home/johann/n1x-lab/npu/scripts/install_frts_snapshot.py \
+  /home/johann/n1x-lab/npu/results/frts-early-v1
+```
+
+After manually booting **N1X FRTS capture**, check `journalctl -k -b` for
+`n1x-frts:` and acquire the sysfs snapshot if present. Run
+`scripts/extract_gfwi_vbios.py` on the saved container, then validate board
+identity and BIT token `l` using the existing bounded decoder. Do not load or
+trigger the NPU bootstrap as part of this capture. To recover from a failed
+boot, select the unchanged **Omarchy/linux-p16-asus-23** default entry.

@@ -88,6 +88,12 @@ for this board.
 Live inspection now reports FRTS offset `0xb9500000`, but the host-requested
 size is zero and the final firmware extent/CPU mapping remain unknown. A
 successful privileged VBIOS diagnostic returns metadata, without raw ROM.
+Its scratch registers suggest an insecure sysmem copy at `0xfc000000`, size
+36 KiB, under the public GB100 layout. This CPU-address candidate overlaps
+the running kernel's SWIOTLB pool, which is cleared during initialization.
+A separate opt-in early RAM capture kernel/UKI is built and verified offline;
+physical capture remains unverified. See the
+[early capture procedure](docs/hfrp-vbios.md#scratch-candidate-and-early-ram-capture).
 Acquiring the actual board container remains open. See
 [GFWI evidence](docs/hfrp-vbios.md#gsp-rom-source-gfwi-container).
 See [Linux backend](docs/linux-backend.md). Offline tests neither bind the ACPI

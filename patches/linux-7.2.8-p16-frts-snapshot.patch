@@ -1,0 +1,28 @@
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -278,6 +278,8 @@
+ 	return __cpu_logical_map[cpu];
+ }
+ 
++void __init n1x_frts_snapshot_early(void);
++
+ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ {
+ 	setup_initial_init_mm(_text, _etext, _edata, _end);
+@@ -330,6 +332,7 @@
+ 	}
+ 
+ 	arm64_memblock_init();
++	n1x_frts_snapshot_early();
+ 
+ 	paging_init();
+ 
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -87,3 +87,6 @@
+ 
+ # for cleaning
+ subdir- += vdso vdso32
++
++# Opt-in P16 early RAM capture; source copied by build_frts_snapshot.py.
++obj-y += n1x_frts_snapshot.o
