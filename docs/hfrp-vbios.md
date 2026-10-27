@@ -853,8 +853,9 @@ python scripts/build_frts_snapshot.py \
 The builder uses isolated copies, retains the npu1 kernel release and
 configuration, and compares freshly generated `vmlinux.symvers` against the
 original built-in exports in `Module.symvers`. The live build matches all
-**15,527 exports and CRCs**. Its existing input/display/network modules can
-therefore be reused; no installed kernel/module package is replaced.
+**15,527 exports and CRCs**. That check was insufficient: reused modules later
+failed split-BTF validation. The corrected npu2 procedure builds and packages
+the kernel and all modules together; do not reuse the original npu1 modules.
 The rebuilt UKI passes the existing verifier for kernel contents, command
 line, ACPI overrides, NVIDIA/input modules, and encrypted-root boot files.
 Sixteen mocked C guard cases pass with address/undefined-behavior sanitizers;

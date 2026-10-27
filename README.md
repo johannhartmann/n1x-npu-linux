@@ -101,7 +101,10 @@ drivers and capture-OFF logging entry booted successfully on the P16 on
 2026-10-27. The 340180-byte disk log closed cleanly; no module-BTF rejection
 was found. Its retained backlog starts at 7.88 seconds, so earlier messages
 and hangs before initramfs are not covered by this recording. FRTS capture
-remains disabled. See
+was disabled for that successful boot. A separate manual entry now enables the
+bounded capture on identical kernel/initramfs bytes with a 4 MiB log buffer;
+its synthetic VM capture/log test passed, physical acquisition remains pending.
+See [npu2 capture procedure](docs/npu2-frts-capture.md),
 [boot logging and deployment requirements](docs/boot-logging.md) and the
 [early capture procedure](docs/hfrp-vbios.md#scratch-candidate-and-early-ram-capture).
 Acquiring the actual board container remains open. See
