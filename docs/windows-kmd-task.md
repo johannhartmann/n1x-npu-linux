@@ -904,8 +904,10 @@ ordering, the HAL software flag, and returned status. They include:
 - Injected IRQ-mask or IRQ-unmask write failures likewise do not change it.
 - A common-loader error propagates through the RM status as boolean failure.
 
-HFRP transport, common loading, pending callback, diagnostic register values
-and OS/logging/timing boundaries are synthetic. The complete ResetEngine
+In those seventeen policy cases, HFRP transport, common loading, pending
+callback, diagnostic register values and OS/logging/timing boundaries are
+synthetic. The additional wire cases below execute original transport.
+The complete ResetEngine
 DDI and physical hardware are not exercised. In particular, a successful
 Windows helper return cannot be used as a Linux DMA-retirement guarantee:
 several tested successful paths do not establish that a reset happened.
@@ -915,3 +917,46 @@ and physical memory reclamation are independently qualified.
 ```sh
 venv/bin/python scripts/inspect_kmd_reset_reload.py > results/windows-kmd-reset-reload.json
 ```
+
+### Reset requests through the original HFRP transport
+
+Twelve additional cases (29 total) remove the `0xd3de30` sender stub. The
+same job-helper/RM/HAL chain now executes original locked sender `0xd3de30`,
+synchronous exchange `0xd4b568`, producer `0xd4b3a0`, poll helper `0xd3d750`
+and consumer `0xd4b7f0`. Original `0xd4aeb8` initializes a separate mode-0
+transport context. OS mutexes and register access are modeled; a synthetic
+peer consumes each request and immediately publishes its matching response.
+The handshake and controller-side execution of the commands are not simulated
+or claimed. The transport is supplied in an already-established empty state.
+
+The original chain produces these five-byte packets (header plus payload):
+
+| Sequence | Command | Packet bytes |
+| --- | --- | --- |
+| 1 | RESET_IDLE | `05 01 6c 06 03` |
+| 2 | RESET | `05 02 68 06 01` |
+| 3 | RESET_IDLE | `05 03 6c 06 0c` |
+
+Each exchange consumes the matching response, clears its outstanding-sequence
+bit, acknowledges the reply doorbell, and releases the wrapper's mutex. The
+test checks the original wrapper's logged transport and firmware statuses,
+not just the eventual reset-helper boolean. Both a ring starting at zero
+and one starting at byte 113 exercise packet production/consumption, including
+wraparound. Each is tested with firmware status zero and `0x123`, and with
+empty, one-byte `00`, and one-byte `ff` response payloads.
+
+All twelve cases reach the modeled common loader and return boolean true.
+Transport returns zero and preserves the injected firmware status separately;
+the upper reset policy ignores that status after logging it. The original
+reset chain does not decode the tested response byte as an idle indication,
+and it accepts an empty response too. Consequently, transport sequence
+retirement is evidence that the response was received, not that DLA memory
+accesses have ceased. Resolving physical RESET_IDLE guarantees requires the
+controller-side command semantics or an independently verified hardware idle
+condition; interpreting the response byte as an idle flag is unsupported.
+
+Only transport-register memory belongs to the synthetic peer. No DLA engine,
+DMA, controller reset, firmware authentication or actual device is modeled by
+these cases. Existing bounded Linux HFRP code already keeps firmware status
+separate from transport success; this experiment does not justify adding a
+Linux memory-release action after an HFRP acknowledgment.
