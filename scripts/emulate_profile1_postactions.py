@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run actual P16 HAL-1 RV32 postactions and caller with RAM-only DMA."""
+"""Run P16 HAL-1 RV32 action interpreters and postaction caller with RAM-only DMA."""
 import hashlib
 import json
 import struct
@@ -10,7 +10,9 @@ from emulate_firmware_commands import ROOT, CMD, HOST, STACK, STOP
 from emulate_profile1_commands import CTX
 
 
-def run(blob, stream, declared_size=None, offset=0, fail_dma=None, descriptor=None, task_status=0):
+def run(blob, stream, declared_size=None, offset=0, fail_dma=None, descriptor=None,
+        task_status=0, preaction=False, initial_words=None):
+    assert not (preaction and descriptor is not None)
     u = Uc(UC_ARCH_RISCV, UC_MODE_RISCV32)
     for address, size in ((0x100000, 0x9000), (0x180000, 0x10000),
                           (CMD, 0x2000), (CTX, 0x4000), (STACK, 0x10000), (STOP, 0x1000)):
@@ -26,6 +28,8 @@ def run(blob, stream, declared_size=None, offset=0, fail_dma=None, descriptor=No
         u.mem_write(STACK+0x1000, bytes(descriptor[:60]))
         u.mem_write(STACK+0x1080, struct.pack('<Q', CMD))
     u.mem_write(HOST, struct.pack('<I', 0xdeadbeef))
+    for address, value in (initial_words or {}).items():
+        u.mem_write(address, struct.pack('<I', value))
     transfers = []
 
     def reg(i):
@@ -53,7 +57,7 @@ def run(blob, stream, declared_size=None, offset=0, fail_dma=None, descriptor=No
 
     u.hook_add(UC_HOOK_CODE, hook)
     args = (CMD+offset, 0, len(stream) if declared_size is None else declared_size, 0, 0, 0)
-    entry = 0x1037ac
+    entry = 0x1030ae if preaction else 0x1037ac
     if descriptor is not None:
         entry, args = 0x103d56, (STACK+0x1000, task_status & 0xffffffff, 0)
     for i, value in enumerate(args):
@@ -64,9 +68,13 @@ def run(blob, stream, declared_size=None, offset=0, fail_dma=None, descriptor=No
     status = reg(0)
     if status >= 1 << 31:
         status -= 1 << 32
-    return {'returned': u.reg_read(regs.UC_RISCV_REG_PC) == STOP,
-            'status': status, 'host_word': struct.unpack('<I', u.mem_read(HOST, 4))[0],
-            'transfers': transfers}
+    result = {'returned': u.reg_read(regs.UC_RISCV_REG_PC) == STOP,
+              'status': status, 'host_word': struct.unpack('<I', u.mem_read(HOST, 4))[0],
+              'transfers': transfers}
+    if initial_words is not None:
+        result['final_words'] = {hex(address): struct.unpack('<I', u.mem_read(address, 4))[0]
+                                 for address in initial_words}
+    return result
 
 
 def main():

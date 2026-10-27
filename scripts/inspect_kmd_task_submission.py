@@ -204,12 +204,173 @@ def postaction(pe, *, index, multiplier, base_index, stride, value, table=64, fe
     return descriptor, stream, action_offset
 
 
+def produce_job(pe, *, last_sequence, os_fence, node=1, engine=0, dispatch_status=0):
+    """Execute complete dd28f8 with an empty, nonpaging context submission."""
+    m = Machine(pe)
+    m.u.mem_map(BASE + 0xdd3000, 0x1000)
+    m.u.mem_write(BASE + 0xdd3000, pe.get_data(0xdd3000, 0x1000))
+    assert struct.unpack('<Q', pe.get_data(0xe9c930, 8))[0] == BASE + 0xdd5ab0
+    m.write(OBJECT, 'Q', OWNER + 0x8000)
+    m.write(OWNER + 0x8000 + 0x378, 'Q', STUB + 4)
+    m.write(OWNER + 0x8000 + 0x260, 'Q', STUB + 8)
+    m.write(PARENT, 'Q', OWNER + 0x9000)
+    m.write(OWNER + 0x9000 + 0x20, 'Q', STUB + 12)
+    m.write(DESCRIPTOR, 'Q', OWNER + 0x4000)
+    m.write(DESCRIPTOR + 0x3c, 'I', os_fence)
+    m.write(DESCRIPTOR + 0x50, 'Q', 0x1234567800)
+    m.write(OWNER + 0x4000, 'Q', OWNER + 0x5000)
+    m.write(OWNER + 0x4000 + 0x70, 'I', 2)
+    m.write(OWNER + 0x4000 + 0x78, 'Q', OWNER + 0x6000)
+    m.write(OWNER + 0x4000 + 0x80, 'I', node)
+    m.write(OWNER + 0x5000 + 0x38, 'Q', STUB + 16)
+    m.write(OBJECT + 0xee0, 'Q', OWNER + 0x7000)
+    m.write(OWNER + 0x7000 + 0x10, 'I', 4)
+    m.write(OWNER + 0x7000 + node * 0x170 + 0x18, 'I', 0x33)
+    m.write(BASE + 0xe3e0c8, 'Q', STUB + 20)
+    m.write(BASE + 0xe3e0d0, 'Q', STUB + 24)
+    queue = node * 8 + engine
+    m.write(PARENT + 0x7d0, 'I', 32)
+    m.write(PARENT + 0x7d8 + queue * 4, 'I', 32)
+    m.write(PARENT + 0xf98, 'I', 0x5678)
+    m.write(PARENT + 0xf9c + queue * 4, 'I', last_sequence)
+    m.write(PARENT + (queue + 1) * 8, 'Q', JOB)
+    m.u.mem_write(JOB, b'\xa5' * (32 * 0x1f0))
+    sequence = (last_sequence + 1) & 0xffffffff
+    record = JOB + (sequence % 32) * 0x1f0
+    observed = []
+
+    def hook(_, pc, size, user):
+        if pc == STUB + 4:
+            assert m.reg(0) == OBJECT
+            m.ret(PARENT)
+        elif pc == STUB + 8:
+            assert m.reg(0) == OBJECT
+            m.ret(4)
+        elif pc == STUB + 12:
+            assert [m.reg(i) for i in (0, 1, 2)] == [PARENT, DESCRIPTOR, record]
+            observed.append(bytes(m.u.mem_read(record, 0x1f0)))
+            m.ret(dispatch_status)
+        elif pc == STUB + 16:
+            assert m.reg(0) == OWNER + 0x4000
+            m.ret(engine)
+        elif pc == STUB + 20:
+            assert m.reg(0) == OBJECT + 0x58 + node * 8
+            m.ret(2)
+        elif pc == STUB + 24:
+            assert [m.reg(i) for i in (0, 1)] == [OBJECT + 0x58 + node * 8, 2]
+            m.ret(0)
+
+    m.u.hook_add(UC_HOOK_CODE, hook)
+    status = m.call(0xdd28f8, OBJECT, DESCRIPTOR)
+    assert status == dispatch_status and len(observed) == 1
+    data = observed[0]
+    assert struct.unpack_from('<QQQ', data) == (OBJECT, OWNER + 0x6000, OWNER + 0x4000)
+    assert struct.unpack_from('<IIIIII', data, 0x20) == (node, engine, 0x5679, sequence, os_fence, 0)
+    assert m.read(PARENT + 0xf9c + queue * 4, 'I') == (sequence,)
+    assert m.read(PARENT + 0xf98, 'I') == (0x5679,)
+    flags = m.read(record + 0x1e8, 'I')[0]
+    assert flags == (0x18 if dispatch_status & 0x80000000 else 0)
+    return {'sequence': sequence, 'os_fence': os_fence, 'slot': sequence % 32,
+            'node': node, 'engine': engine, 'status': status, 'record_flags': flags,
+            'global_sequence': 0x5679}
+
+
+def preactions(pe, sequence, disabled=False):
+    """Execute original three-action producer with distinct semaphore banks."""
+    m = Machine(pe)
+    for address, pointer in ((OBJECT + 0x20, PARENT), (PARENT + 0x6ec0, PRIMARY),
+                             (PRIMARY + 0xed8, OWNER), (OWNER + 0x18, OWNER + 0x1000),
+                             (OWNER + 0x1000 + 0x4e0, OWNER + 0x2000),
+                             (PRIMARY, OWNER + 0x4000),
+                             (OWNER + 0x4000 + 0x268, STUB + 4)):
+        m.write(address, 'Q', pointer)
+    m.write(OWNER + 0x3000 + 4, 'I', 4 if disabled else 0)
+    m.write(OWNER + 0x2000 + 0xf00, 'I', 4)
+    m.write(OWNER + 0x2000 + 0xefc, 'I', 8)
+    m.write(OWNER + 0x1000 + 0x4e8, 'Q', HOST)
+    for offset, index in ((0x508, 0x10), (0x52c, 0x100), (0x520, 0x200)):
+        m.write(OWNER + 0x1000 + offset, 'III', index, 256, 4)
+    m.write(JOB + 0x20, 'I', 2)
+    m.write(JOB + 0x2c, 'I', sequence)
+    m.write(DESCRIPTOR + 0x10, 'HH', 60, 64)
+    before = bytes(m.u.mem_read(DESCRIPTOR, 1024))
+
+    def hook(_, pc, size, user):
+        if pc == STUB + 4:
+            assert [m.reg(i) for i in (0, 1)] == [PRIMARY, 2]
+            m.ret(OWNER + 0x3000)
+
+    m.u.hook_add(UC_HOOK_CODE, hook)
+    assert m.call(0xdd6ab0, OBJECT, DESCRIPTOR, JOB) == (0 if disabled else 1)
+    data = bytes(m.u.mem_read(DESCRIPTOR, 1024))
+    if disabled:
+        assert data == before
+        return b'', {}
+    done, started, control = HOST + 0x60, HOST + 0x440, HOST + 0x840
+    stream = (b'\x92' + struct.pack('<QI', done, (sequence - 1) & 0xffffffff) +
+              b'\x80' + struct.pack('<QI', started, sequence) +
+              b'\x90' + struct.pack('<QI', control, 0xfeed) + b'\x00')
+    expected = bytearray(before)
+    struct.pack_into('<HH', expected, 60, 68, 40)
+    expected[68:108] = stream
+    assert data == expected
+    return stream, {'done': done, 'started': started, 'control': control}
+
+
+def control_gate(pe, blocked):
+    """Run original gate writer and lock/event wrappers; model only OS APIs."""
+    m = Machine(pe)
+    for page in (0xe17000, 0xe18000):
+        m.u.mem_map(BASE + page, 0x1000)
+        m.u.mem_write(BASE + page, pe.get_data(page, 0x1000))
+    for address, pointer in ((PARENT + 0x6ec0, PRIMARY), (PRIMARY + 0xed8, OWNER),
+                             (OWNER + 0x18, OWNER + 0x1000),
+                             (OWNER + 0x1000 + 0x4e0, OWNER + 0x2000),
+                             (OWNER + 0x1000 + 0x4f0, DESCRIPTOR)):
+        m.write(address, 'Q', pointer)
+    m.write(OWNER + 0x2000 + 0xefc, 'I', 8)
+    m.write(OWNER + 0x1000 + 0x520, 'III', 0x200, 256, 4)
+    m.write(BASE + 0xe3e0c8, 'Q', STUB + 4)
+    m.write(BASE + 0xe3e0d0, 'Q', STUB + 8)
+    m.write(BASE + 0xe3e0b8, 'Q', STUB + 12)
+    events = []
+    gate = 0xf00d if blocked & 0xff else 0xfeed
+
+    def hook(_, pc, size, user):
+        if pc == STUB + 4:
+            assert m.reg(0) == PARENT + 0x7f10
+            events.append('lock')
+            m.ret(2)
+        elif pc == STUB + 8:
+            assert [m.reg(i) for i in (0, 1)] == [PARENT + 0x7f10, 2]
+            assert m.read(DESCRIPTOR + 0x840, 'I') == (gate,)
+            events.append('unlock_after_gate_write')
+            m.ret(0)
+        elif pc == STUB + 12:
+            assert [m.reg(i) for i in (1, 2)] == [0, 0]
+            events.append(['set_event', m.reg(0) - PARENT])
+            m.ret(0)
+
+    m.u.hook_add(UC_HOOK_CODE, hook)
+    m.call(0xe18220, PARENT, 2, 0, blocked)
+    expected = ['lock', 'unlock_after_gate_write']
+    if blocked & 0xff:
+        expected += [['set_event', 0x8630], ['set_event', 0x8648]]
+    assert events == expected
+    return {'control_word': m.read(DESCRIPTOR + 0x840, 'I')[0], 'events': events}
+
+
 def main():
     path = ROOT / 'sources/nvidia/Display.Driver/nvlddmkm.sys'
     assert hashlib.sha256(path.read_bytes()).hexdigest() == KMD_SHA256
     firmware = (ROOT / 'sources/dla-profile1-verified.bin').read_bytes()
     assert hashlib.sha256(firmware).hexdigest() == PROFILE1_HASH
     pe = pefile.PE(str(path), fast_load=True)
+    pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT']])
+    imports = {entry.address - BASE: entry.name for dll in pe.DIRECTORY_ENTRY_IMPORT for entry in dll.imports}
+    assert imports[0xe3e0b8] == b'KeSetEvent'
+    assert imports[0xe3e0c8] == b'KeAcquireSpinLockRaiseToDpc'
+    assert imports[0xe3e0d0] == b'KeReleaseSpinLock'
     with tempfile.TemporaryDirectory(prefix='n1x-kmd-task-') as tmp:
         library = Path(tmp) / 'task.so'
         subprocess.run(shlex.split(os.environ.get('CC', 'cc')) + [
@@ -266,6 +427,46 @@ def main():
                 'original_pending_record_cleanup', ['handler_status', 0]]
             rows.append({'case': 'original_ring_submit', 'mode': mode, 'sequence': sequence, **result})
 
+    for last_sequence in (0, 31, 0x7fffffff, 0xffffffff):
+        for os_fence in (0, 0xfedcba98, 0x80000000):
+            for node, engine in ((0, 0), (2, 1)):
+                for dispatch_status in (0, 0xc0000001):
+                    result = produce_job(pe, last_sequence=last_sequence, os_fence=os_fence,
+                        node=node, engine=engine, dispatch_status=dispatch_status)
+                    rows.append({'case': 'original_job_producer', 'last_sequence': last_sequence, **result})
+
+    for sequence in (0, 1, 0x80000000, 0xffffffff):
+        stream, addresses = preactions(pe, sequence)
+        for distance, control in ((1, 0xfeed), (0, 0xfeed), (2, 0xfeed), (1, 0xf00d)):
+            prior_complete = distance <= 1
+            done = (sequence - distance) & 0xffffffff
+            words = {addresses['done']: done, addresses['started']: 0xdeadbeef,
+                     addresses['control']: control}
+            result = run_postactions(firmware, stream, offset=68, preaction=True, initial_words=words)
+            success = prior_complete and control == 0xfeed
+            assert result['returned'] and result['status'] == (0 if success else -13)
+            assert result['final_words'] == {
+                hex(addresses['done']): done, hex(addresses['control']): control,
+                hex(addresses['started']): sequence if prior_complete else 0xdeadbeef}
+            assert [t['direction'] for t in result['transfers']] == (
+                ['read', 'read', 'write', 'read'] if prior_complete else ['read', 'read'])
+            post = None
+            if success:
+                _, poststream, _ = postaction(pe, index=0, multiplier=1, base_index=0,
+                    stride=4, value=sequence, fence=addresses['done'])
+                post = run_postactions(firmware, poststream,
+                    initial_words={int(a, 16): v for a, v in result['final_words'].items()})
+                assert post['returned'] and post['status'] == 0
+                assert post['final_words'] == {hex(addresses['done']): sequence,
+                    hex(addresses['started']): sequence, hex(addresses['control']): control}
+            rows.append({'case': 'vendor_preconditions_to_firmware', 'sequence': sequence,
+                         'prior_complete': prior_complete, 'completed_distance': distance, 'control': control,
+                         'stream': stream.hex(), 'preactions': result, 'postactions': post})
+    assert preactions(pe, 1, disabled=True) == (b'', {})
+    rows.append({'case': 'engine_property_disables_preactions'})
+    for blocked in (0, 1, 2, 0x100):
+        rows.append({'case': 'original_control_gate', 'argument': blocked, **control_gate(pe, blocked)})
+
     for index, multiplier, base_index, stride in ((0, 1, 0, 4), (3, 2, 7, 64), (7, 3, 5, 12)):
         for value in (0, 1, 0x80000000, 0xffffffff):
             descriptor, stream, offset = postaction(pe, index=index, multiplier=multiplier,
@@ -300,6 +501,9 @@ def main():
             'OS locks, timestamps, logging and low-level method sender are synthetic',
             'Only HAL1 direct submission with parent+0x4a8=0 and empty pending queue is executed',
             'Higher submitter device lookup and descriptor preparation are synthetic callbacks',
+            'Job producer uses an empty nonpaging submission; final dispatch and OS locks are synthetic',
+            'Preaction engine-property lookup is synthetic; control-gate OS lock/event imports are synthetic',
+            'Action streams execute separately, not as a complete inference or scheduler retirement path',
             'Original postaction producer uses valid indices; complete descriptor builder is not executed',
             'RV32 consumer has RAM-only DMA; no scheduler, engine arithmetic or physical DMA ordering',
             'No WDDM scheduler completion, safe buffer reclamation or reset is established',

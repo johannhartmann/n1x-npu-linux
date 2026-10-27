@@ -39,8 +39,9 @@ The offset multiplication is 32-bit. The engine selector comes from the
 indexed engine record, using `job.u32[0x20]`, a `0x170` record stride and
 field `+0x38`. Twelve cases execute both supported selector values and ring
 indices 0, 1, 31, 32, 33 and `0xffffffff`, checking the original path through
-the final sender. These are constructed objects; identifying the producer of
-the job record and its relationship to WDDM's scheduling fence remains open.
+the final sender. These are constructed objects. The producer of the job
+record is now also executed, as described below; the complete OS scheduling
+and notification path remains open.
 
 `0xdd22c8` builds this control header:
 
@@ -149,15 +150,123 @@ semaphore encoding and unique per-job values. It does not establish that
 observing the semaphore makes all descriptor, model and output DMA backing
 safe to free. Keep the native retention/fail-stop policy until hardware
 repetition, engine retirement and reset or another quiescence guarantee have
-been qualified. Trace the producer of `job+0x2c` and the corresponding Windows
-completion notification next to connect this task sequence to the OS lifetime
-contract described in [windows-buffer-lifetime.md](windows-buffer-lifetime.md).
+been qualified. The producer now distinguishes `job+0x2c` from the OS fence
+stored at `job+0x30`. Trace the corresponding completion notification next to
+connect these sequences to the OS lifetime contract described in
+[windows-buffer-lifetime.md](windows-buffer-lifetime.md).
+
+## Job producer: internal sequence versus OS fence
+
+Original function `0xdd28f8` creates the `0x1f0`-byte job record. The test
+executes its complete entry and return for an empty nonpaging context
+submission. Adapter/context getters, spinlock OS calls and final dispatch
+are modeled; the indexing, increments, record clearing and population,
+dispatch-error marking and return execute unchanged. The real dispatch
+pointer `0xdd5ab0` is present at `0xe9c930`; that large dispatch body is not
+executed by the producer test.
+
+The input layout matches Microsoft's 64-bit
+[DXGKARG_SUBMITCOMMAND](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/d3dkmddi/ns-d3dkmddi-_dxgkarg_submitcommand):
+context at `+0`, submission offsets at `+0x1c/+0x20`, private-data pointer at
+`+0x28`, `SubmissionFenceId` at `+0x3c`, flags at `+0x48`, virtual address at
+`+0x50`, and node ordinal at `+0x58`. This layout correspondence identifies
+the OS fence field; the test does not replay registration or invocation of
+the public WDDM DDI itself.
+
+With scheduler state `S` and `q = node * 8 + engine`, the producer performs:
+
+| Job field | Source and behavior |
+| --- | --- |
+| `+0x20`, `+0x24` | Node and engine from the context |
+| `+0x28` | `++S.u32[0xf98]`, global submission counter |
+| `+0x2c` | `++S.u32[0xf9c + 4*q]`, queue-local sequence |
+| `+0x30` | Input DWORD `+0x3c`, the OS `SubmissionFenceId` |
+| Record address | `S.u64[8 + 8*q] + (sequence % S.u32[0x7d8 + 4*q]) * 0x1f0` |
+
+The later DLA submitter uses `job+0x2c` for its separate 32-slot descriptor
+ring and firmware semaphore. The OS fence value can differ arbitrarily;
+it must not be conflated with that internal sequence. Forty-eight cases
+vary queue, OS fence, internal wrap and final-dispatch status. Both counters
+remain advanced after a negative dispatch return, and job flags gain `0x18`.
+This does not demonstrate cancellation or permit Linux to roll a sequence back.
+The Windows queue counter wraps at 32 bits; our native no-wrap policy remains.
+
+Microsoft's [completion notification contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/d3dkmddi/ns-d3dkmddi-_dxgkargcb_notify_interrupt_data)
+reports the OS submission fence. Consequently, tracing the firmware value
+without also recovering this translation is insufficient to explain the OS
+completion boundary.
+
+## Preactions distinguish entry, permission to run and completion
+
+Original builder `0xdd6ab0` emits one 40-byte preaction list. The engine
+property lookup is modeled; arithmetic helper `0xdd7708`, all serialization
+and the disabled branch execute unchanged. Engine property bit 2 disables
+the entire list and leaves the descriptor untouched. Otherwise, the list
+starts at `postaction_table_offset + 4`; its table entry is written at the
+descriptor's preaction-table offset (`u16 +0x10`). The caller sets the count.
+
+The emitted order is:
+
+1. `0x92`: require the completion semaphore to have reached `sequence - 1`.
+2. `0x80`: write the current sequence to a separate entry/start semaphore.
+3. `0x90`: require the control semaphore to equal `0xfeed`.
+4. `0x00`: terminate the action list.
+
+The semaphore banks all use device base `F.u64[0x4e8]`, but different index
+descriptors and multipliers:
+
+| Role | Index descriptor | Index input for this DLA builder |
+| --- | --- | --- |
+| Completion, also written by `0xdd6a08` | `F+0x508` | `Q.u32[0xf00] * node` |
+| Entry/start marker | `F+0x52c` | `Q.u32[0xefc] * node` |
+| Control gate | `F+0x520` | `Q.u32[0xefc] * node` |
+
+Sixteen cases feed the actual Windows-produced stream to original RV32
+interpreter **`0x1030ae`**. With the previous task complete and gate `0xfeed`,
+it returns zero and writes the entry marker. With the previous task still
+pending it returns `-13` without that write. With the previous task complete
+but gate `0xf00d`, it **writes the entry marker and then returns `-13`**.
+The marker therefore does not prove engine execution, much less completion.
+The interpreter's `0x92` predicate uses signed 32-bit subtraction; the cases
+include crossing zero and `0x80000000`. Pending predicates are immediate
+interpreter results here, not a simulated scheduler wait or timeout.
+
+For successful preconditions, the test subsequently passes the real Windows
+postaction stream through the original postaction interpreter and observes
+only then the completion semaphore advancing. There is deliberately no
+arithmetic engine or scheduler between those two invocations. The test
+establishes distinct marker semantics, not inference or retirement.
+
+## Control-gate writer
+
+Original function `0xe18220` uses `0xdd1548` to obtain the CPU mapping at
+`F+0x4f0` and `0xdd1470`/`0xdd7708` to select the `F+0x520` gate bank. The
+writer uses `node * Q.u32[0xefc] + engine`, while the DLA preaction builder
+above selects engine zero. It writes `0xfeed` when the low byte of its fourth
+argument is zero and `0xf00d` otherwise, executes `dmb st`, then releases
+the lock. The blocked branch also calls `KeSetEvent` for two driver events.
+
+Four cases execute that writer plus its original lock/release/event wrappers.
+Only the imported OS calls are modeled; the imports are checked against the
+pinned PE: `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeSetEvent`.
+This proves a software submission gate. It contains no demonstrated wait for
+engine idle and must not be used alone as a Linux reset/quiescence procedure.
+
+Remaining static leads: `0xe183b0` and `0xe18a30` inspect job records and copy
+the separate field `job+0x30` into result state. Both call `0xdd1428`, whose
+index descriptor is `F+0x52c` (the entry marker), so treating those reads as
+completion reads would be incorrect. Accessors `0x92e30` and `0x92f10` read
+and write a different cached sequence at state `+0x2e9c + 4*engine + 32*node`.
+The relationship between raw completion-bank reads, that cache, job-record
+retirement and `DxgkCbNotifyInterrupt` still needs an executed trace.
 
 ```sh
 venv/bin/python scripts/inspect_kmd_task_submission.py > results/kmd-task-submission.json
 ```
 
-The 58 cases comprise 16 direct submissions, two global gates, missing-primary
+The 127 cases comprise 16 direct submissions, two global gates, missing-primary
 handling, two address-encoding probes, 12 higher-level ring submissions,
-24 firmware-consumer cases and one 64-bit postaction-address case. All run
-offline; no device, boot configuration or register is changed.
+24 postaction-consumer cases, one 64-bit postaction-address case, 48 job
+producer cases, 16 preaction-consumer cases, one disabled preaction producer
+and four control-gate writers. All run offline; no device, boot configuration
+or register is changed.
