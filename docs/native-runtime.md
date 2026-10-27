@@ -73,6 +73,12 @@ Safe reclamation, reset/recovery, asynchronous scheduling and suspend/resume
 remain open requirements. The existing driver still rejects suspend after
 startup. No service or autostart is installed by this change.
 
+The [Windows release investigation](windows-buffer-lifetime.md) now traces
+cuDLA unregister through error gating and last-reference D3DKMT destruction.
+Its zero destruction flags explicitly allow Windows to defer reclamation.
+An unregister return is therefore not a portable DMA-quiescence guarantee;
+the Linux retention policy is unchanged by that offline evidence.
+
 ## Build and offline checks
 
 ```sh
