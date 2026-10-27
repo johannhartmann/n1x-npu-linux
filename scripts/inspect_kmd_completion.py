@@ -17,7 +17,7 @@ from inspect_kmd_task_submission import (
 
 
 def complete(pe, *, sequence, os_fence, flags=0, node=0, engine=0, callback=False,
-             selection=None, observed_word=None):
+             selection=None, observed_word=None, object_type=(1, 1)):
     m = Machine(pe)
     for page in (0xe21000, 0xe22000, 0xe05000, 0xe07000, 0xdeb000, 0xc000,
                  0x14be000, 0x14c1000):
@@ -28,7 +28,7 @@ def complete(pe, *, sequence, os_fence, flags=0, node=0, engine=0, callback=Fals
     m.write(BASE + 0xe3e000, 'Q', STUB + 4)
     m.write(BASE + 0xe3e008, 'Q', STUB + 8)
     m.write(OBJECT, 'Q', OWNER + 0x8000)
-    m.write(OBJECT + 0x10, 'II', 1, 1)
+    m.write(OBJECT + 0x10, 'II', *object_type)
     m.write(OWNER + 0x8000 + 0x378, 'Q', STUB + 12)
     m.write(OWNER + 0x8000 + 0x290, 'Q', STUB + 16)
     m.write(OBJECT + 0x1988, 'Q', OWNER + 0x6000)
@@ -179,6 +179,14 @@ def main():
                 args = dict(sequence=sequence, os_fence=0x12345678, node=node,
                             engine=engine, callback=True, selection=selection)
                 rows.append({**args, **complete(pe, **args)})
+    # The DLA-specific dd5ab0 dispatcher checks object class (5,2), while
+    # some optional graphics branches require (1,1)/(4,1). Do not establish
+    # the common completion contract solely with the latter constructed type.
+    for flags in (0, 8, 16, 24):
+        for selection in (None, 'ready', 'pending', 'blocked'):
+            args = dict(sequence=32, os_fence=0x12345678, flags=flags,
+                        selection=selection, object_type=(5, 2))
+            rows.append({**args, **complete(pe, **args)})
     firmware = (ROOT / 'sources/dla-profile1-verified.bin').read_bytes()
     assert hashlib.sha256(firmware).hexdigest() == PROFILE1_HASH
     for sequence in (0, 1, 0x80000000, 0xffffffff):

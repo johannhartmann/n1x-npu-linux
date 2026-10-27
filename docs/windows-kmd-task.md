@@ -328,8 +328,12 @@ Only the actual OS callback, getters, clocks and logging are synthetic. The
 wrapper sets `object+0x4b48` after the callback with a release store/barrier.
 Neither the notification nor the tested counter update frees the job record.
 
-The 134 passing cases comprise 48 selected-job notifications, 70 selector
-cases and 16 linked producer/firmware/reader cases. They cover sequence zero,
+The 150 passing cases comprise 48 selected-job notifications, 70 selector
+cases, 16 additional class `(5,2)` cases and 16 linked producer/firmware/reader
+cases. Class `(5,2)` is checked by the DLA dispatcher `dd5ab0`; the additional
+cases verify that the shared completion behavior does not depend on the
+constructed class `(1,1)` used to cover optional graphics-side branches.
+They cover sequence zero,
 ring wrap, the signed boundary and `0xffffffff`, distinct OS fences, queue
 indices, suppression flags, pending/stale/out-of-window completion values,
 missing CPU mapping, the alternate policy and the bit-10 processing stop.
@@ -342,9 +346,9 @@ produces no notification. No arithmetic engine or physical DMA is modeled.
 Static call-site follow-up found `e22500` passed to `dca2b0` at `e1aad0`,
 `19e1cfc` and other sites. That wrapper dispatches through OS-interface `+0x48`
 (`DxgkCbSynchronizeExecution`); it is not executed by this test. Separately,
-`e21e20` advances scheduler `+0x1b3c` and calls `e21448`, whose static body
-contains further callbacks and updates `+0x2abc`. That deferred cleanup path
-is the next lead, not an already proven allocation-destruction boundary.
+`e21e20` advances scheduler `+0x1b3c` and calls `e21448`. This deferred cleanup
+path is now executed separately below; it is not an allocation-destruction
+boundary by itself.
 
 For Linux, this strengthens the interpretation of the unique firmware fence
 and its distinction from acceptance/IRQ acknowledgment. It does **not** prove
@@ -354,4 +358,67 @@ execution, coherent observation and safe reclamation/reset remain required.
 
 ```sh
 venv/bin/python scripts/inspect_kmd_completion.py > results/kmd-completion.json
+```
+
+## Deferred cleanup and APC dispatch
+
+`scripts/inspect_kmd_cleanup.py` executes full original functions `e04fd0`,
+`e21e20` and `e21448`. The first is a normal walker over nodes/engines. With
+memory-backed completion enabled, an available CPU semaphore mapping and
+eligible engine properties, it compares the recorded completed sequence
+(`scheduler+0x137c+4*q`) with the deferred-cleanup sequence (`+0x1b3c+4*q`).
+It passes the former as the cleanup limit. It does not use the submitted
+sequence at `+0xf9c` to retire pending records in this tested path.
+
+`e21e20` obtains a per-queue exclusion flag at `scheduler+0x4010+4*q`, with
+original atomic operations surrounded by modeled OS queued spin locks. It
+advances `+0x1b3c` before calling the selected record's `e21448`, then releases
+the exclusion flag. A busy flag prevents cleanup. The helper itself trusts
+its supplied limit: a direct test with the limit ahead of the completion
+cache still processes the supplied records. It is therefore not a standalone
+completion/quiescence predicate. Static callers `e1ab38` and `e1ce00` supply
+the submitted sequence under other surrounding policies; those larger paths
+are not qualified here.
+
+The selected-record body requires modeled IRQL 2, unlike the earlier
+notification's interrupt-level context. For `job.flags & 0x18 == 0`, it:
+
+1. Invokes optional `job+0x118` only for object classes `(1,1)` or `(4,1)`;
+   class `(5,2)` skips that branch.
+2. If `job+0x130` is nonzero, calls the original import trampoline for
+   `KeInsertQueueApc(job+0x150, job[0x130], job[0x138], 0)`.
+3. Updates `scheduler+0x2abc+4*q` with the OS fence at `job+0x30`.
+
+The tested path clears a nonzero `job+0xf8` link at the end, even with the
+suppression flags set. Byte-for-byte checks show that the rest of each record
+remains present and unchanged, including its embedded APC and callback data.
+No DMA allocation is freed or unmapped along this executed path. Nonzero
+`job+0x148`, graphics-specific fields, scheduling events and other optional
+branches are not included in that claim.
+
+The APC is a callback dispatcher, not inherently a free operation. Static
+initialization at `19c47ac` passes `e063c0` as the kernel APC routine for each
+ring record's embedded `+0x150` APC. The test separately executes that original
+routine with the queued arguments: it subtracts `0x150` to recover the job,
+then invokes the function supplied as APC argument 1 with `(job, argument2)`.
+That final per-job callback remains synthetic; neither Windows APC scheduling
+nor the full ring initialization executes. Static producer `dd28f8` copies
+the callback and context from private-record `+0x178/+0x180` to job
+`+0x130/+0x138`. Reconstructing their concrete DLA values is a remaining lead.
+
+There are 195 passing cases: four sequence boundaries, zero/one/three completed
+records, two queues, two object classes and four suppression-flag combinations,
+plus busy and direct-helper controls. Every case has an extra submitted record
+which must remain untouched. The multi-record cases also cross ring-slot and
+32-bit sequence boundaries. Actual imports for IRQL, queued spin locks and
+APC insertion are verified against the pinned PE before testing.
+
+This establishes a separate deferred callback stage and rules out treating
+the cleanup counter or cleared job link alone as proof of physical DMA
+reclamation. The native retained-memory policy remains unchanged. The next
+useful trace is the concrete private-record callback producer and any actual
+memory-destruction/reset operations it reaches.
+
+```sh
+venv/bin/python scripts/inspect_kmd_cleanup.py > results/kmd-cleanup.json
 ```
