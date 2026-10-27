@@ -3,8 +3,11 @@
 This includes a reproducible source model, CPU oracle and an offline compiler
 investigation. The workflow below now produces a serialized NVDA ReLU fixture
 using the original Windows backend and native frontend, joined by checked
-result replay. **It is not a working Linux inference path.** It replaces
-neither firmware qualification nor the driver work. The legacy built-in diagnostic is gated
+result replay. **The resulting fixed FP16 ReLU graph passed on the physical
+P16 under Linux on 2026-10-27**, through the manual bootstrap driver; see
+[the hardware evidence](p16-board-start.md#physical-numerical-relu-success).
+This compiler route does not provide a general Linux model runtime. Earlier
+offline results below retain their original limitations. The legacy built-in diagnostic is gated
 away for the reconstructed P16 runtime selector; see [the diagnostic audit](diagnostic-contract.md).
 
 ## Compiler route verified on 2026-10-25

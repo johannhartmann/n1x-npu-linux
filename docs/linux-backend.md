@@ -4,8 +4,10 @@ Current integration: [P16 board policy and HFRP startup](p16-board-start.md)
 adds the missing pre-upload power/configuration stage on `npu2`. The variant
 results below refer to earlier `npu1` boots, before that stage existed.
 The `npu2` sequence has now completed HFRP, variant-0 firmware upload, DMA ping,
-region/configuration and a bypass task on hardware. A board-specific command-23
-correction and numerical ReLU probe are built and await a fresh boot.
+region/configuration, a bypass task and one numerically verified FP16 ReLU
+graph on hardware, with the board-specific command-23 setting and idle handling.
+This is the bounded manual bootstrap; no general accel UAPI or safe teardown
+is implemented. The older results below retain their original scope.
 
 The current `n1x_npu_observe.ko` is an observation module, not a working NPU
 inference driver. It builds against the running P16 kernel. It is not installed

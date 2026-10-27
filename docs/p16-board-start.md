@@ -5,8 +5,9 @@ parser and complete policy initializer both return zero on the physical ROM
 capture. All fields used by the native parser and the derived gating policy
 match the original code. This resolves the missing board-policy input; it
 alone does not establish a successful NPU firmware boot. The physical sequence
-has now reached successful firmware startup and bypass-task completion; see
-the results below. Numerical inference remains pending.
+has now reached successful firmware startup, bypass-task completion and one
+numerically verified FP16 ReLU execution; see
+[the physical result](#physical-numerical-relu-success).
 
 ## Reproducible read-only acquisition
 
@@ -312,6 +313,57 @@ build succeeds against the existing `npu2` headers.
 The new module has source version `71627FA86AE8901BD522655`, SHA256
 `96700ef0a1db775ad6be875f9e9be0a3b8023c68e0a885764b11dcaa9af322fa`;
 manifest `results/npu2-idle-relu-build-manifest.json`. It is built but cannot
-replace the pinned live module. **Fresh boot and physical idle/ReLU verification
-remain pending.** Use the same `npu2` entry and the `--through relu_probe` command
-above with a new log filename. No kernel, UKI or boot-menu change is required.
+replace that pinned live module. Physical verification required a fresh boot,
+which subsequently passed as recorded below. For reproduction, use the same
+`npu2` entry and the `--through relu_probe` command above with a new log filename. No kernel, UKI or boot-menu change is required.
+
+
+## Physical numerical ReLU success
+
+On **2026-10-27 at 21:25:52 +01:00**, boot
+`0dd26c89-bbd0-4bbc-b9ce-99cacfa37675`, the complete nine-phase qualification
+through `relu_probe` passed on `7.2.8-23-omarchy-p16-asus-npu2`. The system was
+set to `performance` before loading the bootstrap. Source commit `32cb2bd`,
+module source version `71627FA86AE8901BD522655`, module SHA256
+`96700ef0a1db775ad6be875f9e9be0a3b8023c68e0a885764b11dcaa9af322fa`.
+
+HFRP protocol 1.5, all eight setup commands, power request, variant-0 upload,
+ping, region 5, config export/import and provider-1 LPWR import succeeded.
+Both the bypass and ReLU paths handled one pending idle notification, with
+`idle_blocked=0`, before successful completion.
+
+| Evidence | Bypass | FP16 ReLU |
+| --- | --- | --- |
+| Error | 0 | 0 |
+| Reply / data | `0x702` / `0xfffdfd0` | `0x702` / `0xfff8000` |
+| Acceptance / SWGEN0 | Both observed | Both observed |
+| Fence | `0x12345678` | `0x12345678` |
+| Completion verified | Yes | Yes |
+| Numerical match | Not applicable | `numeric_verified=1` |
+
+The ReLU graph has shape `[1,32,7,7]`, FP16 CHW16 storage, 1568 elements and
+3136 bytes in each input/output. The output started poisoned (`0xa5`); the
+Linux driver does not compute ReLU or copy a reference tensor into that output.
+It submits the compiler-produced graph without BYPASS_EXEC, waits for
+acceptance, SWGEN0 and the fence, then hashes both coherent DMA buffers.
+
+- Unchanged input SHA256:
+  `73cc501f702fa3fdd1a468fefc316d1b838941fdc1397d4a7ff9b30ee4a81f45`.
+- Complete output SHA256, matching the independently checked CPU reference:
+  `6e043c4c2ae0ddfcaca4341ab36f15fdebf066157af5da6483bc56cd6786404f`.
+
+The durable phase log is `results/p16-relu-live-0dd26c89.jsonl`. The full kernel
+log is `results/p16-relu-kernel-0dd26c89.log`; it independently records
+`ReLU error=0 accepted=1 completed=1 numerical_match=1` and both hashes.
+No Xid, SError, IOMMU fault, Oops or lockup appeared from module load through
+the captured post-test log. The module, original build manifest, phase log,
+kernel log and a hash-indexed summary are preserved in
+`results/p16-first-numerical-success/`. These local generated artifacts remain
+ignored; this source document records the reproducible result.
+
+This establishes a complete manual Linux startup and one real NPU arithmetic
+execution on this board. It does not establish arbitrary-model compatibility,
+registered interrupt handling, repeated execution, sustained performance,
+suspend/resume, safe reset/teardown or a general `/dev/accel` interface. The
+bootstrap deliberately retains published DMA and runtime references until
+reboot; nothing was added to automatic boot loading.

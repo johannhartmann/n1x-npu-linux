@@ -5,8 +5,8 @@ Experimental Linux support for the NVIDIA NPU in the ASUS ProArt P16 H7607BA
 reconstructed from the pinned NVIDIA 617.42 Windows ARM64 driver, checked
 against original-code emulation and NVIDIA's public Jetson sources.
 
-**Firmware startup and a bypass task work on the physical P16. Numerical
-inference and a general `/dev/accel` API are not yet verified or provided.**
+**Firmware startup, a bypass task and one numerical FP16 ReLU graph work on
+the physical P16 under Linux. A general `/dev/accel` API is not yet provided.**
 This is a manual research driver, not a production replacement for a vendor SDK.
 
 ## Verified hardware behavior
@@ -21,13 +21,14 @@ On `7.2.8-23-omarchy-p16-asus-npu2`:
 | DMA ping | Host word changes from `0x11111111` to `0x44444444` |
 | Region/configuration | Region-5 registered; commands 22, 21 and 23 acknowledged |
 | Bypass task | Submission accepted, SWGEN0 observed, fence `0x12345678` written |
+| Idle notifications | One regular notification handled in each task path |
+| FP16 ReLU | `[1,32,7,7]`; complete 3136-byte output hash matches CPU reference |
 
-The first successful run used the older command-23 fallback provider value 4.
-The captured board value 1 was also accepted on the next boot. That run
-stopped before task submission because a regular idle notification was pending.
-The driver now handles that notification before and during tasks; its hardware
-retest and the optional numerical ReLU probe remain pending. See
-[the physical record and exact limits](docs/p16-board-start.md).
+The complete sequence passed on 2026-10-27 with the captured board provider
+value 1, idle handling enabled and the performance profile. The ReLU test
+requires command acceptance, SWGEN0, fence, unchanged input and the expected
+output digest. This validates one fixed graph, not arbitrary models or safe
+resource teardown. See [the physical record and exact limits](docs/p16-board-start.md).
 
 ## Reproduce the manual test
 
@@ -86,7 +87,9 @@ pkexec /usr/bin/python3 "$PWD/scripts/qualify_p16_start.py" \
 The module checks the complete template hash, creates its own DMA addresses,
 and requires task acceptance, completion signal, fence, unchanged input and
 the expected output digest. A fence alone cannot pass the numerical test.
-This path is implemented and tested offline; **physical ReLU execution is pending**.
+**Physical ReLU execution passed on 2026-10-27.** Output SHA256:
+`6e043c4c2ae0ddfcaca4341ab36f15fdebf066157af5da6483bc56cd6786404f`.
+This is one successful execution, not a throughput or sustained-stability benchmark.
 
 ## Source and evidence
 
