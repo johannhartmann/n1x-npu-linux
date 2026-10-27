@@ -1168,3 +1168,34 @@ to the opaque SROOT executable. There is no arithmetic-engine simulation,
 physical GIC delivery, measured DMA coherence or numerical NPU inference here.
 The successful cases prove control flow under modeled completion, not computed
 ReLU output. Hardware execution remains a separate qualification step.
+
+
+### ReLU firmware retirement boundary (2026-10-27)
+
+`test_relu_scheduler.py` now stops immediately after the original firmware's
+SWGEN0 completion store, before returning to scheduler WFI. Across both modeled
+engine IRQ sources (0x400 and 0x800) and completion-status variants 1 and 5, the
+observed boundary is PC `0x10222a` after the store at `0x102228`:
+
+| State at SWGEN0 | Observed value |
+| --- | --- |
+| Task DMA commands | 24 |
+| Queue count | 0 |
+| Firmware task-slot in-use | 0 |
+| Remaining engine records | 0 |
+| Active-engine state | 0 |
+| Postaction fence | `0x12345678` |
+
+The test unmaps **all** device-visible model/task backing at that point and
+resumes the original firmware tail. It reaches scheduler WFI without another
+DMA command or access to the revoked memory. Status variants 0 and 4 still
+remain incomplete: no SWGEN0, no retirement boundary and no release.
+
+The emulator still supplies engine status/IRQ and synchronous DMA completion;
+it does not simulate engine arithmetic or an engine performing late physical
+DMA independently of firmware. Output remains poisoned in all eight cases.
+This strengthens the firmware-side lifetime evidence beyond the bypass case,
+but is not another numerical hardware result or permission to free buffers on
+errors. Physical numerical execution is recorded in `p16-board-start.md`.
+Local records: `results/relu-retirement-boundary.json` and
+`results/relu-retirement-ubsan.json`.

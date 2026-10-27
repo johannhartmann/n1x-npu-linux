@@ -162,6 +162,12 @@ would be our integration work, not existing automatic N1X GPU fallback.
 
 ## Implementation order and acceptance criteria
 
+The original-firmware retirement boundary is now tested for bypass and the
+ReLU control path, including post-signal device-memory revocation; see
+[bypass lifetime evidence](bypass-task.md#completion-boundary-and-repeated-firmware-submissions-2026-10-27)
+and [ReLU retirement](model-probe.md#relu-firmware-retirement-boundary-2026-10-27).
+These tests do not yet implement the reusable kernel/runtime lifecycle.
+
 1. **Reusable device lifecycle:** extend the proven startup path to repeated
    jobs, distinct completion IDs, bounded failures and demonstrably safe buffer
    release. Verify idle handling between tasks and client exit during a task.

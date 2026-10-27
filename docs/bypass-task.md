@@ -191,3 +191,49 @@ synthetic kernel/MMIO/FIFO/DMA/IRQ/coherency/handshake behavior. It still does n
 prove physical DMA, interrupt delivery, opaque-image equivalence, task execution
 on the NPU or numerical inference. No machine driver, boot artifact or firmware
 installation is changed by the test.
+
+
+## Completion boundary and repeated firmware submissions (2026-10-27)
+
+The native/firmware integration test now includes the current shared task
+runner and idle-drain helper. The earlier extraction started at the bypass
+wrapper and had become incomplete when those functions were factored out;
+it failed compilation. This harness regression is repaired, and the test is
+included in `make test-p16-start` as well as `make test-vendor`.
+
+The previous integrated success case advanced the emulator to scheduler WFI
+before the native caller observed SWGEN0. That was insufficient evidence for
+reclaiming memory at the actual completion signal. The new case stops the
+original firmware immediately **after** the SWGEN0 store at `0x102228` commits,
+with PC `0x10222a`. Stopping after the store also prevents replaying the signal
+when the emulator resumes.
+
+At that point, the bypass trace shows:
+
+- all 11 task DMA operations have completed in the synchronous register model;
+- the fence contains `0x12345678`;
+- queue count at `0x180114` is zero;
+- firmware task-slot in-use field at `0x18027c` is zero;
+- the native runner can complete successfully before firmware reaches WFI.
+
+The test then unmaps the entire device-visible task backing, resumes the
+original firmware from `0x10222a`, and reaches WFI without another DMA command
+or unmapped-memory access. The test repeats this for **32 submissions in one
+firmware CPU/RAM instance**, reinitializing only the host harness between jobs.
+No firmware reset, function stub or executable patch is used between tasks.
+The existing hardware bootstrap still enforces its one-attempt policy; this
+test does not silently enable repeated production submissions.
+
+A negative control revokes the device mapping immediately after acceptance
+`0x702`, when only four DMA reads have occurred. The original executor then
+attempts another 32-byte descriptor read and the model rejects it. The native
+caller returns `-EIO`, never reports completion and retains its CPU backing.
+Thus acceptance and safe end-of-job observation are observably different.
+Descriptor-version, execution and malformed-postaction error cases remain
+covered and keep the native backing retained.
+
+Local result: `results/native-fw-retirement-boundary.json`; UBSan counterpart:
+`results/native-fw-retirement-ubsan.json`. All cases pass. This establishes the
+raw firmware's bypass lifetime ordering under the modeled device. It does not
+prove physical engine DMA quiescence, reset safety or error-path reclamation.
+In particular, a failed task must not inherit the successful-task release rule.

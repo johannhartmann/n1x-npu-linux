@@ -14,7 +14,7 @@ import struct
 import subprocess
 import tempfile
 
-from unicorn import UC_HOOK_CODE,UC_HOOK_MEM_READ
+from unicorn import UC_HOOK_CODE,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRITE
 from unicorn import riscv_const as regs
 from diagnostic_fixture import build_relu
 from emulate_profile1_commands import run,ROOT,HOST,MMIO,ACK,PROFILE1_HASH
@@ -96,6 +96,23 @@ def main():
             def status_read(_,access,address,size,value,user):status_reads.append(word(address))
             u.hook_add(UC_HOOK_CODE,handler_entry,begin=0x1025e6,end=0x1025e6)
             u.hook_add(UC_HOOK_MEM_READ,status_read,begin=MMIO+0x3054,end=MMIO+0x3057)
+            retirement=[]
+            def completion_write(_,access,address,size,value,user):
+                if address!=MMIO or not value&0x40:
+                    return
+                retirement.append(dict(pc=hex(u.reg_read(regs.UC_RISCV_REG_PC)),
+                    dma_count=len(result['dma_commands']), queue_count=word(0x180114),
+                    slot_in_use=word(0x18027c), remaining_records=word(internal+40),
+                    active=word(0x1862a4), fence=word(HOST+768)))
+                pc=u.reg_read(regs.UC_RISCV_REG_PC)
+                length=4 if int.from_bytes(u.mem_read(pc,2),'little')&3==3 else 2
+                hooks=[]
+                def pause_after_signal(_,pc,size,user):
+                    u.hook_del(hooks[0])
+                    u.emu_stop()
+                hooks.append(u.hook_add(UC_HOOK_CODE,pause_after_signal,
+                                        begin=pc+length,end=pc+length))
+            u.hook_add(UC_HOOK_MEM_WRITE,completion_write,begin=MMIO,end=MMIO+3)
             before_returns=len(result['trap_returns'])
             assert word(MMIO+0xd28)&irq
             u.mem_write(MMIO+0x3054,struct.pack('<I',engine_status))
@@ -105,6 +122,24 @@ def main():
             u.reg_write(regs.UC_RISCV_REG_MCAUSE,0x8000000b)
             u.reg_write(regs.UC_RISCV_REG_MEPC,0x101424)
             u.emu_start(u.reg_read(regs.UC_RISCV_REG_MTVEC),0x40000000,count=200000)
+            if engine_status&1:
+                assert len(retirement)==1 and u.reg_read(regs.UC_RISCV_REG_PC)==0x10222a
+                snapshot=retirement[0]
+                assert snapshot['queue_count']==snapshot['slot_in_use']==0
+                assert snapshot['remaining_records']==snapshot['active']==0
+                assert snapshot['fence']==0x12345678
+                # Original firmware is stopped immediately after asserting SWGEN0,
+                # not at scheduler idle. Revoke every device-visible model buffer
+                # before running the tail to expose any late firmware DMA access.
+                final_backing=bytes(u.mem_read(HOST,len(payload)))
+                mapped_bytes=((HOST&4095)+len(payload)+4095)&~4095
+                u.mem_unmap(HOST&~4095,mapped_bytes)
+                u.emu_start(u.reg_read(regs.UC_RISCV_REG_PC),0x40000000,count=200000)
+                assert len(result['dma_commands'])==snapshot['dma_count']
+                u.mem_map(HOST&~4095,mapped_bytes)
+                u.mem_write(HOST,final_backing)
+            else:
+                assert not retirement
             assert entered==[0x1025e6] and len(result['trap_returns'])==before_returns+1
             assert u.reg_read(regs.UC_RISCV_REG_PC)==0x102194 and not word(MMIO+8)&irq
             assert status_reads[:2]==[engine_status,engine_status]
@@ -124,7 +159,8 @@ def main():
                 original_handler_entered=True,original_trap_returned=True,
                 original_postaction_fence_written=completed,task_irq_asserted=completed,
                 remaining_records=word(internal+40),output_unchanged=True,
-                firmware_code_unmodified=True,status_reads=status_reads))
+                firmware_code_unmodified=True,status_reads=status_reads,
+                retirement=retirement,backing_revoked_after_swgen0=completed))
     print(json.dumps(dict(passed=True,hardware_access=False,loadable_sha256=LOADABLE_HASH,
         firmware_sha256=PROFILE1_HASH,input_sha256=hashlib.sha256(input_data).hexdigest(),
         task_local_address_ids=[3,1,2,4,5,6,7,8],native_content_initialization=True,
@@ -132,6 +168,7 @@ def main():
         limitations=['Synchronous RAM DMA, modeled engine status and injected firmware IRQs',
                      'No engine arithmetic is emulated; the poisoned output remains unchanged',
                      'Control completion is not numerical inference or physical NPU execution',
+                     'Post-SWGEN0 revocation checks firmware tail accesses, not physical engine DMA quiescence',
                      'Firmware-local IRQ bits do not establish physical GIC routing',
                      'Runtime initialization and opaque SROOT executable equivalence remain unverified']),indent=2))
 

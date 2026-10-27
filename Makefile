@@ -15,6 +15,7 @@ test-p16-start:
 	venv/bin/python scripts/test_qualify_p16_start.py
 	venv/bin/python scripts/test_linux_lpwr_config.py
 	venv/bin/python scripts/test_linux_bypass_task.py
+	venv/bin/python scripts/test_linux_bypass_firmware.py
 	venv/bin/python scripts/test_response.py
 	venv/bin/python scripts/test_response_decode.py
 	venv/bin/python scripts/test_profile1_lpwr_consumer.py

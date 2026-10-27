@@ -10,7 +10,7 @@ import shlex
 import struct
 import subprocess
 import tempfile
-from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_READ
+from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
 from unicorn import riscv_const as regs
 from emulate_profile1_commands import run, ROOT, HOST, MMIO, ACK, PROFILE1_HASH
 from test_core_control import IO, READ, WRITE, DELAY
@@ -21,7 +21,7 @@ STOP = 0x40000000
 
 def compile_native(directory):
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
-    phase = source[source.index('static int n1x_boot_bypass_task_once('):
+    phase = source[source.index('static int n1x_boot_drain_task_idle('):
                    source.index('static ssize_t bypass_task_store(')]
     shim = r'''
 #include <stdbool.h>
@@ -44,8 +44,10 @@ static struct n1x_boot_endpoint *boot_sroot=&endpoint,*boot_dla=&endpoint;
 static struct {bool verified;} boot_ping={true};
 static struct {bool registered;} boot_region5={true};
 static struct {bool accepted;} boot_config_apply={true},boot_lpwr={true};
-static struct {void *buffer;dma_addr_t dma;struct n1x_dla_response response;
- u32 pending,fence;bool attempted,response_valid,accepted,signal_seen,verified;int error;} boot_task;
+struct n1x_boot_task_state {void *buffer;dma_addr_t dma;struct n1x_dla_response response;
+ u32 pending,fence;bool attempted,response_valid,accepted,signal_seen,verified;int error;
+ u32 idle_notifications;bool idle_blocked;};
+static struct n1x_boot_task_state boot_task;
 static bool enable_bypass_task=true;
 static unsigned char allocation[4096] __attribute__((aligned(256)));
 static struct n1x_dla_io transport;static void (*synchronize)(void);
@@ -91,10 +93,11 @@ u32 native_result(unsigned field)
     return lib
 
 
-def execute(lib, blob, fault):
+def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1, revoke_after_acceptance=False):
     state = {'active': False, 'sent': False, 'paused': False, 'trap_finished': False,
-             'scheduler_finished': False}
+             'scheduler_finished': False, 'device_backing_revoked': False}
     live, frames, errors, trace = [], [], [], []
+    completion_snapshots, acceptance_snapshots = [], []
 
     def word(u, offset):
         return struct.unpack('<I', u.mem_read(MMIO+offset, 4))[0]
@@ -107,6 +110,8 @@ def execute(lib, blob, fault):
             u.mem_write(MMIO+0x40, struct.pack('<I', ACK))
             return
         frames.append((word(u, 0x40), word(u, 0x44)))
+        if word(u, 0x40) == 0x702:
+            acceptance_snapshots.append(len(initial['dma_commands'])-initial_dma)
         pc = u.reg_read(regs.UC_RISCV_REG_PC)
         size = 4 if int.from_bytes(u.mem_read(pc, 2), 'little') & 3 == 3 else 2
         handle = []
@@ -139,11 +144,36 @@ def execute(lib, blob, fault):
         if address == MMIO+0x7c and word(u, 0x7c) & 1:
             u.mem_write(address, struct.pack('<I', word(u, 0x7c) & ~1))
 
+    def signal(_, access, address, size, value, data):
+        if address != MMIO or not value & 0x40:
+            return
+        completion_snapshots.append({
+            'pc': hex(u.reg_read(regs.UC_RISCV_REG_PC)),
+            'dma_count': len(initial['dma_commands'])-initial_dma,
+            'queue_count': struct.unpack('<I', u.mem_read(0x180114, 4))[0],
+            'slot_in_use': struct.unpack('<I', u.mem_read(0x18027c, 4))[0],
+            'fence': struct.unpack('<I', u.mem_read(HOST+768, 4))[0],
+        })
+        if completion_boundary:
+            pc = u.reg_read(regs.UC_RISCV_REG_PC)
+            length = 4 if int.from_bytes(u.mem_read(pc, 2), 'little') & 3 == 3 else 2
+            hook = []
+
+            def pause_after_store(_, address, size, user):
+                u.hook_del(hook[0])
+                state['paused'] = True
+                u.emu_stop()
+
+            hook.append(u.hook_add(UC_HOOK_CODE, pause_after_store,
+                                   begin=pc+length, end=pc+length))
+
     u.hook_add(UC_HOOK_CODE, code)
     u.hook_add(UC_HOOK_MEM_READ, handshake)
+    u.hook_add(UC_HOOK_MEM_WRITE, signal)
 
     def advance():
-        if not state['sent'] or word(u, 8) & 128 or state['scheduler_finished']:
+        if (not state['sent'] or word(u, 8) & 128 or state['scheduler_finished'] or
+                (completion_boundary and completion_snapshots)):
             return
         if not before:
             payload = bytearray(ctypes.string_at(lib.native_buffer(), 4096))
@@ -194,6 +224,10 @@ def execute(lib, blob, fault):
             else:
                 u.mem_write(MMIO+offset, struct.pack('<I', value))
             if offset == 0x68: state['sent'] = True
+            if (revoke_after_acceptance and offset == 0x40 and value == ACK and
+                    frames and frames[-1][0] == 0x702):
+                u.mem_unmap(HOST & ~4095, ((HOST & 4095)+4096+4095) & ~4095)
+                state['device_backing_revoked'] = True
             return 0
         except Exception as exc:
             errors.append(repr(exc))
@@ -205,39 +239,91 @@ def execute(lib, blob, fault):
 
     @SYNC
     def sync():
+        if state['device_backing_revoked']:
+            return  # CPU backing is retained; only modeled device mapping is revoked.
         try:
             ctypes.memmove(lib.native_buffer(), bytes(u.mem_read(HOST, 4096)), 4096)
         except Exception as exc:
             errors.append(repr(exc))
 
     io = IO(None, write, read, delay)
-    lib.native_setup(ctypes.byref(io), sync)
-    status = lib.native_run()
-    assert not errors, errors
-    fields = [lib.native_result(i) for i in range(8)]
-    assert fields[0] == fields[7] == 1 and lib.native_run() == -errno.EALREADY
-    assert bytes(u.mem_read(0x100000, 36864)) == blob[512:512+36864]
-    if fault is None:
-        assert status == 0 and fields[1:5] == [1, 1, 1, 1]
-        assert fields[5:7] == [0x702, 0x12345678]
-        assert frames == [(0x702, HOST >> 8)] and word(u, 8) == 0
-        assert state['trap_finished'] and state['scheduler_finished']
-        assert struct.unpack('<I', u.mem_read(0x180114, 4))[0] == 0
-    else:
-        assert status == -errno.EREMOTEIO and not fields[3]
-        expected = {'version': 0x90701, 'execution': 0x8003070a, 'postaction': 0x8007070a}[fault]
-        assert fields[5] == expected and frames[-1] == (expected, HOST >> 8)
-        assert fields[6] == 0xdeadbeef
-        # Native stops immediately on error, so its last CPU fence observation
-        # can predate the firmware's postaction write. Inspect modeled DMA RAM.
-        actual_fence = struct.unpack('<I', u.mem_read(HOST+768, 4))[0]
-        assert actual_fence == (0x12345678 if fault == 'postaction' else 0xdeadbeef)
-    assert len(initial['dma_commands'])-initial_dma == {None: 11, 'version': 4, 'execution': 13, 'postaction': 11}[fault]
-    return {'fault': fault, 'native_return': status, 'frames': frames,
-            'accepted': bool(fields[1]), 'verified': bool(fields[3]),
-            'dma_retained': bool(fields[7]), 'firmware_code_unmodified': True,
-            'original_dma_commands': len(initial['dma_commands'])-initial_dma,
-            'trap_finished': state['trap_finished'], 'scheduler_finished': state['scheduler_finished']}
+    assert 1 <= repeat_count <= 64 and (repeat_count == 1 or fault is None)
+    runs = []
+    for iteration in range(repeat_count):
+        if iteration:
+            # Reset only the native harness's one-shot state. The original
+            # firmware CPU, globals, queue and allocations are not reset.
+            assert state['scheduler_finished'] and not word(u, 8) & 0xc0
+            state.update(sent=False, paused=False, trap_finished=False,
+                         scheduler_finished=False)
+            before.clear()
+            frames.clear()
+            completion_snapshots.clear()
+            acceptance_snapshots.clear()
+            initial_dma = len(initial['dma_commands'])
+        lib.native_setup(ctypes.byref(io), sync)
+        status = lib.native_run()
+        if not revoke_after_acceptance:
+            assert not errors, errors
+        fields = [lib.native_result(i) for i in range(8)]
+        assert fields[0] == fields[7] == 1 and lib.native_run() == -errno.EALREADY
+        assert bytes(u.mem_read(0x100000, 36864)) == blob[512:512+36864]
+        if revoke_after_acceptance:
+            assert repeat_count == 1 and not completion_boundary and fault is None
+            assert status == -errno.EIO and len(errors) == 1, errors
+            assert state['device_backing_revoked']
+            assert fields[:4] == [1, 1, 0, 0] and fields[7] == 1
+            assert acceptance_snapshots == [4] and not completion_snapshots
+            assert not state['scheduler_finished']
+            return {'negative_control': 'revoke task backing after acceptance, before completion',
+                    'native_return': status, 'dma_access_rejected': errors[0],
+                    'accepted': True, 'verified': False, 'dma_retained_by_native': True}
+        native_return_pc = hex(u.reg_read(regs.UC_RISCV_REG_PC))
+        scheduler_finished_on_native_return = state['scheduler_finished']
+        if completion_boundary:
+            assert fault is None and not state['scheduler_finished'] and state['paused']
+            assert completion_snapshots and completion_snapshots[-1]['dma_count'] == 11
+            assert completion_snapshots[-1]['queue_count'] == 0
+            assert completion_snapshots[-1]['slot_in_use'] == 0
+            assert acceptance_snapshots == [4]
+            # Revoking completed host memory is stronger than only watching the
+            # already-idle firmware. Any tail DMA access now fails in the model.
+            original_backing = bytes(u.mem_read(HOST, 4096))
+            u.mem_unmap(HOST & ~4095, ((HOST & 4095)+4096+4095) & ~4095)
+            u.emu_start(u.reg_read(regs.UC_RISCV_REG_PC), STOP, count=200000)
+            u.mem_map(HOST & ~4095, ((HOST & 4095)+4096+4095) & ~4095)
+            u.mem_write(HOST, original_backing)
+            assert state['scheduler_finished']
+            assert len(initial['dma_commands'])-initial_dma == 11
+        if fault is None:
+            assert status == 0 and fields[1:5] == [1, 1, 1, 1]
+            assert fields[5:7] == [0x702, 0x12345678]
+            assert frames == [(0x702, HOST >> 8)] and word(u, 8) == 0
+            assert state['trap_finished'] and state['scheduler_finished']
+            assert struct.unpack('<I', u.mem_read(0x180114, 4))[0] == 0
+        else:
+            assert status == -errno.EREMOTEIO and not fields[3]
+            expected = {'version': 0x90701, 'execution': 0x8003070a, 'postaction': 0x8007070a}[fault]
+            assert fields[5] == expected and frames[-1] == (expected, HOST >> 8)
+            assert fields[6] == 0xdeadbeef
+            # Native stops immediately on error, so its last CPU fence observation
+            # can predate the firmware's postaction write. Inspect modeled DMA RAM.
+            actual_fence = struct.unpack('<I', u.mem_read(HOST+768, 4))[0]
+            assert actual_fence == (0x12345678 if fault == 'postaction' else 0xdeadbeef)
+        assert len(initial['dma_commands'])-initial_dma == {None: 11, 'version': 4, 'execution': 13, 'postaction': 11}[fault]
+        record = {'fault': fault, 'native_return': status, 'frames': list(frames),
+                'accepted': bool(fields[1]), 'verified': bool(fields[3]),
+                'dma_retained': bool(fields[7]), 'firmware_code_unmodified': True,
+                'original_dma_commands': len(initial['dma_commands'])-initial_dma,
+                'completion_boundary': completion_boundary, 'native_return_pc': native_return_pc,
+                'scheduler_finished_on_native_return': scheduler_finished_on_native_return,
+                'completion_snapshots': list(completion_snapshots),
+                'acceptance_dma_counts': list(acceptance_snapshots),
+                'backing_revoked_during_firmware_tail': completion_boundary,
+                'trap_finished': state['trap_finished'], 'scheduler_finished': state['scheduler_finished']}
+        runs.append(record)
+    return {'repeat_count': repeat_count, 'firmware_reset_count': 1, 'runs': runs}
+
 
 
 def main():
@@ -246,11 +332,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix='n1x-native-fw-') as tmp:
         lib = compile_native(Path(tmp))
         rows = [execute(lib, blob, fault) for fault in (None, 'version', 'execution', 'postaction')]
+        rows.append(execute(lib, blob, None, completion_boundary=True, repeat_count=32))
+        rows.append(execute(lib, blob, None, revoke_after_acceptance=True))
     print(json.dumps({'passed': True, 'hardware_access': False, 'cases': rows,
                       'limitations': ['Kernel machine/DMA/allocation/prior-phase gates are synthetic',
                                       'Original firmware reset/trap/scheduler/DMA code runs; no firmware function stubs',
                                       'MMIO/FIFO/IRQ, synchronous DMA completion, coherence and handshake devices are modeled',
                                       'Error cases stop with retained backing while firmware may still be in its IRQ handler',
+                                      'Repeated runs reset the host harness only; production driver remains one-shot',
+                                      'Post-SWGEN0 revocation covers bypass descriptors, not neural-engine buffers or teardown',
                                       'No opaque-image equivalence, physical boot/IRQ/DMA or numerical inference']}, indent=2))
 
 
