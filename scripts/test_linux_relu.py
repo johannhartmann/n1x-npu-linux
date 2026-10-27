@@ -67,6 +67,10 @@ static bool n1x_boot_machine(void) {return machine_ok;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *ep) {assert(ep==&endpoint);return gate_error;}
 static int n1x_boot_read(void *ctx,u32 offset,u32 *value)
 {assert(ctx==&endpoint && offset==8);*value=pending;return read_error;}
+/* Shared helper is exercised with real transport in test_linux_bypass_task.py. */
+static int n1x_boot_drain_task_idle(struct n1x_boot_task_state *task)
+{int err=n1x_boot_read(&endpoint,8,&task->pending);if(err)return err;
+ return task->pending&0xc0 ? -EBUSY : 0;}
 static int request_firmware_direct(const struct firmware **out,const char *name,struct device *dev)
 {assert(dev==&device && !strcmp(name,N1X_RELU_FIRMWARE));if(request_error)return request_error;
  *out=&firmware;return 0;}

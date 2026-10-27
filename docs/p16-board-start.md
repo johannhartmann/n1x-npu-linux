@@ -216,8 +216,8 @@ which produced the raw word 8000. The captured policy instead has provider
 that value (raw word 2000) and the derived HAL flag, with the Windows fallback
 only when the board value is zero. The actual Linux phase matches all 4096
 bytes produced by the original Windows builder for provider 1; its raw HAL-1
-set/get roundtrip and 30 lifecycle/failure cases pass. **This correction has
-not been applied to the retained live instance.**
+set/get roundtrip and 30 lifecycle/failure cases pass. That earlier live instance was retained until reboot; the next boot accepted
+this correction, as recorded below.
 
 The new optional `relu_probe` phase requires the already verified bypass and
 the same pinned board setup. It requests an exact 2,834,432-byte template,
@@ -248,8 +248,9 @@ The rebuilt module targets the existing `npu2` kernel; source version
 `E936E960ECE1CFAEFA88E1D`, SHA256
 `9a5b2b90e8477ab5ca9660f99a8c54e68009f02fe14b55e4bee2efec467f1e85`.
 Its exact build/source/template manifest is
-`results/npu2-relu-build-manifest.json`. It has not replaced the pinned live
-module. A fresh boot into the same `npu2` entry is required before loading it:
+`results/npu2-relu-build-manifest.json`. This build was loaded in the next boot
+and produced the idle-notification stop recorded below. The command for a
+fresh boot into the same `npu2` entry remains:
 
 ```sh
 powerprofilesctl set performance
@@ -260,3 +261,57 @@ pkexec /usr/bin/python3 "$PWD/scripts/qualify_p16_start.py" \
 No new kernel/UKI or boot-menu change is needed. General model submission,
 an accel userspace API, asynchronous IRQ handling and safe teardown remain
 outside this one-attempt qualification path.
+
+## Idle notification blocked the next task, not firmware startup
+
+Boot `5338c073-de5d-44a7-930e-4a22bacfdd20` used the above `E936...` module.
+HFRP setup/power, variant-0 upload, ping, region 5, config import and the
+board-correct provider-1 LPWR import all succeeded. Before bypass submission,
+IRQSTAT was `0x81`; the old preflight returned `-EBUSY` without allocating or
+publishing a task (`task_attempted=0`, `task_retained=0`). ReLU was never tried.
+The durable record is `results/p16-relu-live-5338c073.jsonl`.
+
+A bounded, read-only capture found mailbox `{word=0x0000000c,data=0}`, with
+IRQSTAT `0x81` both before and after. `scripts/read_p16_dla_mailbox.c` maps only
+physical page `0x19002000` read-only and reads logical registers 8, 0x40 and
+0x44. It requires this exact machine, BIOS, kernel, old loaded module source
+version and successful HFRP power status. Its version guard is intentionally
+pinned to this diagnostic, not a general MMIO access interface. It performs no
+ACK, reset or other register write. Capture: `results/p16-mailbox-5338c073.json`.
+The old module, manifest and both logs are archived in
+`results/p16-idle-blocked-5338c073/`.
+
+Message 12 is `DLA_MSG_IDLE_TIMEOUT` in NVIDIA's local R38 NVDLA sources.
+The original raw HAL-1 idle consumer at `0x107318` emits `{12,0}`. A new
+regression executes that consumer and the original notification transport
+without firmware function stubs: no ACK leaves it waiting, while the native
+Linux capture/clear/ACK releases it, preserving unrelated IRQ bit 0. The
+Windows IRQ handler at `0xd48ce0` also ACKs without an error report or decrement
+of outstanding work unless SWGEN0 is present. Twelve cases cover policy flag
+`+0x47d` 0/1, IRQ 0x80/0x81/0xc1 and outstanding counts 0/2. These tests keep
+the host context ineligible for power-down. Windows separately gates a host
+power-policy callback after ACK; no such transition is claimed or implemented.
+
+The Linux task path now drains only exact `{12,0}` notifications before DMA
+allocation and recognizes them during task polling. A notification does not
+replace the command reply, count as acceptance, signal completion, or clear
+SWGEN0. Unknown preflight frames remain untouched. Drain is bounded to 16
+notifications; an uncertain ACK or exhausted drain blocks another attempt.
+The existing task deadline, acceptance/fence/SWGEN0 checks, error priority and
+DMA retention remain intact. `status` and `relu_status` expose idle counters
+and blocked state. The qualification runtime reference keeps the NPU powered;
+idle notification handling is not suspend/resume support.
+
+Validation: 65 native bypass lifecycle cases, 14 baseline I/O failure
+positions plus idle-preflight failure positions, 27 ReLU preparation/lifetime
+cases, the original-firmware transport checks, 396 idle-consumer cases and
+Windows response replay all pass. Native lifecycle tests also pass UBSan.
+`make test-p16-start` includes the response and idle regressions. The module
+build succeeds against the existing `npu2` headers.
+
+The new module has source version `71627FA86AE8901BD522655`, SHA256
+`96700ef0a1db775ad6be875f9e9be0a3b8023c68e0a885764b11dcaa9af322fa`;
+manifest `results/npu2-idle-relu-build-manifest.json`. It is built but cannot
+replace the pinned live module. **Fresh boot and physical idle/ReLU verification
+remain pending.** Use the same `npu2` entry and the `--through relu_probe` command
+above with a new log filename. No kernel, UKI or boot-menu change is required.

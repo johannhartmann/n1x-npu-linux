@@ -10,6 +10,9 @@ import struct
 import subprocess
 import tempfile
 from pathlib import Path
+from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_WRITE
+from unicorn import riscv_const as riscv_regs
+from emulate_profile1_boot import boot
 from emulate_firmware_commands import run as firmware, BLOB_HASH, MMIO, HOST, ACK
 from emulate_profile1_commands import run as firmware_profile1, PROFILE1_HASH
 from test_core_control import IO, WRITE, READ, DELAY
@@ -97,6 +100,51 @@ def main():
     integrated = []
     profile1 = (ROOT/'sources/dla-profile1-verified.bin').read_bytes()
     assert hashlib.sha256(profile1).hexdigest() == PROFILE1_HASH
+    # Reproduce the physical idle frame through the original firmware sender,
+    # then let the native Linux capture/clear/ACK release its wait loop.
+    idle_cases = []
+    for acknowledge in (False, True):
+        uc, boot_state = boot(profile1)
+        assert boot_state['scheduler_wfi']
+        original_code = bytes(uc.mem_read(0x100000, 0x9000))
+        uc.mem_write(0x186254, bytes((1, 1))+struct.pack('<I', 2000)+bytes(34))
+        uc.mem_write(0x18627d, b'\0')
+        uc.mem_write(0x186250, bytes(4))
+        uc.mem_write(0x185ba8, bytes(8))
+        uc.mem_write(MMIO+0x2c, struct.pack('<Q', 2000001))
+        uc.mem_write(0x180100+1288, b'\0')  # Optional diagnostic DMA disabled.
+        uc.mem_write(MMIO+8, struct.pack('<I', 1))  # Preserve unrelated bit 0.
+        idle_frames, idle_captures, returned = [], [], []
+
+        def idle_code(_, address, size, user):
+            if address == 0x102194:
+                returned.append(True)
+                uc.emu_stop()
+
+        def idle_write(_, access, address, size, value, user):
+            offset = address-MMIO
+            if offset == 0xd20:
+                mask = struct.unpack('<I', uc.mem_read(MMIO+0xd28, 4))[0]
+                uc.mem_write(MMIO+0xd28, struct.pack('<I', mask | value))
+            elif offset == 0:
+                pending = struct.unpack('<I', uc.mem_read(MMIO+8, 4))[0] | value
+                uc.mem_write(MMIO+8, struct.pack('<I', pending))
+                if value & 0x80:
+                    assert pending == 0x81
+                    idle_frames.append(struct.unpack('<II', uc.mem_read(MMIO+0x40, 8)))
+                    if acknowledge:
+                        idle_captures.append(host(uc, modeled_irq=True))
+
+        uc.hook_add(UC_HOOK_CODE, idle_code)
+        uc.hook_add(UC_HOOK_MEM_WRITE, idle_write)
+        uc.reg_write(riscv_regs.UC_RISCV_REG_RA, 0x102194)
+        uc.emu_start(0x107318, 0x109000, count=10000)
+        assert bytes(uc.mem_read(0x100000, 0x9000)) == original_code
+        assert idle_frames == [(12, 0)] and bool(returned) == acknowledge
+        assert idle_captures == ([(0, expected, (12, 0))] if acknowledge else [])
+        assert struct.unpack('<I', uc.mem_read(MMIO+8, 4))[0] == (1 if acknowledge else 0x81)
+        idle_cases.append({'acknowledged': acknowledge, 'firmware_returned': bool(returned),
+                           'frame': [12, 0], 'unrelated_irq_bit_preserved': True})
     for label, execute, image in (('T35x RV64', firmware, blob),
                                    ('HAL 1 RV32', firmware_profile1, profile1)):
         for challenge, expected_word in ((1, 0x102), (0x11111111, 0x102), (0x40000000, 0x110101)):
@@ -390,6 +438,7 @@ def main():
     assert not full_diagnostic['task_interrupts']
     print(json.dumps({'scope': 'Linux C response capture/clear/ACK with synthetic IRQSTAT and real FW mailbox code',
                       'ordered_callback_count': len(expected),
+                      'original_idle_transport_cases': idle_cases,
                       'persistent_hal1_commands': len(sequence),
                       'commands_after_original_reset_initialization': len(sequence),
                       'commands_through_original_trap_and_mret': len(sequence),

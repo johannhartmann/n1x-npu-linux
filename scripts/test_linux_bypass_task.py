@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
-    function = source[source.index('static int n1x_boot_run_task('):
+    function = source[source.index('static int n1x_boot_drain_task_idle('):
                       source.index('static ssize_t bypass_task_store(')]
     harness = r'''
 #include <assert.h>
@@ -42,13 +42,15 @@ static struct {bool verified;} boot_ping;
 static struct {bool registered;} boot_region5;
 static struct {bool accepted;} boot_config_apply,boot_lpwr;
 struct n1x_boot_task_state {void *buffer;dma_addr_t dma;struct n1x_dla_response response;
- u32 pending,fence;bool attempted,response_valid,accepted,signal_seen,verified;int error;};
+ u32 pending,fence;bool attempted,response_valid,accepted,signal_seen,verified;int error;u32 idle_notifications;bool idle_blocked;};
 static struct n1x_boot_task_state boot_task;
 static bool enable_bypass_task,machine_ok,allocation_fail,sent;
 static unsigned char allocation[4096] __attribute__((aligned(256)));
 static dma_addr_t allocation_address;
 static int gate_error,mask_error,allocations,frees,barriers,io_calls,fail_at,cases;
 static int stage,delays,post_ack_reads;
+static int idle_before,idle_during,idle_after,idle_acks;
+static bool idle_flood;
 static u32 response_word,response_data,method_data,preexisting;
 enum {NORMAL,COALESCED,NO_REPLY,ACCEPTANCE_ONLY,NO_FENCE,EXEC_ERROR,LATE_ERROR,DUPLICATE};
 static int behavior;
@@ -71,11 +73,14 @@ static void check_payload(void)
  expected[75]=0x34;expected[76]=0x12;put64(expected+256,allocation_address+512);
  expected[768]=0xef;expected[769]=0xbe;expected[770]=0xad;expected[771]=0xde;
  assert(!memcmp(allocation,expected,sizeof(expected)));}
+static bool idle_now(void)
+{return !sent ? idle_before>0 : idle_flood || (!boot_task.accepted ? idle_during>0 : idle_after>0);}
 static int n1x_boot_read(void *context,u32 offset,u32 *value)
 {assert(context==&endpoint);int index=io_calls++;
  if(index==fail_at)return -EIO;
  if(offset==8){
-  if(!sent)*value=preexisting;
+  if(idle_now())*value=0x81|(boot_task.accepted?0x40:0);
+  else if(!sent)*value=preexisting;
   else if(behavior==NO_REPLY)*value=0;
   else if(stage==0)*value=behavior==COALESCED?0xc0:0x80;
   else if(behavior==ACCEPTANCE_ONLY)*value=0;
@@ -83,8 +88,8 @@ static int n1x_boot_read(void *context,u32 offset,u32 *value)
   else if(behavior==LATE_ERROR)*value=++post_ack_reads==1?0x40:0xc0;
   else *value=0x40;
  }else if(offset==0x68)*value=0;
- else if(offset==0x40)*value=stage && behavior!=DUPLICATE?0x8007070a:response_word;
- else {assert(offset==0x44);*value=response_data;}
+ else if(offset==0x40)*value=idle_now()?12:stage && behavior!=DUPLICATE?0x8007070a:response_word;
+ else {assert(offset==0x44);*value=idle_now()?0:response_data;}
  return 0;}
 static int n1x_boot_write(void *context,u32 offset,u32 value)
 {assert(context==&endpoint);int index=io_calls++;
@@ -94,7 +99,9 @@ static int n1x_boot_write(void *context,u32 offset,u32 value)
  else if(offset==0xd24)assert(value==128);
  else if(offset==4){assert(value==64||value==128);
  if(value==64)assert(boot_task.accepted && boot_task.signal_seen && boot_task.fence==0x12345678);}
- else {assert(offset==0x40 && value==N1X_DLA_RESPONSE_ACK);stage++;}
+ else {assert(offset==0x40 && value==N1X_DLA_RESPONSE_ACK);
+ if(idle_now()){idle_acks++;if(!sent)idle_before--;else if(!boot_task.accepted)idle_during--;else idle_after--;}
+ else stage++;}
  return index==fail_at?-EIO:0;}
 static void n1x_boot_delay(void *context,u32 interval)
 {assert(context==&endpoint && interval==1000);delays++;}
@@ -109,6 +116,7 @@ static void reset(void)
 {boot_sroot=boot_dla=&endpoint;boot_ping.verified=boot_region5.registered=true;
  boot_config_apply.accepted=boot_lpwr.accepted=enable_bypass_task=machine_ok=true;
  allocation_fail=sent=false;allocation_address=0x100002000ULL;
+ idle_before=idle_during=idle_after=idle_acks=0;idle_flood=false;
  gate_error=mask_error=allocations=frees=barriers=io_calls=stage=delays=post_ack_reads=0;fail_at=-1;
  response_word=0x702;response_data=allocation_address>>8;method_data=preexisting=0;behavior=NORMAL;
  memset(&boot_task,0,sizeof(boot_task));}
@@ -147,6 +155,25 @@ int main(void)
  reset();response_data++;check(-EPROTO,1,0,true,false);
  reset();response_word=0x602;check(-EPROTO,1,0,true,false);
  reset();response_word=0x1000702;check(-EPROTO,1,0,true,false);
+ reset();idle_before=1;check(0,1,0,true,true);assert(idle_acks==1&&boot_task.idle_notifications==1);
+ assert(boot_task.response.word==0x702&&!boot_task.idle_blocked);
+ reset();idle_during=1;check(0,1,0,true,true);assert(idle_acks==1&&boot_task.idle_notifications==1);
+ reset();idle_after=1;check(0,1,0,true,true);assert(idle_acks==1&&boot_task.idle_notifications==1);
+ assert(boot_task.response.word==0x702);
+ reset();idle_before=idle_during=idle_after=1;check(0,1,0,true,true);assert(idle_acks==3);
+ reset();idle_before=100;check(-ELOOP,0,0,false,false);assert(idle_acks==16&&boot_task.idle_blocked);
+ int saved=io_calls;assert(n1x_boot_bypass_task_once()==-ENOTRECOVERABLE&&io_calls==saved);
+ reset();idle_flood=true;check(-ETIMEDOUT,1,0,true,false);
+ assert(!boot_task.accepted&&boot_task.idle_notifications==5001);
+ reset();idle_after=1;behavior=EXEC_ERROR;check(-EREMOTEIO,1,0,true,false);
+ assert(boot_task.response.word==0x8007070a);
+ for(int at=0;at<10;at++){reset();idle_before=1;fail_at=at;
+ check(-EIO,0,0,false,false);assert(io_calls==at+1);
+ if(at>=3&&at<=8){assert(boot_task.idle_blocked);saved=io_calls;
+ assert(n1x_boot_bypass_task_once()==-ENOTRECOVERABLE&&io_calls==saved);}}
+ for(int kind=0;kind<4;kind++){reset();preexisting=0x80;response_word=12;response_data=0;
+ if(kind<3)response_word|=1U<<(8+8*kind);else response_data=1;
+ check(-EBUSY,0,0,false,false);assert(!idle_acks&&!stage&&!boot_task.idle_blocked);}
  printf("%d native bypass-task lifecycle cases; %d I/O fault positions; acceptance/fence/SWGEN0/error separation passed; no hardware access\n",cases,baseline);
  return 0;}
 '''

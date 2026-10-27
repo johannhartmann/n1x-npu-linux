@@ -23,7 +23,7 @@ CTX, VTABLE, OUT, STACK, STUB = (0x29000000+i*0x10000 for i in range(5))
 STOP = STUB+0xff0
 
 
-def windows(pe, word, data=0x123456, fail_at=None, irq=None, outstanding=2):
+def windows(pe, word, data=0x123456, fail_at=None, irq=None, outstanding=2, idle_enabled=0):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     for rva, size in ((0x1951000, 0xd000), (0xd48000, 0x3000), (0xd3c000, 0x1000), (0xd47000, 0x1000), (0xd43000, 0x1000)):
         u.mem_map(BASE+rva, size)
@@ -45,6 +45,7 @@ def windows(pe, word, data=0x123456, fail_at=None, irq=None, outstanding=2):
     u.reg_write(regs.UC_ARM64_REG_LR, STOP)
     u.emu_start(BASE+0x1951238, STOP, count=50000)
     assert u.reg_read(regs.UC_ARM64_REG_PC) == STOP
+    u.mem_write(CTX+0x47d, bytes((idle_enabled,)))
     u.mem_write(CTX+0x68, struct.pack('<Q', CTX+8))
     u.mem_write(CTX+8, struct.pack('<Q', VTABLE))
     u.mem_write(VTABLE+0xd0, pe.get_data(0x108e9b8+0xd0, 8))
@@ -170,16 +171,31 @@ def main():
         result = windows(pe, 0, irq=0x40, outstanding=initial)
         assert result == {'status': 0, 'reads': [], 'writes': [], 'dumps': [], 'reports': [], 'events': [],
                           'outstanding': max(0, initial-1), 'state_5ac': 0}
+    idle_cases = 0
+    # Actual board +0x47d=1 as well as disabled policy. The synthetic host
+    # context is ineligible for power-down; no OS power transition is emulated.
+    for idle_enabled in (0, 1):
+        for irq in (0x80, 0x81, 0xc1):
+            for initial in (0, 2):
+                result = windows(pe, 12, data=0, irq=irq, outstanding=initial,
+                                 idle_enabled=idle_enabled)
+                assert result == {'status': 0, 'reads': [0x40, 0x44],
+                                  'writes': [(0x40, 0xd1a0cafe)], 'dumps': [],
+                                  'reports': [], 'events': ['ack'],
+                                  'outstanding': max(0, initial-int(bool(irq & 0x40))),
+                                  'state_5ac': 0}
+                idle_cases += 1
     combined = windows(pe, 0x702, irq=0xc0)
     assert combined['outstanding'] == 1 and combined['writes'] == [(0x40, 0xd1a0cafe)]
     assert not combined['dumps'] and combined['state_5ac'] == 0
     print(json.dumps({'passed': True, 'hardware_access': False, 'original_parser': '0xd48910',
                       'differential_words': len(words), 'reader_error_cases': 2,
                       'original_irq_handler': '0xd48ce0', 'irq_response_cases': irq_cases,
-                      'swgen0_counter_cases': 3, 'combined_swgen0_swgen1_checked': True,
+                      'idle_notification_cases': idle_cases, 'swgen0_counter_cases': 3, 'combined_swgen0_swgen1_checked': True,
                       'limitations': ['Mailbox reads are synthetic; HAL initializer, parser and accessors execute',
                                       'Upper byte and data are preserved without assigning semantics',
                                       'IRQ lock, diagnostic dump and report boundaries are stubbed; no recovery executes',
+                                      'Idle tests retain a power-down-ineligible synthetic host context',
                                       'Decoding alone does not establish task completion or DMA quiescence']}, indent=2))
 
 

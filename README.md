@@ -23,8 +23,10 @@ On `7.2.8-23-omarchy-p16-asus-npu2`:
 | Bypass task | Submission accepted, SWGEN0 observed, fence `0x12345678` written |
 
 The first successful run used the older command-23 fallback provider value 4.
-The current code uses the captured board value 1 instead; that correction and
-the optional numerical ReLU probe await a fresh hardware run. See
+The captured board value 1 was also accepted on the next boot. That run
+stopped before task submission because a regular idle notification was pending.
+The driver now handles that notification before and during tasks; its hardware
+retest and the optional numerical ReLU probe remain pending. See
 [the physical record and exact limits](docs/p16-board-start.md).
 
 ## Reproduce the manual test

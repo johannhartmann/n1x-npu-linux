@@ -153,6 +153,8 @@ struct n1x_boot_task_state {
 	u32 pending, fence;
 	bool attempted, response_valid, accepted, signal_seen, verified;
 	int error;
+	u32 idle_notifications;
+	bool idle_blocked;
 };
 static struct n1x_boot_task_state boot_task, boot_relu;
 static bool boot_relu_numeric;
@@ -846,6 +848,48 @@ static ssize_t apply_lpwr_store(struct device *dev, struct device_attribute *att
 }
 static DEVICE_ATTR_WO(apply_lpwr);
 
+/* The physical P16 sends exactly {word=12,data=0} after idle. The original
+ * Windows handler ACKs this notification without marking task completion.
+ * Keep the qualification device powered under the existing runtime reference;
+ * do not infer or execute a power-down policy from this notification.
+ * Firmware holds a mailbox until ACK, and boot_lock excludes another reader.
+ */
+static int n1x_boot_drain_task_idle(struct n1x_boot_task_state *task)
+{
+	struct n1x_dla_io io = {boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+	struct n1x_dla_response response;
+	u32 word, data, i;
+	int err;
+	if (task->idle_blocked)
+		return -ENOTRECOVERABLE;
+	for (i = 0; i < 16; i++) {
+		err = n1x_boot_read(boot_dla, 8, &task->pending);
+		if (err)
+			return err;
+		if (!(task->pending & 0xc0))
+			return 0;
+		if (task->pending & 0x40)
+			return -EBUSY;
+		err = n1x_boot_read(boot_dla, 0x40, &word);
+		if (!err)
+			err = n1x_boot_read(boot_dla, 0x44, &data);
+		if (err)
+			return err;
+		if (word != 12 || data != 0)
+			return -EBUSY; /* Unknown/error/stale response remains unacknowledged. */
+		task->idle_blocked = true; /* An uncertain ACK cannot be replayed. */
+		err = n1x_dla_take_response(&io, &response);
+		if (err)
+			return err;
+		if (response.word != 12 || response.data != 0)
+			return -EPROTO;
+		task->idle_notifications++;
+		task->idle_blocked = false;
+	}
+	task->idle_blocked = true;
+	return -ELOOP;
+}
+
 /* One owned diagnostic descriptor, not an arbitrary model/task UAPI.
  * A changed fence alone is insufficient; require submission acceptance and
  * SWGEN0, processing pending mailbox errors first. Never infer DMA quiescence.
@@ -853,6 +897,7 @@ static DEVICE_ATTR_WO(apply_lpwr);
 static int n1x_boot_run_task(struct n1x_boot_task_state *task)
 {
 	struct n1x_dla_response_fields fields;
+	struct n1x_dla_response response;
 	struct n1x_dla_io io;
 	u32 attempt;
 	int err;
@@ -867,21 +912,26 @@ static int n1x_boot_run_task(struct n1x_boot_task_state *task)
 		if (err)
 			return err;
 		if (task->pending & 0x80) {
-			err = n1x_dla_take_response(&io, &task->response);
+			err = n1x_dla_take_response(&io, &response);
 			if (err)
 				return err;
-			task->response_valid = true;
-			err = n1x_dla_decode_response(&task->response, &fields);
-			if (err)
-				return err;
-			if (fields.command != 7 || fields.data != task->dma >> 8)
-				return -EPROTO;
-			if (fields.status || fields.message == 1 || fields.message == 8 ||
-			    fields.message == 9 || fields.message == 10)
-				return -EREMOTEIO;
-			if (fields.upper || fields.message != 2 || task->accepted)
-				return -EPROTO;
-			task->accepted = true;
+			if (response.word == 12 && response.data == 0) {
+				task->idle_notifications++;
+			} else {
+				task->response = response;
+				task->response_valid = true;
+				err = n1x_dla_decode_response(&task->response, &fields);
+				if (err)
+					return err;
+				if (fields.command != 7 || fields.data != task->dma >> 8)
+					return -EPROTO;
+				if (fields.status || fields.message == 1 || fields.message == 8 ||
+				    fields.message == 9 || fields.message == 10)
+					return -EREMOTEIO;
+				if (fields.upper || fields.message != 2 || task->accepted)
+					return -EPROTO;
+				task->accepted = true;
+			}
 		}
 		if (task->pending & 0x40)
 			task->signal_seen = true;
@@ -924,11 +974,9 @@ static int n1x_boot_bypass_task_once(void)
 	err = n1x_boot_dma_gate(boot_dla);
 	if (err)
 		return err;
-	err = n1x_boot_read(boot_dla, 8, &boot_task.pending);
+	err = n1x_boot_drain_task_idle(&boot_task);
 	if (err)
 		return err;
-	if (boot_task.pending & 0xc0)
-		return -EBUSY;
 	err = dma_set_mask_and_coherent(boot_dla->dev, maximum);
 	if (err)
 		return err;
@@ -1027,11 +1075,9 @@ static int n1x_boot_relu_once(void)
     err = n1x_boot_dma_gate(boot_dla);
     if (err)
         return err;
-    err = n1x_boot_read(boot_dla, 8, &boot_relu.pending);
+    err = n1x_boot_drain_task_idle(&boot_relu);
     if (err)
         return err;
-    if (boot_relu.pending & 0xc0)
-        return -EBUSY;
     err = request_firmware_direct(&firmware, N1X_RELU_FIRMWARE, boot_dla->dev);
     if (err)
         return err;
@@ -1108,12 +1154,12 @@ static ssize_t relu_status_show(struct device *dev, struct device_attribute *att
     ssize_t size;
     mutex_lock(&boot_lock);
     size = sysfs_emit(buf,
-        "enabled=%u attempted=%u error=%d accepted=%u completed=%u signal_seen=%u pending=%#x reply=%#x data=%#x fence=%#x numeric_verified=%u input_sha256=%*phN output_sha256=%*phN retained=%u\n",
+        "enabled=%u attempted=%u error=%d accepted=%u completed=%u signal_seen=%u pending=%#x reply=%#x data=%#x fence=%#x numeric_verified=%u input_sha256=%*phN output_sha256=%*phN retained=%u idle_notifications=%u idle_blocked=%u\n",
         enable_relu_probe, boot_relu.attempted, boot_relu.error, boot_relu.accepted,
         boot_relu.verified, boot_relu.signal_seen, boot_relu.pending,
         boot_relu.response.word, boot_relu.response.data, boot_relu.fence, boot_relu_numeric,
         SHA256_DIGEST_SIZE, boot_relu_input_hash, SHA256_DIGEST_SIZE, boot_relu_output_hash,
-        !!boot_relu.buffer);
+        !!boot_relu.buffer, boot_relu.idle_notifications, boot_relu.idle_blocked);
     mutex_unlock(&boot_lock);
     return size;
 }
@@ -1224,7 +1270,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 
 	mutex_lock(&boot_lock);
 	size = sysfs_emit(buf,
-		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x lpwr_enabled=%u lpwr_attempted=%u lpwr_error=%d lpwr_accepted=%u lpwr_reply_valid=%u lpwr_reply=%#x lpwr_retained=%u task_enabled=%u task_attempted=%u task_error=%d task_response_valid=%u task_reply=%#x task_data=%#x task_accepted=%u task_signal_seen=%u task_fence=%#x task_pending=%#x task_verified=%u task_retained=%u\n",
+		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x lpwr_enabled=%u lpwr_attempted=%u lpwr_error=%d lpwr_accepted=%u lpwr_reply_valid=%u lpwr_reply=%#x lpwr_retained=%u task_enabled=%u task_attempted=%u task_error=%d task_response_valid=%u task_reply=%#x task_data=%#x task_accepted=%u task_signal_seen=%u task_fence=%#x task_pending=%#x task_verified=%u task_retained=%u task_idle_notifications=%u task_idle_blocked=%u\n",
 		!!boot_dla, !!boot_sroot, enable_upload, boot_attempted, boot_error,
 		boot_result.reply_valid, boot_result.reply.header,
 		boot_result.idle_observed, !!boot_buffer, enable_ping, boot_ping.attempted,
@@ -1239,7 +1285,8 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 		boot_lpwr.transaction.response_valid, boot_lpwr.transaction.response.word, !!boot_lpwr.buffer,
 		enable_bypass_task, boot_task.attempted, boot_task.error, boot_task.response_valid,
 		boot_task.response.word, boot_task.response.data, boot_task.accepted, boot_task.signal_seen,
-		boot_task.fence, boot_task.pending, boot_task.verified, !!boot_task.buffer);
+		boot_task.fence, boot_task.pending, boot_task.verified, !!boot_task.buffer,
+		boot_task.idle_notifications, boot_task.idle_blocked);
 	mutex_unlock(&boot_lock);
 	return size;
 }
