@@ -45,6 +45,7 @@ test: tests/test_firmware
 # Requires the exact ignored vendor inputs and the analysis venv.
 test-vendor: test
 	venv/bin/python scripts/inspect_windows_submission.py
+	venv/bin/python scripts/inspect_runtime_command.py
 	venv/bin/python scripts/inspect_kmd_task_submission.py
 	venv/bin/python scripts/inspect_kmd_virtual_submit.py
 	venv/bin/python scripts/inspect_kmd_completion.py

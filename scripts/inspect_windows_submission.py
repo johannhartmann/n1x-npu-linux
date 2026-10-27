@@ -44,6 +44,7 @@ class Machine:
             u.mem_map(addr, size)
         self.events, self.resolved, self.imports = [], {}, {}
         self.failure, self.counter, self.ring = failure, 100, ring
+        self.command_address = COMMAND
         self.sync_type = 6
         self.put(BASE+0xa5340, STOP+0x10)  # CFG validation boundary
         for dll in cudla.DIRECTORY_ENTRY_IMPORT:
@@ -153,11 +154,7 @@ class Machine:
                 self.events.append({'boundary': 'set_sync_value', 'value': self.counter})
                 self.ret()
         elif pc == BASE+0x743a8:
-            assert [self.reg(i) for i in range(4)] == [TASK, 1, CTX+(self.ring+1)*0x30, 7]
-            self.events.append({'boundary': 'modeled_command_builder'})
-            self.put(self.reg(4), COMMAND)
-            self.put(self.reg(5), 0x40)
-            self.ret(2 if self.failure == 'builder' else 0)
+            self.build_command()
         elif pc in self.resolved:
             name, ptr = self.resolved[pc], self.reg(0)
             event = {'api': name}
@@ -167,7 +164,7 @@ class Machine:
                 event['handles'] = self.array(self.get(ptr+8), count, '<I')
                 event['values'] = self.array(self.get(ptr+16), count, '<Q')
             elif name == SUBMIT:
-                assert self.get(ptr) == COMMAND and self.get(ptr+8, '<I') == 0x40
+                assert self.get(ptr) == self.command_address and self.get(ptr+8, '<I') == 0x40
                 assert self.get(ptr+0x18, '<I') == 1
                 assert self.get(ptr+0x1c, '<I') == CONTEXT
                 assert self.get(ptr+0x120) == PRIVATE and self.get(ptr+0x128, '<I') == 0x354
@@ -186,6 +183,13 @@ class Machine:
                 raise AssertionError(('unexpected OS boundary', name))
             self.events.append(event)
             self.ret(0xc0000001 if self.failure == name else 0)
+
+    def build_command(self):
+        assert [self.reg(i) for i in range(4)] == [TASK, 1, CTX+(self.ring+1)*0x30, 7]
+        self.events.append({'boundary': 'modeled_command_builder'})
+        self.put(self.reg(4), self.command_address)
+        self.put(self.reg(5), 0x40)
+        self.ret(2 if self.failure == 'builder' else 0)
 
     def call(self, address, *args):
         for index, value in enumerate(args):
