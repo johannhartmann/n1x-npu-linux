@@ -312,8 +312,11 @@ With a nonnull chain `outer+0x300 -> object+0x60 -> provider+0x18` and value
 | 3 | `01` | `01` | `00` |
 | Other (tested 4) | `00` | `01` | `00` |
 
-The mode's low byte is used: input 256 reproduces mode 0. Its caller-level
-meaning is not yet established. Missing links or a capability value other
+The mode's low byte is used: input 256 reproduces mode 0. The engine-reset
+helper now establishes one caller using mode 0; see the
+[reset/reload trace](windows-kmd-task.md#engine-reset-rm-command-and-firmware-reload-2026-10-28).
+The meanings of the other caller modes remain unresolved.
+Missing links or a capability value other
 than 1 skip all three commands but still reach the common loader. A nonzero
 second entry argument returns `0x56` before this sequence. Pending work at
 outer+0x4a8 invokes callback +0xe0 first; its failure prevents the sequence.

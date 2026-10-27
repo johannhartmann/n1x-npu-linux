@@ -832,3 +832,86 @@ finished. No engine-stop request is emitted by this specific callback path.
 The remaining quiescence investigation belongs in the per-engine reset's
 context operations and the surrounding timeout/allocation-manager contracts,
 not in interpreting the adapter's cleared software bit as hardware completion.
+
+## Engine-reset RM command and firmware reload (2026-10-28)
+
+The per-engine reset body `0xdd52f0` contains an additional context branch
+at `0xdd5654`. Static inspection shows that a selected context with `+0x70`
+equal to 2 reaches `0x19e2628(scheduler, selected_job)` after the preceding
+context callback, node unlock and `0x1a894f0` check. Its boolean failure is
+converted to `0xc0000001`. This does not establish the full reset body's
+effects or the concrete identity of the job object's virtual accessor.
+
+`scripts/inspect_kmd_reset_reload.py` executes original helper `0x19e2628`
+through the following recovered route:
+
+```text
+selected_job+8 -> object's virtual +0xa0 -> owner+0x198
+  -> 0xdd1960 -> 0xdd1c10 -> generic RM dispatch [modeled]
+  -> command 0x35800005 handler 0xd44e40
+  -> primary HAL+0x210 -> 0xd48b30
+  -> 0xd41740 -> HFRP reset sequence -> common loader [modeled]
+```
+
+The job owner accessor is a recording stub returning constructed owner state.
+The test also covers its null return, which makes the original helper return
+false without an RM request. It executes the full original HAL constructor
+`0x195d038` with flags 3 and selector `0x404044`, and verifies the installed
+`+0x210` target. Thus the HAL virtual callback itself is not injected.
+
+Original `0xdd1960` builds this RM packet, independently of its second entry
+argument: object handle `0x35800000`, command `0x35800005`, flags zero, payload
+length 2, payload bytes **`00 00`**, and initial status `0x56`. The client
+handle comes from input `+8`; dispatch hints carry input `+0x10`. A nonzero
+global gate at RVA `0x149ba3c` rejects the operation before dispatch. The
+readonly record at `0x108e840` independently identifies handler `0xd44e40`
+and payload size 2. The test validates that record, models generic dispatch
+to its target, and returns the original handler's result in the RM status
+field. It does not execute the generic RM object dispatcher.
+
+The handler resolves the RM context through original `0x93630`, obtains its
+primary HAL from `+0x170`, and forwards the request to `+0x210`. For an enabled
+HAL (`+0x470 != 0`), original `0xd48b30` sets byte `+0x5ac`, runs diagnostic
+reads, writes `0x80` to logical IRQMCLR `0xd24`, and invokes the recovered
+pre-loader parent with mode byte 1 of the request: **mode 0**. It finally
+writes `0x80` to IRQMSET `0xd20`, including when that parent returns an error.
+Generic register access uses resource index 0 and is modeled.
+
+With capability 1, the original parent/helper send:
+
+| Order | HFRP command | Payload |
+| --- | --- | --- |
+| 1 | `0x19b` RESET_IDLE | `03` |
+| 2 | `0x19a` RESET | `01` |
+| 3 | `0x19b` RESET_IDLE | `0c` |
+| 4 | Common loader `0xd439c0` | `(outer, outer+0x170)` |
+
+The names follow the pinned NVIDIA R38 command definitions documented in
+[HFRP prerequisites](hfrp-irq.md#pre-loader-reset-and-idle-commands). This
+joins the previously isolated sequence to an engine-reset helper; it does
+not establish the meaning of individual RESET_IDLE bits, that all Windows
+resets choose this branch, or that cold startup requires these commands.
+
+Seventeen cases check original entry traversal, exact packet/payload, event
+ordering, the HAL software flag, and returned status. They include:
+
+- A disabled HAL returns success without register writes, HFRP or loading.
+- Capability 0 or 2 skips HFRP but still calls the common loader.
+- A pending-work callback runs first when required; its error prevents HFRP
+  and loading, but the surrounding IRQ re-enable still executes.
+- Injected HFRP transport/response failures do not prevent loading and do
+  not independently change the final boolean result.
+- Injected IRQ-mask or IRQ-unmask write failures likewise do not change it.
+- A common-loader error propagates through the RM status as boolean failure.
+
+HFRP transport, common loading, pending callback, diagnostic register values
+and OS/logging/timing boundaries are synthetic. The complete ResetEngine
+DDI and physical hardware are not exercised. In particular, a successful
+Windows helper return cannot be used as a Linux DMA-retirement guarantee:
+several tested successful paths do not establish that a reset happened.
+The native retention policy remains necessary until reset/idle semantics
+and physical memory reclamation are independently qualified.
+
+```sh
+venv/bin/python scripts/inspect_kmd_reset_reload.py > results/windows-kmd-reset-reload.json
+```
