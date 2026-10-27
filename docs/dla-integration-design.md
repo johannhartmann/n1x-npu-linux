@@ -207,6 +207,52 @@ would be our integration work, not existing automatic N1X GPU fallback.
 
 ## Implementation order and acceptance criteria
 
+### Source-to-implementation review
+
+The upstream checkout and remote HEAD were checked again on 2026-10-27 at
+`25a39b076c6b9143a25adbce8cb468b3bee821ee`. Reading the actual sample call paths,
+rather than just their READMEs, yields the following implementation checklist:
+
+| Upstream behavior | N1X implementation consequence | Current gap |
+| --- | --- | --- |
+| Both samples load a precompiled module and query tensor descriptions before allocating buffers | Keep compilation separate from runtime; validate target/version and honor byte sizes, strides and padding | Native NVDA parsing covers a checked single-task DRAM subset; general model compilation and other loadable features remain open |
+| Standalone imports NvSciBuf objects and an NvSciSync semaphore, then submits with a null CUDA stream | Standalone inference is a useful first product boundary; our native buffers and completion API can serve that purpose without claiming NvSci ABI compatibility | No NvSci adapter; physical native-API qualification pending |
+| Hybrid registers CUDA allocations and submits into a CUDA stream | CUDA interop requires verified address mappings and ordering in both directions | Shared DRAM does not establish shared device virtual addresses; no CUDA-pointer registration or stream integration yet |
+| Standalone waits on an EOF fence; hybrid synchronizes a CUDA stream | Return execution errors independently of successful submission and completion signaling | Native EXEC is synchronous and bounded; reset and safe reclamation are still unqualified |
+| Statistics are extra registered outputs, interpreted by `etiTranslateStats` using a supplied clock frequency | Profiling needs a compatible payload decoder and a verified counter clock | Do not make NVIDIA-style layer statistics a prerequisite for first usable inference |
+| Operator reconstruction uses ONNX Runtime for its reference comparisons | Reuse graph transformations only with separate compiler acceptance and N1X numerical tests | Passing the upstream Python tests alone cannot qualify DLA execution |
+
+Source anchors: standalone [memory import](https://github.com/NVIDIA/Deep-Learning-Accelerator-SW/blob/25a39b076c6b9143a25adbce8cb468b3bee821ee/samples/cuDLA/cuDLALayerwiseStatsStandalone/main.cpp#L969),
+[submission and wait](https://github.com/NVIDIA/Deep-Learning-Accelerator-SW/blob/25a39b076c6b9143a25adbce8cb468b3bee821ee/samples/cuDLA/cuDLALayerwiseStatsStandalone/main.cpp#L1159),
+[statistics translation](https://github.com/NVIDIA/Deep-Learning-Accelerator-SW/blob/25a39b076c6b9143a25adbce8cb468b3bee821ee/samples/cuDLA/cuDLALayerwiseStatsStandalone/main.cpp#L1210),
+hybrid [submission and stream synchronization](https://github.com/NVIDIA/Deep-Learning-Accelerator-SW/blob/25a39b076c6b9143a25adbce8cb468b3bee821ee/samples/cuDLA/cuDLALayerwiseStatsHybrid/main.cu#L680),
+and [ONNX Runtime reference execution](https://github.com/NVIDIA/Deep-Learning-Accelerator-SW/blob/25a39b076c6b9143a25adbce8cb468b3bee821ee/operators/common/onnxruntime_utils.py).
+
+For application partitioning, start with one contiguous supported subgraph
+and explicit host transfers around it. The upstream FAQ identifies tensor
+reformatting, small alternating GPU/DLA workloads and shared DRAM contention
+as sources of overhead. Measure the complete pipeline against GPU-only
+execution before attempting zero-copy or dividing a graph into many DLA
+islands. Orin throughput and power-efficiency numbers are not N1X estimates.
+
+The initial acceptance workload should progress from changing ReLU inputs to
+a supported convolution and a small convolution/activation graph. Retain an
+independent numerical reference, exact compiler/firmware versions and tensor
+layouts for each artifact. Once those work repeatedly, choose an actual
+application graph and measure correctness, end-to-end latency and memory
+use. This is a smaller useful milestone than a full cuDLA replacement or an
+ONNX Runtime execution provider.
+
+The read-only machine check during this review found the P16 H7607BA running
+`7.2.8-23-omarchy-p16-asus-npu2`. The loaded bootstrap lacks `enable_accel`,
+`/dev/accel` is absent, and the linker cache has no `cudla`, `nvscibuf` or
+`nvscisync` entries. These observations explain why the upstream samples
+cannot currently serve as a working installation recipe on this boot. They
+do not invalidate the earlier physical sysfs ReLU result or the on-disk
+experimental accel implementation.
+
+### Qualification sequence
+
 The original-firmware retirement boundary is now tested for bypass and the
 ReLU control path, including post-signal device-memory revocation; see
 [bypass lifetime evidence](bypass-task.md#completion-boundary-and-repeated-firmware-submissions-2026-10-27)
