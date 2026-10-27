@@ -53,6 +53,7 @@ test-vendor: test
 	venv/bin/python scripts/inspect_kmd_completion.py
 	venv/bin/python scripts/inspect_kmd_cleanup.py
 	venv/bin/python scripts/inspect_kmd_recovery.py
+	venv/bin/python scripts/inspect_kmd_reset_dispatch.py
 	venv/bin/python scripts/inspect_cudla_release.py
 	venv/bin/python scripts/test_acpi_collection.py
 	venv/bin/python scripts/test_iort.py

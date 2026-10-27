@@ -665,3 +665,64 @@ completion or authorize buffer reuse. The normal device-semaphore reader and
 this software retirement helper have different evidence boundaries. Our Linux
 fail-stop queue and retention policy remain unchanged; safe error reclamation
 requires a demonstrated stop/reset contract, not merely matching counters.
+
+## Identifying the Windows reset entry points
+
+Research date: 2026-10-28. `scripts/inspect_kmd_reset_dispatch.py` executes
+the original global callback builder `0x6e96718` and ordinary public DDI table
+builder `0x6e95680`. It then executes each wrapper up to its implementation
+boundary, checking argument and return-value preservation. The field names
+come from Microsoft's [DRIVER_INITIALIZATION_DATA layout](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/dispmprt/ns-dispmprt-_driver_initialization_data),
+using ARM64 pointer alignment and retaining reserved entries.
+
+| DDI | Table offset | Wrapper RVA | Implementation RVA |
+| --- | --- | --- | --- |
+| StopDevice | `0x18` | `0x1ab0d30` | `0x1aa1e90` |
+| ResetDevice | `0x68` | `0xe312f0` | `0xaa4c0` |
+| ResetFromTimeout | `0x100` | `0x1ab1700` | `0x19944e0` |
+| RestartFromTimeout | `0x108` | `0x1ab1730` | `0x19946f0` |
+| ResetEngine | `0x250` | `0x1ab16f0` | `0x1994260` |
+| SubmitCommandVirtual | `0x2d0` | `0x1ab19d0` | `0xdb57e0` |
+| ResetHwEngine | `0x3a0` | `0x1ab1b60` | `0x199a600` |
+| ResumeHwEngine | `0x478` | `0x1ab1bc0` | `0x199aac0` |
+
+Most wrappers dispatch through globals populated by the first builder;
+ResetEngine and SubmitCommandVirtual use direct branch thunks. This test does
+not execute DriverEntry, OS registration, or the conditional alternate table
+initializer `0x6e97120`. It identifies the ordinary table, not which Windows
+installation policy selects it at runtime.
+
+Four additional cases execute the original DDI wrappers and routing bodies
+with a class `(5,2)` adapter, stopping before the reset implementation:
+
+- **ResetEngine:** `0x1994260 -> 0x19b1100 -> adapter vtable +0x378 ->
+  scheduler vtable +0x40 -> 0xdd52f0`. The class test at `0xdca010` runs
+  unchanged; only the adapter-to-scheduler accessor is modeled. The concrete
+  scheduler vtable is `0xe9c910`. Thus the preceding section's software
+  retirement helper is conclusively inside a per-engine reset path.
+- **ResetFromTimeout:** with adapter byte `+0x480c = 1`,
+  `0x19944e0 -> 0x19b11c8 -> 0x19d9f80`. This is a different DLA-specific
+  implementation, not another entry into `0xdd52f0`.
+
+Both routes preserve injected success and `0xc00000bb` failure from their
+stopping boundary. Logging and timestamps are modeled; original stack-cookie
+helpers execute. The twelve cases establish callback identity and routing,
+not the semantics or success of any physical reset.
+
+Static inspection of the timeout body `0x19d9f80` supplies the next concrete
+investigation targets. It visits context lists, calls `0xe23c80(adapter, 2)`,
+increments adapter `+0xf10`, processes scheduler `+0x7f08` via `0xe16c78`,
+calls scheduler virtual slot `+0xc0` and adapter slot `+0x118`, and later
+calls `0x19df220`. That latter routine calls `0x19e3b80` on adapter `+0xed8`,
+invokes its virtual destructor, clears the pointer, and calls `0x19d7eb8`.
+Subsequent scheduler `+0x90` and adapter `+0x388` calls precede
+`0xe23c80(adapter, 3)`. These are observed call relationships; none is yet
+labeled as a proven hardware-stop or DMA-drain operation.
+
+```sh
+venv/bin/python scripts/inspect_kmd_reset_dispatch.py > results/windows-kmd-reset-dispatch.json
+```
+
+The Linux driver must still retain submitted DMA until the relevant physical
+stop/completion boundary is established. A Windows callback named ResetEngine
+and a software success code do not themselves provide that guarantee.
