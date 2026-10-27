@@ -697,7 +697,8 @@ with a class `(5,2)` adapter, stopping before the reset implementation:
 
 - **ResetEngine:** `0x1994260 -> 0x19b1100 -> adapter vtable +0x378 ->
   scheduler vtable +0x40 -> 0xdd52f0`. The class test at `0xdca010` runs
-  unchanged; only the adapter-to-scheduler accessor is modeled. The concrete
+  unchanged, as does the concrete accessor `0x91260`, which reads adapter
+  `+0x52e0`. The adapter vtable is `0xe9c050`, and the concrete
   scheduler vtable is `0xe9c910`. Thus the preceding section's software
   retirement helper is conclusively inside a per-engine reset path.
 - **ResetFromTimeout:** with adapter byte `+0x480c = 1`,
@@ -726,3 +727,57 @@ venv/bin/python scripts/inspect_kmd_reset_dispatch.py > results/windows-kmd-rese
 The Linux driver must still retain submitted DMA until the relevant physical
 stop/completion boundary is established. A Windows callback named ResetEngine
 and a software success code do not themselves provide that guarantee.
+
+### Timeout resource teardown and the remaining RM boundary
+
+The class `(5,2)` constructor fragment at `0x19dc498` passes those class
+values to base initialization at `0x19d2f88`, then installs vtable `0xe9c050`
+at `0x19dc4b8`. This resolves timeout-path adapter slots `+0x118` to
+`0xdd3800`, `+0x378` to `0x91260`, and `+0x388` to `0x19dc1a0`.
+`scripts/inspect_kmd_reset_resources.py` executes the first resource path
+and the separate semaphore teardown, with fourteen cases.
+
+`0xdd3800` tests adapter `+0xc34` bit 3. If set, it calls `0xdd1f08` with
+the u32 at adapter `+0x46b8`, then clears bit 3. The original route continues
+through `0xd36cb8`, the RM-root accessors `0x93630`/`0xd39160`, and the
+identity check `0xd3b198`. A successful check requires the requested value
+to match `*(*(context+0x150))+0x58`. It then calls `0xd39a60(context, 0)`:
+
+- An optional bridge passes through `0xd3e340 -> 0xd4bbd0`, which writes a
+  software byte at bridge target `+0x40d8`.
+- For a non-null `context+0x178` object, the code writes its `+0x50` word
+  and invokes virtual slot `+0x220` with `(context, object, 0)`.
+- That virtual callback is the explicit unresolved boundary in this test.
+  It must not be labeled a device-stop operation merely from the zero argument.
+  Its return register is not used by the surrounding routine.
+
+The tests execute the original lookup and state-write code with the bridge
+present and both present/absent RM-device objects. Missing RM root/context/lookup object,
+missing identity pointers, and identity mismatch make the lookup return zero.
+If the vendor assertion handler returns (as explicitly modeled), the caller
+still clears adapter bit 3. An already-clear bit skips RM lookup entirely.
+A missing `context+0x178` object also skips the virtual callback while the
+outer lookup returns success. Thus neither the adapter bit nor that success
+return establishes hardware quiescence. This is not a claim about what a
+non-returning Windows assertion handler would do.
+
+The second path is `0x19e3b80 -> vtable 0xe9cc00 slot 0x18 -> 0x19e38a0`.
+This vtable is installed by the class `(5,2)` selection's semaphore constructor
+`0x19e2aa0`, called from `0x19e3790`. With an allocated semaphore bank, original
+`0x19e38a0` invokes `0xdc8158 -> 0xdc5070(manager, adapter, allocation, 0, 6)`.
+The test stops at `0xdc5070`; the allocation manager's release semantics are
+not modeled. It then observes the original pointer/size clearing, original
+virtual destructor `0x93100`, and pool-free boundary `0xe0c8d0`. Missing owner
+or allocation cases skip the corresponding calls. No hardware-stop operation
+appears in this isolated prefix before the allocation-manager boundary.
+
+Logging, timestamp reads, a returning assertion handler, the unresolved RM
+virtual callback and allocator-release boundaries are synthetic. These tests
+do not execute the full timeout reset, the RM callback body, or a physical
+device. The next hardware-quiescence investigation must resolve that callback
+and the surrounding reset/allocator contracts; replacing Linux retention with
+the observed pointer clearing would be unjustified.
+
+```sh
+venv/bin/python scripts/inspect_kmd_reset_resources.py > results/windows-kmd-reset-resources.json
+```

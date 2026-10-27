@@ -11,8 +11,8 @@ import json
 import pefile
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_UNMAPPED
 
-from inspect_kmd_task_submission import (Machine, BASE, OBJECT, PARENT, OWNER,
-                                         PRIMARY, STUB, ROOT, KMD_SHA256)
+from inspect_kmd_task_submission import (Machine, BASE, OBJECT, PARENT,
+                                         PRIMARY, ROOT, KMD_SHA256)
 
 # ARM64 DRIVER_INITIALIZATION_DATA offsets, including reserved pointer slots.
 # https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/dispmprt/ns-dispmprt-_driver_initialization_data
@@ -74,10 +74,11 @@ def registration(pe):
 
 def routing(pe, timeout, status):
     m = DispatchMachine(pe)
-    m.write(OBJECT, 'Q', OWNER)
+    m.write(OBJECT, 'Q', BASE+0xe9c050)
     m.write(OBJECT+0x10, 'II', 5, 2)
     m.write(OBJECT+0x480c, 'B', 1)
-    m.write(OWNER+0x378, 'Q', STUB+4)
+    m.write(OBJECT+0x52e0, 'Q', PARENT)
+    assert pe.get_data(0xe9c3c8, 8) == (BASE+0x91260).to_bytes(8, 'little')
     # Real scheduler vtable, including slot 0x40 -> dd52f0.
     m.write(PARENT, 'Q', BASE+0xe9c910)
     m.write(PRIMARY+0x1000, 'III', 2, 1, 0xdeadbeef)
@@ -85,10 +86,7 @@ def routing(pe, timeout, status):
     calls = []
 
     def hook(_, pc, size, user):
-        if pc == STUB+4:
-            assert m.reg(0) == OBJECT
-            m.ret(PARENT)
-        elif pc == BASE+boundary:
+        if pc == BASE+boundary:
             if timeout:
                 assert m.reg(0) == OBJECT
             else:
