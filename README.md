@@ -103,7 +103,11 @@ was found. Its retained backlog starts at 7.88 seconds, so earlier messages
 and hangs before initramfs are not covered by this recording. FRTS capture
 was disabled for that successful boot. A separate manual entry now enables the
 bounded capture on identical kernel/initramfs bytes with a 4 MiB log buffer;
-its synthetic VM capture/log test passed, physical acquisition remains pending.
+its synthetic VM capture/log test passed. The physical capture-enabled boot also
+succeeded, but rejected the CPU-RAM candidate because it contained no bounded
+GFWI ROM member. The saved 371080-byte log starts at printk sequence 0 and
+records that rejection before SWIOTLB. No board container was acquired; the
+GB20B address-space interpretation still needs to be established.
 See [npu2 capture procedure](docs/npu2-frts-capture.md),
 [boot logging and deployment requirements](docs/boot-logging.md) and the
 [early capture procedure](docs/hfrp-vbios.md#scratch-candidate-and-early-ram-capture).

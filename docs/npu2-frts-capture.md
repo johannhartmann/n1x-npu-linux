@@ -55,7 +55,53 @@ Installed capture UKI SHA256:
 `3336422279d9353b513c2347fdc82d230ad952dbf529b76b8478159de5244cf7`.
 Kernel Image SHA256 remains
 `a4a6bfca3fcab0fb6bff10a9c0232113fdbc88b31830c965f807187b961f0235`.
-The physical capture remains pending.
+## Physical result, 2026-10-27
+
+The capture-enabled npu2 kernel booted successfully, boot ID
+`6c8ae50e-4de7-4b42-b5ca-24b896556b8b`. The early function ran and reported:
+
+```text
+n1x-frts: candidate has no bounded GFWI ROM member
+```
+
+No `/sys/firmware/n1x_frts_snapshot` file was published. The message means
+the EFI/unreserved ordinary-RAM guards and mapping succeeded, but either
+the GFWI magic or its ROM-member bounds failed. The implementation does not
+export invalid header bytes, so this result does not distinguish those causes.
+Do not describe it as a dump of zero RAM or proof that no GFWI exists elsewhere.
+
+The SSD log was saved locally under
+`results/physical-frts-6c8ae50e-4de7-4b42-b5ca-24b896556b8b/`:
+371080 bytes, SHA256
+`cec49de233989ae3482665b565190b4bf497ea35cc9fd006402e9c4c4ab39b1c`.
+It starts at printk sequence 0 and includes the kernel banner, the capture
+rejection at sequence 11, and later SWIOTLB initialization. Its trailer is
+`N1X_BOOTLOG_END: bytes=370959 error=0 stopped=1`; no module-BTF rejection
+was found. The larger buffer therefore fixes the observed early-backlog loss.
+It still cannot persist a log if a future kernel hangs before initramfs.
+
+A fresh supported component-9 diagnostic query returned 250 bytes and still
+reports scratch61/62/63 = `0xfc000000` / `0` / `0x10009`, with no raw-ROM
+field. Files: `results/npu2-vbios-component9-20261027.pb` and its decoded JSON.
+Thus the old scratch result did not simply disappear after reboot. This does
+not establish what those registers held before the Linux GPU driver started.
+
+The reference NVIDIA 615.78.08 source provides an important restriction:
+`kfspFrtsSysmemLocationProgram_GH100` and `_GB100` obtain the scratch address
+using `memdescGetPhysAddr(..., AT_GPU, 0)`. It is a GPU address in these paths,
+not proof of CPU-physical identity. Furthermore, the generated host dispatch in
+`g_kern_fsp_nvoc.c` does not select either implementation for GB20B; its default
+`kfspFrtsSysmemLocationProgram_395e98` returns `NV_ERR_NOT_SUPPORTED`. These
+reference functions do not establish the writer, timing or translation of the
+observed GB20B registers. No register-programming function was executed.
+
+This test rejects the specific hypothesis that a bounded GFWI ROM member
+could be recovered at CPU physical `0xfc000000` at this capture point. Later
+SWIOTLB clearing alone cannot explain this negative result, since the rejection
+preceded it. Do not repeat this boot unchanged or scan alternative physical
+addresses. Continue by establishing the GB20B address-space/producer semantics
+or obtaining a bounded export of the firmware-owned ROM. NPU firmware boot
+and inference remain unverified.
 
 The old, already unreferenced first diagnostic image was checksum-verified and
 archived at `/var/lib/n1x-npu-test/frts-diagnostic/retired-diagnostic.efi` to make
