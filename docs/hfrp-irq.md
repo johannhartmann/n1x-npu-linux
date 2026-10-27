@@ -269,17 +269,21 @@ returns. This narrows the search: the WDDM completion contract is not supplied
 by merely queuing or draining this DPC. Preserve the Linux separation between
 IRQ acknowledgment, output readiness and proven buffer retirement.
 
-### Next command-submission lead
+### Command-submission path
 
 Static inspection finds a separate task path: KMD method-table record
 `0x108e7c0` maps method `0x35800001`, input size 16, to `0xd45050`. That
 handler reads two input QWORDs and invokes primary `+0x140` with flags 4.
 The HAL-1 initializer installs `0xd4a400` in that slot; this function shifts
 the descriptor address by 8 and invokes method sender `+0xf8` with command 7.
-At `0x19d8800..0x19d8808`, a higher-level path selects `0x35800001` when its
-mode is 2 before calling `0xdd1dc8`. These are static leads, not an executed
-WDDM-to-firmware trace or a completion guarantee. They provide a concrete next
-entry point beyond the now-resolved DPC path.
+The [KMD task replay](windows-kmd-task.md) now executes the higher-level caller
+`0xdd6888`, envelope builder `0xdd22c8`, command handler and HAL direct-send
+branch, with generic object lookup and the low-level sender modeled. It also
+feeds the original Windows postaction producer's output to the original
+firmware consumer. Neither experiment establishes safe DMA reclamation.
+
+Correction: the earlier lead at `0x19d8800..0x19d8808` selects an **object
+handle** `0x35800001`; its actual command is `0x3580000a`, not task submit.
 
 ## Pre-loader reset and idle commands
 

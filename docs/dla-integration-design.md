@@ -48,6 +48,12 @@ Its examples link external libraries and cannot replace the missing platform
 backend. The standalone executable links `cudla`, `nvscibuf` and `nvscisync`;
 the hybrid executable links `cudla` using the CUDA toolchain.
 
+Both sample Makefiles explicitly disable the sample for `TARGET_ARCH=sbsa`
+(lines 278–282). They can therefore report a waived build rather than produce
+a runnable application. Removing that guard or adding SM121 to the CUDA
+architecture list would not implement the missing DLA backend. This is a
+sample platform restriction, not evidence that the N1X hardware cannot run DLA.
+
 | Concern | Standalone sample | Hybrid sample |
 | --- | --- | --- |
 | Device | `CUDLA_STANDALONE` | `CUDLA_CUDA_DLA` with CUDA context |
@@ -76,6 +82,14 @@ current Windows ARM specification has fixed shapes, batch 1, FP16 compute by
 default, no pure INT8 compute and no automatic GPU fallback. Quantized boundary
 formats are not evidence of INT8 arithmetic. These are software support limits,
 not a proof about every operation possible in N1X silicon.
+
+The Windows ARM support table describes exact validated operation/shape/type
+tuples, not every combination of the listed attributes. Use those tuples to
+choose the first convolution and multi-layer fixtures. That page also requires
+rebuilding the 11.4 beta engines for general availability and calls out an
+intermittent accuracy issue. Record compiler versions with the artifacts and
+check repeated numerical results; successful compilation and one correct
+execution are insufficient acceptance criteria.
 
 TensorRT 11.4 explicitly excludes Linux SBSA DLA support. Its generic advice to
 retain 10.7 on older platforms does not demonstrate N1X compatibility. The

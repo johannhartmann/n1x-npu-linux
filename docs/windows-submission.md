@@ -114,6 +114,8 @@ cannot be replaced by return from `D3DKMTSubmitCommand` or return from cuDLA.
 The [concrete DPC trace](hfrp-irq.md#concrete-dpc-path-and-primary-interrupt-acknowledgment-2026-10-27)
 now follows IRQ acknowledgment through deferred SWGEN0 processing. That path
 only reaches the internal HAL counter update, without an observed task ID or
-WDDM completion notification. A separate command-submission lead, method
-`0x35800001` -> `0xd45050` -> HAL `0xd4a400`, is recorded there for further
-analysis; its higher-level caller and retirement handling are not yet executed.
+WDDM completion notification. The [KMD task replay](windows-kmd-task.md) now
+executes the separate higher-level caller `0xdd6888`, envelope `0xdd22c8`,
+command `0x35800001` handler and HAL direct-send branch. It also verifies the
+Windows postaction producer against the original firmware consumer. Generic
+object lookup, OS scheduling and physical retirement remain unproven.
