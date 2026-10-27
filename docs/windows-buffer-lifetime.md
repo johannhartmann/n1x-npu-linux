@@ -6,6 +6,11 @@ Linux driver's retention policy.
 
 ## Finding
 
+The companion [submission trace](windows-submission.md) now executes the
+runtime-to-cuDLA wait/submit/post-signal sequence. It demonstrates an error
+return after a successful modeled submit boundary and locates the queued
+WDDM synchronization layer; it does not qualify Linux DMA reclamation.
+
 The inspected cuDLA backend delegates final allocation destruction to Windows
 with **both `AssumeNotInUse` and `SynchronousDestroy` clear**. Consequently,
 returning from cuDLA memory unregister is not evidence that physical backing

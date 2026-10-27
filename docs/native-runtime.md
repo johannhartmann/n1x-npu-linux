@@ -78,6 +78,10 @@ cuDLA unregister through error gating and last-reference D3DKMT destruction.
 Its zero destruction flags explicitly allow Windows to defer reclamation.
 An unregister return is therefore not a portable DMA-quiescence guarantee;
 the Linux retention policy is unchanged by that offline evidence.
+The [submission trace](windows-submission.md) additionally verifies separate
+WDDM wait, submit and post-signal operations, including failure after the
+submit boundary. The runtime's prohibition on automatic retries also applies
+to this kind of partially successful submission.
 
 ## Build and offline checks
 

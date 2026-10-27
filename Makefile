@@ -44,6 +44,7 @@ test: tests/test_firmware
 	./tests/test_firmware
 # Requires the exact ignored vendor inputs and the analysis venv.
 test-vendor: test
+	venv/bin/python scripts/inspect_windows_submission.py
 	venv/bin/python scripts/inspect_cudla_release.py
 	venv/bin/python scripts/test_acpi_collection.py
 	venv/bin/python scripts/test_iort.py
