@@ -154,7 +154,27 @@ observation module were verified after installation. Packaged vmlinux BTF
 matches the build. The final read-only audit is
 `results/npu2-installed-audit.json`; it confirms the installed UKI, module
 dependencies, unchanged menu defaults and valid working fallback digest.
-The physical test has **not** happened yet.
+The capture-OFF kernel physically booted on 2026-10-27. The live result is
+`results/npu2-live-boot.json`, boot ID
+`6b58f0e3-76c3-447c-af4f-ca3a8b0c9aaa`. NVIDIA 615.78.08 is active and
+systemd reports no failed system services. No module-BTF rejection, invalid
+module format, unknown symbol, version-magic rejection or NVIDIA Xid was found
+in the saved log/current kernel journal. Existing ACPI, ASUS handshake and
+touchpad feature-query warnings also appeared in the preceding stock-kernel
+boot; this result does not establish that every device feature works.
+
+The actual SSD log is
+`/data/n1x-bootlogs/6b58f0e3-76c3-447c-af4f-ca3a8b0c9aaa.log`, 340180 bytes,
+SHA256 `aea915e848d183e6472f945f491843014ec7b79a02e838db4a6b20d002575997`.
+It ends with `N1X_BOOTLOG_END: bytes=340059 error=0 stopped=1`. Its first
+record is sequence 435 at 7.879909 seconds; the kernel version banner is
+already absent from the finite printk backlog. Its last kernel record is at
+83.160116 seconds during root Btrfs setup. Logging from initramfs to the real
+SSD is now physically verified, but the early backlog is incomplete. Increase
+the printk buffer for a subsequent diagnostic capture before relying on it
+to retain the earliest messages. No hard-reset/power-loss test was performed.
+FRTS capture was disabled, and no NPU firmware boot is implied. The profile
+had returned to balanced after reboot and was restored to performance.
 
 The VM recovered a 54859-byte disk log after guest shutdown with the kernel
 backlog, injected marker and clean recorder trailer; no module-BTF rejection

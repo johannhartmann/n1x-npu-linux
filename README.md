@@ -97,8 +97,11 @@ A VM boot test subsequently exposed stale split-BTF metadata in the reused
 modules, including an NVMe dependency. The invalid diagnostic menu entry was
 withdrawn. Bounded SSD logging with rebuilt modules passed a VM shutdown/recovery test;
 the separately packaged `7.2.8-23-omarchy-p16-asus-npu2` kernel, rebuilt external
-drivers and capture-OFF logging entry are now installed and checked. Physical
-boot remains unverified, and logs before initramfs starts are not guaranteed. See
+drivers and capture-OFF logging entry booted successfully on the P16 on
+2026-10-27. The 340180-byte disk log closed cleanly; no module-BTF rejection
+was found. Its retained backlog starts at 7.88 seconds, so earlier messages
+and hangs before initramfs are not covered by this recording. FRTS capture
+remains disabled. See
 [boot logging and deployment requirements](docs/boot-logging.md) and the
 [early capture procedure](docs/hfrp-vbios.md#scratch-candidate-and-early-ram-capture).
 Acquiring the actual board container remains open. See
