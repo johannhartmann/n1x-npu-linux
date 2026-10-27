@@ -248,3 +248,12 @@ inline action streams from OS synchronization. It provides concrete inputs
 for tracing the KMD's command-to-firmware transformation. It does **not** prove
 that a CPU unmap releases a device mapping, that an unmap means DMA is idle, or
 that physical backing can be reclaimed. Native DMA retention remains unchanged.
+
+The subsequent [complete KMD descriptor and firmware replay](windows-kmd-task.md#complete-version-3-descriptor-and-original-runtime-command-consumer)
+now establishes an important semantic distinction: firmware tests bit 0 of
+the UMD descriptor at `+0x1f` and bypasses engine dispatch when it is set. The
+flag-7 transport cases above are constructed **bypass** cases, not arithmetic
+execution evidence. Their successful submission and completion must not be
+used to qualify inference. The runtime builder sets that bit for any nonzero
+low byte of its flag argument. The native version-2 arithmetic path does not
+use this UMD descriptor and remains unchanged.

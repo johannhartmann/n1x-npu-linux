@@ -492,3 +492,116 @@ safe successful/error-path reclamation are still unqualified.
 ```sh
 venv/bin/python scripts/inspect_kmd_virtual_submit.py > results/kmd-virtual-submit.json
 ```
+
+## Complete version-3 descriptor and original runtime command consumer
+
+Research date: 2026-10-28. `scripts/inspect_kmd_command_descriptor.py` now runs
+the complete original KMD builder at `0xdd7460`. It uses the actual vtable at
+`0xe9cb68`, its size getter `0xdd73b0`, ring-address helpers, pre/postaction
+builders and context-header initializer `0xdd73f0`. The engine-property getter,
+context memset and logging remain modeled, with constructed job, mapping and
+fence-provider objects. The optional profiling gate is disabled.
+
+```sh
+venv/bin/python scripts/inspect_kmd_command_descriptor.py > results/windows-kmd-command-descriptor.json
+```
+
+The test has 32 cases: 21 KMD descriptor cases, eight engine-dispatch/IRQ cases
+through the original runtime builder and firmware, and three UMD bypass cases.
+It requires the pinned vendor DLL/KMD/firmware and generated ReLU artifacts.
+No hardware access or Linux driver change is involved.
+
+### The KMD wraps the UMD command list
+
+The inspected builder does not decode or rewrite individual user commands.
+For a nonzero command byte length divisible by 64, it reads the device pointer
+from `job[0xf8]->u64[0x38]` and uses the low 16 bits of `length >> 6` as the
+command count. The job's metadata/mapping object is constructed in this test;
+the OS GPU-VA mapping lifecycle that supplies that pointer is not executed.
+There is no dereference of the UMD command address in the KMD builder test.
+
+The emitted outer descriptor uses version **3**, engine `0x44`, and queue 0.
+Its size getter returns `0x500`, computed from two `0x1a1` action capacities
+plus overhead and rounded to a 256-byte boundary. Descriptor slots use
+`sequence & 31`.
+
+| Descriptor offset | Size | Observed value |
+| --- | --- | --- |
+| `0x00` | u64 | Next pointer zero |
+| `0x08`, `0x09` | u8 each | Version 3, engine `0x44` |
+| `0x0a` | u16 | Descriptor size / ring stride `0x500` |
+| `0x0c` | u16 | Low 16 bits of internal sequence |
+| `0x0e`, `0x0f` | u8 each | Pre/postaction-list counts |
+| `0x10`, `0x12` | u16 each | Pre/postaction table offsets 60 and 64 |
+| `0x14` | u8 | Queue zero |
+| `0x15` | u64 | UMD command-list device address |
+| `0x1d` | u16 | UMD command count |
+| `0x21` | u64 | Literal budget value 1800; time units not calibrated here |
+| `0x29` | u16 | Bit 2 set; bit 1 copies job flag bit 7; bit 0 set for missing/invalid commands |
+| `0x2b` | u64 | Zero with the profiling gate disabled |
+| `0x33` | u64 | Per-slot context-header device address |
+
+Missing metadata or zero/misaligned command length produces zero pointer/count
+and sets flag bit 0; misaligned nonzero length also logs a diagnostic. This
+function still returns zero. A byte length of `0x400000` is divisible by 64
+but truncates to count zero without setting that flag. These are observed
+vendor behaviors, not validation rules to copy into Linux.
+
+The original context initializer writes a separate 64-byte header. Byte 0 is
+1; for a constructed context of type 2, byte 1 copies context `+0x2b0` and u64
+at byte 4 copies context `+0x2c8`. Otherwise the remaining bytes are zero. The
+header device address is `ring_base + 32*stride + (sequence & 31)*64`.
+
+Preactions occupy descriptor offset 68 and encode the previously recovered
+prior-completion wait, entry marker and control gate. Postactions start at
+offset `0x1e5` and write the current sequence to the completion semaphore.
+Full-byte comparisons verify these actions together with the outer header,
+including wraparound sequences, disabled preactions, job flags and context data.
+
+### Original firmware consumes both descriptor layers
+
+The integrated cases use original `nvdla_runtime.dll` builder `0x743a8` to
+produce the inner UMD descriptor, address list and inline preaction, then use
+the original KMD builder to produce the outer version-3 task. Their allocation
+addresses are projected into one RAM-backed DMA space containing the pinned
+compiler-produced ReLU model. This explicit glue models allocation and address
+mapping; it is not a live D3DKMT-to-kernel call.
+
+Unmodified HAL-1 firmware runs from reset through trap submission, scheduler
+and engine IRQ handling using the existing register-level DMA model. With
+the UMD bypass flag clear it:
+
+1. Accepts the outer task and executes its preactions.
+2. Reads the version-2, 64-byte UMD command and executes its inline preaction.
+3. Reads the model's address list/network/instructions and programs all seven
+   expected engine-address pairs.
+4. Remains active until the modeled engine status reports completion.
+5. On an injected engine IRQ with status 1 or 5, writes the outer completion
+   sequence, retires the task and asserts SWGEN0. Status 0 or 4 leaves it active.
+
+Both builder flag arguments 0 and 256 exercise this arithmetic-dispatch path,
+because only the low byte controls the emitted UMD flag. All eight cases keep
+input unchanged and output poisoned: no arithmetic engine is emulated and no
+numerical result is claimed.
+
+### UMD bit 0 bypasses arithmetic but still completes
+
+Firmware PC `0x101938` reads UMD byte `+0x1f`; if bit 0 is set, it branches to
+`0x101a9e` instead of entering the arithmetic dispatch at `0x101a9c`. Original
+builder arguments 1, 7 and 255 all set that bit. The three integrated cases
+verify that the UMD preaction runs and the outer completion semaphore and
+SWGEN0 are produced, while no engine-address programming occurs. Output stays
+poisoned. Thus even a fully completed version-3 task can deliberately perform
+no inference.
+
+The earlier transport tests used a synthetic flag argument 7 to exercise
+submission semantics. They are valid transport/bypass tests and must not be
+reinterpreted as arithmetic evidence. The physical Linux ReLU evidence uses
+the separate native version-2 path with its execution-bypass flag clear.
+
+For Linux, retain the qualified version-2 path while using this version-3
+contract as evidence for later per-command/multi-command support. Any new
+arithmetic producer must explicitly clear the inner bypass flag, validate
+counts before narrowing, and distinguish command completion from numerical
+correctness. The successful RAM replay does not establish cache coherence,
+engine DMA quiescence, safe allocation release or physical repeated inference.
