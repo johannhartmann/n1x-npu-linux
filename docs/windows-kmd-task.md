@@ -728,14 +728,15 @@ The Linux driver must still retain submitted DMA until the relevant physical
 stop/completion boundary is established. A Windows callback named ResetEngine
 and a software success code do not themselves provide that guarantee.
 
-### Timeout resource teardown and the remaining RM boundary
+### Timeout resource teardown and RM state control
 
 The class `(5,2)` constructor fragment at `0x19dc498` passes those class
 values to base initialization at `0x19d2f88`, then installs vtable `0xe9c050`
 at `0x19dc4b8`. This resolves timeout-path adapter slots `+0x118` to
 `0xdd3800`, `+0x378` to `0x91260`, and `+0x388` to `0x19dc1a0`.
 `scripts/inspect_kmd_reset_resources.py` executes the first resource path
-and the separate semaphore teardown, with fourteen cases.
+and the separate semaphore teardown. The initial fourteen boundary cases are
+now joined by eighteen concrete-constructor interrupt-mask cases below.
 
 `0xdd3800` tests adapter `+0xc34` bit 3. If set, it calls `0xdd1f08` with
 the u32 at adapter `+0x46b8`, then clears bit 3. The original route continues
@@ -747,9 +748,9 @@ to match `*(*(context+0x150))+0x58`. It then calls `0xd39a60(context, 0)`:
   software byte at bridge target `+0x40d8`.
 - For a non-null `context+0x178` object, the code writes its `+0x50` word
   and invokes virtual slot `+0x220` with `(context, object, 0)`.
-- That virtual callback is the explicit unresolved boundary in this test.
-  It must not be labeled a device-stop operation merely from the zero argument.
-  Its return register is not used by the surrounding routine.
+- That virtual callback is an injected boundary in the initial cases. The
+  concrete cases below resolve it to interrupt masking. Its return register
+  is not used by the surrounding routine.
 
 The tests execute the original lookup and state-write code with the bridge
 present and both present/absent RM-device objects. Missing RM root/context/lookup object,
@@ -771,13 +772,63 @@ virtual destructor `0x93100`, and pool-free boundary `0xe0c8d0`. Missing owner
 or allocation cases skip the corresponding calls. No hardware-stop operation
 appears in this isolated prefix before the allocation-manager boundary.
 
-Logging, timestamp reads, a returning assertion handler, the unresolved RM
-virtual callback and allocator-release boundaries are synthetic. These tests
-do not execute the full timeout reset, the RM callback body, or a physical
-device. The next hardware-quiescence investigation must resolve that callback
-and the surrounding reset/allocator contracts; replacing Linux retention with
-the observed pointer clearing would be unjustified.
+Logging, timestamp reads, a returning assertion handler and allocator-release
+boundaries are synthetic. The initial cases also inject the RM virtual
+callback, while the concrete cases below execute its body with modeled
+register I/O. These tests do not execute the full timeout reset or a physical
+device. Replacing Linux retention with the observed pointer clearing would be
+unjustified.
 
 ```sh
 venv/bin/python scripts/inspect_kmd_reset_resources.py > results/windows-kmd-reset-resources.json
 ```
+
+### The resolved RM callback masks interrupts, not engine DMA
+
+The context initializer at `0xd39400` (selection visible at `0xd395a4`)
+creates one of two RM objects. For selector `0x71` it calls `0x195d038` and
+stores the result at context `+0x170`; for `0x72` it calls `0x1964a48` and
+stores it at `+0x168`. Both paths take the constructed object's `+0x68`
+subobject pointer and publish it at context `+0x178` (`0xd39690`). The
+constructed subobject is at allocation `+8`, not an independent allocation.
+
+The expanded test executes both complete original constructors with
+caller-provided storage and parent registration disabled (constructor flags
+3). It uses the initializer's `0x354` branch values: `0x404044` for the first
+constructor and `0x50200` for the second. Original base constructors, selector
+decoders and HAL-function initializers execute. Full context initialization
+and the live Windows choice between these object selectors are not tested.
+
+| RM object selector | Subobject vtable | Slot `+0x220` thunk | HAL field | Selected implementation |
+| --- | --- | --- | --- | --- |
+| `0x71` | `0x108e9b8` | `0xd3c210` | allocation `+0xd8` | `0xd49800` |
+| `0x72` | `0x108ef08` | `0x641bc0` | allocation `+0x298` | `0xd4d9f0` |
+
+The test then enters original adapter callback `0xdd3800` and follows the
+entire RM lookup/state-control route into those concrete implementations,
+without replacing the virtual callback or its forwarding thunks:
+
+- Selector `0x71` reads logical register `0xd28`, intersects it with the
+  subobject's saved ownership mask at `+0x54`, and writes the result to
+  `0xd24`. This is the already independently recovered HAL-1 interrupt-mask
+  policy in [the firmware contract](contract.md#hal-1-interrupt-mask-policy-after-method-2-idle).
+  The generic accessor resource index is 0.
+- Selector `0x72` reads `0xd28` and `0xd2c` through resource index 1,
+  intersects the two values, and writes the result to `0xd24`.
+- Both preserve their saved mask if the intersection is zero. A first-read
+  failure skips the write. The surrounding RM route returns lookup success
+  and the adapter clears its bit even when the modeled register read/write
+  fails. This does not make an accessor failure a successful hardware action.
+
+Three mask pairs and success/read-error/write-error scenarios cover each
+constructor, adding eighteen cases (32 resource cases total). The second
+read's independent failure behavior in the `0x72` implementation is not
+covered. Actual register I/O is modeled at `0xd39878`/`0xd39f38`; the original
+accessors determine the resource indices and offsets.
+
+This closes the earlier unresolved virtual-call identity. Interrupt masking
+suppresses notification; it is not an engine halt or proof that DMA has
+finished. No engine-stop request is emitted by this specific callback path.
+The remaining quiescence investigation belongs in the per-engine reset's
+context operations and the surrounding timeout/allocation-manager contracts,
+not in interpreting the adapter's cleared software bit as hardware completion.
