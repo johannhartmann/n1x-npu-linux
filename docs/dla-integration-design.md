@@ -140,6 +140,36 @@ Shared DRAM alone does not make CUDA pointers valid DLA addresses.
 
 ## cuDLA, TensorRT and framework integration
 
+### Integration choices for this machine
+
+The source checkout was rechecked against upstream HEAD on 2026-10-27; both
+still resolve to `25a39b076c6b9143a25adbce8cb468b3bee821ee`.
+
+| Approach | What would have to work | Recommendation |
+| --- | --- | --- |
+| Run the upstream samples unchanged | Compatible NVIDIA `libcudla`, NvSci for standalone, platform kernel ABI and target loadables | Reference applications, not an installation path demonstrated on N1X Linux |
+| Port the Jetson `nvhost` stack wholesale | Its host1x, memory, synchronization and platform dependencies | Use it to understand contracts; do not make recreating that platform a prerequisite |
+| Native N1X accel driver and runtime | Our verified firmware transport, model loader, completion and memory lifetime | First usable integration target |
+| Replace `libcudla.so` | Full advertised API semantics, opaque object interoperability and application compatibility | Defer; a few matching exported function names are insufficient |
+| Framework execution provider | Working native runtime, target compiler, supported-subgraph selection and numerical tests | Add after standalone execution is dependable |
+
+The proposed native lifecycle is `open -> load -> allocate/bind -> submit ->
+wait/status -> read -> release`. This describes the target, not the current C
+ABI: `runtime/n1x_dla.h` presently offers open/info/submit/read, userspace
+loadable parsing lives separately, and EXEC waits synchronously. A separate
+asynchronous queue API is unnecessary for the first numerical qualification.
+Similarly, begin with explicit host copies; DMA-BUF and sync-file support only
+become useful after both the DLA and GPU import/export paths are verified.
+
+The immediate release gate is physical repetition with distinct inputs and
+correct results, followed by proven safe buffer reuse/reclamation and a
+bounded failure/recovery path. The current 64-MiB/128-job retention limits
+make the experimental API unsuitable for a long-running inference service.
+The [Windows unregister trace](windows-buffer-lifetime.md) also shows why
+copying vendor API teardown is insufficient: its destruction flags permit
+Windows to defer reclamation until pending GPU work completes. Linux needs
+its own demonstrated device-lifetime guarantee.
+
 The first native runtime should follow cuDLA's lifecycle without pretending to
 be NVIDIA's binary library. A true standalone compatibility adapter must handle
 NvSci objects and asynchronous errors faithfully; opaque NvSci handles cannot
