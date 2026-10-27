@@ -20,7 +20,7 @@ def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     functions = source[source.index('static int n1x_boot_validate_relu_firmware('):
                        source.index('static ssize_t relu_probe_store(')]
-    state = source[source.index('struct n1x_boot_task_state {'):
+    state = source[source.index('static struct n1x_dla_job boot_task, boot_relu;'):
                    source.index('static bool n1x_boot_machine(')]
     constants = '\n'.join(line for line in source.splitlines()
                           if line.startswith('#define N1X_RELU_'))
@@ -35,11 +35,12 @@ def main():
 #include <openssl/sha.h>
 #include "n1x_dla_task.h"
 #include "n1x_dla_response.h"
+#include "n1x_dla_job.h"
 #include "n1x_dla_vbios.h"
 typedef uint8_t u8;
 typedef uint32_t u32;
 typedef __u64 u64;
-typedef uint64_t dma_addr_t;
+typedef __u64 dma_addr_t;
 typedef uint32_t __le32;
 #define SHA256_DIGEST_SIZE 32
 #define DMA_BIT_MASK(n) ((1ULL << (n))-1)
@@ -57,18 +58,18 @@ static struct {bool powered;struct n1x_dla_vbios_policy policy;} boot_hfrp;
 struct firmware {size_t size;const u8 *data;};
 static struct firmware firmware;
 static bool enable_relu_probe,machine_ok,alloc_fail,poison,corrupt_input;
-static int gate_error,read_error,request_error,mask_error,run_error;
+static int gate_error,read_error,request_error,mask_error,run_error,publish_error;
 static int allocations,frees,releases,runs,barriers,cases;
 static u32 pending;
 static dma_addr_t allocation_address;
-'''+constants+'\n'+state+r'''
+'''+constants+'\n'+state.replace('static struct n1x_dla_job_queue boot_queue;','')+r'''
 static u8 image[N1X_RELU_BYTES],allocation[N1X_RELU_BYTES],prepared[N1X_RELU_BYTES],oracle[N1X_RELU_IO_BYTES];
 static bool n1x_boot_machine(void) {return machine_ok;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *ep) {assert(ep==&endpoint);return gate_error;}
 static int n1x_boot_read(void *ctx,u32 offset,u32 *value)
 {assert(ctx==&endpoint && offset==8);*value=pending;return read_error;}
 /* Shared helper is exercised with real transport in test_linux_bypass_task.py. */
-static int n1x_boot_drain_task_idle(struct n1x_boot_task_state *task)
+static int n1x_boot_drain_task_idle(struct n1x_dla_job *task)
 {int err=n1x_boot_read(&endpoint,8,&task->pending);if(err)return err;
  return task->pending&0xc0 ? -EBUSY : 0;}
 static int request_firmware_direct(const struct firmware **out,const char *name,struct device *dev)
@@ -86,7 +87,7 @@ static void dma_free_coherent(struct device *dev,size_t bytes,void *buffer,dma_a
  assert(!boot_relu.attempted);frees++;}
 static void dma_rmb(void) {barriers++;}
 static u64 word64(const u8 *p) {u64 x=0;for(unsigned i=0;i<8;i++)x|=(u64)p[i]<<(8*i);return x;}
-static int n1x_boot_run_task(struct n1x_boot_task_state *task)
+static int n1x_boot_run_task(struct n1x_dla_job *task)
 {assert(task==&boot_relu && releases==1 && !task->attempted && !frees);runs++;
  assert(!memcmp(allocation+1024,image+1024,sizeof(image)-1024));
  assert(allocation[41]==0); /* arithmetic execution, not BYPASS_EXEC */
@@ -97,6 +98,7 @@ static int n1x_boot_run_task(struct n1x_boot_task_state *task)
  assert(word64(allocation+272)==allocation_address+12288); /* output */
  assert(word64(allocation+312)==allocation_address+2830336); /* final mapped extent */
  memcpy(prepared,allocation,sizeof(prepared));
+ if(publish_error)return publish_error;
  task->attempted=true;
  if(run_error)return run_error;
  task->accepted=task->signal_seen=task->verified=true;task->fence=0x12345678;
@@ -110,11 +112,11 @@ static void reset(void)
  memset(&boot_relu,0,sizeof(boot_relu));boot_relu_numeric=false;
  memset(boot_relu_input_hash,0,32);memset(boot_relu_output_hash,0,32);
  alloc_fail=poison=corrupt_input=false;pending=0;allocation_address=HOST_ADDRESS;
- gate_error=read_error=request_error=mask_error=run_error=0;
+ gate_error=read_error=request_error=mask_error=run_error=publish_error=0;
  allocations=frees=releases=runs=barriers=0;firmware=(struct firmware){sizeof(image),image};}
 static void check(int error,int allocated,int freed,int released,bool attempted,bool numeric)
 {assert(n1x_boot_relu_once()==error);assert(allocations==allocated&&frees==freed&&releases==released);
- assert(boot_relu.attempted==attempted&&boot_relu_numeric==numeric&&runs==(int)attempted);
+ assert(boot_relu.attempted==attempted&&boot_relu_numeric==numeric&&runs==((int)attempted+(publish_error!=0)));
  assert(!!boot_relu.buffer==attempted);
  if(attempted){assert(n1x_boot_relu_once()==-EALREADY);assert(runs==1&&allocations==1&&frees==0);}
  cases++;}
@@ -142,6 +144,7 @@ int main(int argc,char **argv)
  reset();alloc_fail=true;check(-ENOMEM,1,0,1,false,false);
  for(int i=0;i<4;i++){reset();allocation_address=i==0?0:i==1?0x100002100ULL:
  i==2?DMA_BIT_MASK(36)+1:DMA_BIT_MASK(36)-4095;check(-ERANGE,1,1,1,false,false);}
+ reset();publish_error=-EINVAL;check(-EINVAL,1,1,1,false,false);assert(!barriers&&!boot_relu.dma);
  reset();run_error=-ETIMEDOUT;check(-ETIMEDOUT,1,0,1,true,false);assert(!barriers);
  reset();run_error=-EREMOTEIO;check(-EREMOTEIO,1,0,1,true,false);assert(!barriers);
  reset();poison=true;check(-EBADMSG,1,0,1,true,false);assert(boot_relu.verified&&barriers==1);

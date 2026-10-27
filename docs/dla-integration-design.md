@@ -166,7 +166,13 @@ The original-firmware retirement boundary is now tested for bypass and the
 ReLU control path, including post-signal device-memory revocation; see
 [bypass lifetime evidence](bypass-task.md#completion-boundary-and-repeated-firmware-submissions-2026-10-27)
 and [ReLU retirement](model-probe.md#relu-firmware-retirement-boundary-2026-10-27).
-These tests do not yet implement the reusable kernel/runtime lifecycle.
+The shared native executor in `driver/n1x_dla_job.c` now preserves a queue
+across jobs, assigns unique completion values and blocks subsequent submissions
+after uncertain execution errors. Both bootstrap probes use that executor.
+The integrated firmware test exercises 32 jobs on the same native queue and
+firmware instance. This is still an internal component: the sysfs probes remain
+one-shot, physical repetition/reclamation is unqualified, and the userspace
+runtime and public device API are not implemented.
 
 1. **Reusable device lifecycle:** extend the proven startup path to repeated
    jobs, distinct completion IDs, bounded failures and demonstrably safe buffer

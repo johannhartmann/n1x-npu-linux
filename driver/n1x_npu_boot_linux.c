@@ -24,6 +24,7 @@
 #include "n1x_dla_control.h"
 #include "n1x_dla_registers.h"
 #include "n1x_dla_task.h"
+#include "n1x_dla_job.h"
 #include "n1x_hfrp_setup.h"
 
 #define N1X_BOOT_KERNEL "7.2.8-23-omarchy-p16-asus-npu2"
@@ -146,17 +147,8 @@ static struct {
 	int error;
 } boot_lpwr;
 
-struct n1x_boot_task_state {
-	void *buffer;
-	dma_addr_t dma;
-	struct n1x_dla_response response;
-	u32 pending, fence;
-	bool attempted, response_valid, accepted, signal_seen, verified;
-	int error;
-	u32 idle_notifications;
-	bool idle_blocked;
-};
-static struct n1x_boot_task_state boot_task, boot_relu;
+static struct n1x_dla_job boot_task, boot_relu;
+static struct n1x_dla_job_queue boot_queue;
 static bool boot_relu_numeric;
 static u8 boot_relu_input_hash[SHA256_DIGEST_SIZE], boot_relu_output_hash[SHA256_DIGEST_SIZE];
 
@@ -854,14 +846,18 @@ static DEVICE_ATTR_WO(apply_lpwr);
  * do not infer or execute a power-down policy from this notification.
  * Firmware holds a mailbox until ACK, and boot_lock excludes another reader.
  */
-static int n1x_boot_drain_task_idle(struct n1x_boot_task_state *task)
+static int n1x_boot_drain_task_idle(struct n1x_dla_job *task)
 {
 	struct n1x_dla_io io = {boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
 	struct n1x_dla_response response;
 	u32 word, data, i;
 	int err;
-	if (task->idle_blocked)
+	if (boot_queue.poisoned || task->idle_blocked)
 		return -ENOTRECOVERABLE;
+	if (boot_queue.active)
+		return -EBUSY;
+	if (boot_queue.last_fence == U32_MAX)
+		return -EOVERFLOW;
 	for (i = 0; i < 16; i++) {
 		err = n1x_boot_read(boot_dla, 8, &task->pending);
 		if (err)
@@ -879,14 +875,19 @@ static int n1x_boot_drain_task_idle(struct n1x_boot_task_state *task)
 			return -EBUSY; /* Unknown/error/stale response remains unacknowledged. */
 		task->idle_blocked = true; /* An uncertain ACK cannot be replayed. */
 		err = n1x_dla_take_response(&io, &response);
-		if (err)
+		if (err) {
+			boot_queue.poisoned = true;
 			return err;
-		if (response.word != 12 || response.data != 0)
+		}
+		if (response.word != 12 || response.data != 0) {
+			boot_queue.poisoned = true;
 			return -EPROTO;
+		}
 		task->idle_notifications++;
 		task->idle_blocked = false;
 	}
 	task->idle_blocked = true;
+	boot_queue.poisoned = true;
 	return -ELOOP;
 }
 
@@ -894,68 +895,36 @@ static int n1x_boot_drain_task_idle(struct n1x_boot_task_state *task)
  * A changed fence alone is insufficient; require submission acceptance and
  * SWGEN0, processing pending mailbox errors first. Never infer DMA quiescence.
  */
-static int n1x_boot_run_task(struct n1x_boot_task_state *task)
+static int n1x_boot_publish_job(void *context, u32 value)
 {
-	struct n1x_dla_response_fields fields;
-	struct n1x_dla_response response;
-	struct n1x_dla_io io;
-	u32 attempt;
-	int err;
-	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
-	dma_wmb();
-	task->attempted = true;
-	err = n1x_dla_send_method(&io, 0x307, task->dma >> 8, 5001, 1000);
-	if (err)
-		return err;
-	for (attempt = 0; attempt < 5001; attempt++) {
-		err = n1x_boot_read(boot_dla, 8, &task->pending);
-		if (err)
-			return err;
-		if (task->pending & 0x80) {
-			err = n1x_dla_take_response(&io, &response);
-			if (err)
-				return err;
-			if (response.word == 12 && response.data == 0) {
-				task->idle_notifications++;
-			} else {
-				task->response = response;
-				task->response_valid = true;
-				err = n1x_dla_decode_response(&task->response, &fields);
-				if (err)
-					return err;
-				if (fields.command != 7 || fields.data != task->dma >> 8)
-					return -EPROTO;
-				if (fields.status || fields.message == 1 || fields.message == 8 ||
-				    fields.message == 9 || fields.message == 10)
-					return -EREMOTEIO;
-				if (fields.upper || fields.message != 2 || task->accepted)
-					return -EPROTO;
-				task->accepted = true;
-			}
-		}
-		if (task->pending & 0x40)
-			task->signal_seen = true;
-		dma_rmb();
-		task->fence = le32_to_cpu(READ_ONCE(*(__le32 *)(task->buffer + 768)));
-		if (task->accepted && task->signal_seen && task->fence == 0x12345678) {
-			/* A later error can coexist with a written fence. Recheck before
-			 * acknowledging SWGEN0; leave new mailbox work for the next poll.
-			 */
-			err = n1x_boot_read(boot_dla, 8, &task->pending);
-			if (err)
-				return err;
-			if (!(task->pending & 0x80)) {
-				err = n1x_boot_write(boot_dla, 4, 0x40);
-				if (err)
-					return err;
-				task->verified = true;
-				return 0;
-			}
-		}
-		if (attempt + 1 < 5001)
-			n1x_boot_delay(boot_dla, 1000);
-	}
-	return -ETIMEDOUT;
+    struct n1x_dla_job *task = context;
+    u8 *p = task->buffer;
+    /* Both owned bootstrap descriptors were built by the fenced-v2 serializer:
+     * WRITE_SEM begins at 64, its value is at 73. No user descriptor is patched. */
+    if (p[64] != 0x80 || p[60] != 64 || p[62] != 14)
+        return -EINVAL;
+    p[73] = value;
+    p[74] = value >> 8;
+    p[75] = value >> 16;
+    p[76] = value >> 24;
+    WRITE_ONCE(*(__le32 *)(task->buffer + 768), cpu_to_le32(~value));
+    dma_wmb();
+    return 0;
+}
+
+static int n1x_boot_read_job_fence(void *context, u32 *value)
+{
+    struct n1x_dla_job *task = context;
+    dma_rmb();
+    *value = le32_to_cpu(READ_ONCE(*(__le32 *)(task->buffer + 768)));
+    return 0;
+}
+
+static int n1x_boot_run_task(struct n1x_dla_job *task)
+{
+    struct n1x_dla_io io = {boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+    struct n1x_dla_job_ops ops = {task, n1x_boot_publish_job, n1x_boot_read_job_fence};
+    return n1x_dla_job_execute(&boot_queue, &io, &ops, task);
 }
 
 static int n1x_boot_bypass_task_once(void)
@@ -1001,7 +970,10 @@ static int n1x_boot_bypass_task_once(void)
 		goto free;
 	WRITE_ONCE(*(__le32 *)(boot_task.buffer + 768), cpu_to_le32(0xdeadbeef));
 	boot_task.fence = 0xdeadbeef;
-	return n1x_boot_run_task(&boot_task);
+	err = n1x_boot_run_task(&boot_task);
+	if (err && !boot_task.attempted)
+		goto free;
+	return err;
 free:
 	dma_free_coherent(boot_dla->dev, 4096, boot_task.buffer, boot_task.dma);
 	boot_task.buffer = NULL;
@@ -1114,6 +1086,11 @@ static int n1x_boot_relu_once(void)
     boot_relu.fence = 0xdeadbeef;
     release_firmware(firmware);
     err = n1x_boot_run_task(&boot_relu);
+    if (err && !boot_relu.attempted) {
+        dma_free_coherent(boot_dla->dev, N1X_RELU_BYTES, boot_relu.buffer, boot_relu.dma);
+        boot_relu.buffer = NULL;
+        boot_relu.dma = 0;
+    }
     if (!err)
         err = n1x_boot_check_relu();
     dev_info(boot_dla->dev, "ReLU error=%d accepted=%u completed=%u numerical_match=%u input=%*phN output=%*phN; DMA retained until reboot\n",
@@ -1154,12 +1131,13 @@ static ssize_t relu_status_show(struct device *dev, struct device_attribute *att
     ssize_t size;
     mutex_lock(&boot_lock);
     size = sysfs_emit(buf,
-        "enabled=%u attempted=%u error=%d accepted=%u completed=%u signal_seen=%u pending=%#x reply=%#x data=%#x fence=%#x numeric_verified=%u input_sha256=%*phN output_sha256=%*phN retained=%u idle_notifications=%u idle_blocked=%u\n",
+        "enabled=%u attempted=%u error=%d accepted=%u completed=%u signal_seen=%u pending=%#x reply=%#x data=%#x fence=%#x numeric_verified=%u input_sha256=%*phN output_sha256=%*phN retained=%u idle_notifications=%u idle_blocked=%u fence_value=%#x queue_poisoned=%u\n",
         enable_relu_probe, boot_relu.attempted, boot_relu.error, boot_relu.accepted,
         boot_relu.verified, boot_relu.signal_seen, boot_relu.pending,
         boot_relu.response.word, boot_relu.response.data, boot_relu.fence, boot_relu_numeric,
         SHA256_DIGEST_SIZE, boot_relu_input_hash, SHA256_DIGEST_SIZE, boot_relu_output_hash,
-        !!boot_relu.buffer, boot_relu.idle_notifications, boot_relu.idle_blocked);
+        !!boot_relu.buffer, boot_relu.idle_notifications, boot_relu.idle_blocked,
+        boot_relu.fence_value, boot_queue.poisoned);
     mutex_unlock(&boot_lock);
     return size;
 }
@@ -1270,7 +1248,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 
 	mutex_lock(&boot_lock);
 	size = sysfs_emit(buf,
-		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x lpwr_enabled=%u lpwr_attempted=%u lpwr_error=%d lpwr_accepted=%u lpwr_reply_valid=%u lpwr_reply=%#x lpwr_retained=%u task_enabled=%u task_attempted=%u task_error=%d task_response_valid=%u task_reply=%#x task_data=%#x task_accepted=%u task_signal_seen=%u task_fence=%#x task_pending=%#x task_verified=%u task_retained=%u task_idle_notifications=%u task_idle_blocked=%u\n",
+		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x lpwr_enabled=%u lpwr_attempted=%u lpwr_error=%d lpwr_accepted=%u lpwr_reply_valid=%u lpwr_reply=%#x lpwr_retained=%u task_enabled=%u task_attempted=%u task_error=%d task_response_valid=%u task_reply=%#x task_data=%#x task_accepted=%u task_signal_seen=%u task_fence=%#x task_pending=%#x task_verified=%u task_retained=%u task_idle_notifications=%u task_idle_blocked=%u task_fence_value=%#x queue_poisoned=%u\n",
 		!!boot_dla, !!boot_sroot, enable_upload, boot_attempted, boot_error,
 		boot_result.reply_valid, boot_result.reply.header,
 		boot_result.idle_observed, !!boot_buffer, enable_ping, boot_ping.attempted,
@@ -1286,7 +1264,8 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 		enable_bypass_task, boot_task.attempted, boot_task.error, boot_task.response_valid,
 		boot_task.response.word, boot_task.response.data, boot_task.accepted, boot_task.signal_seen,
 		boot_task.fence, boot_task.pending, boot_task.verified, !!boot_task.buffer,
-		boot_task.idle_notifications, boot_task.idle_blocked);
+		boot_task.idle_notifications, boot_task.idle_blocked,
+		boot_task.fence_value, boot_queue.poisoned);
 	mutex_unlock(&boot_lock);
 	return size;
 }

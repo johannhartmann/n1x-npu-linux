@@ -31,7 +31,9 @@ def compile_native(directory):
 #include "n1x_dla_task.h"
 #include "n1x_dla_command.h"
 #include "n1x_dla_response.h"
-typedef __u32 u32;typedef __u64 u64;typedef __u64 dma_addr_t;typedef __u32 __le32;
+#include "n1x_dla_job.h"
+typedef __u8 u8;typedef __u32 u32;typedef __u64 u64;typedef __u64 dma_addr_t;typedef __u32 __le32;
+#define U32_MAX UINT32_MAX
 #define DMA_BIT_MASK(n) ((1ULL<<(n))-1)
 #define GFP_KERNEL 0
 #define WRITE_ONCE(x,v) ((x)=(v))
@@ -44,10 +46,8 @@ static struct n1x_boot_endpoint *boot_sroot=&endpoint,*boot_dla=&endpoint;
 static struct {bool verified;} boot_ping={true};
 static struct {bool registered;} boot_region5={true};
 static struct {bool accepted;} boot_config_apply={true},boot_lpwr={true};
-struct n1x_boot_task_state {void *buffer;dma_addr_t dma;struct n1x_dla_response response;
- u32 pending,fence;bool attempted,response_valid,accepted,signal_seen,verified;int error;
- u32 idle_notifications;bool idle_blocked;};
-static struct n1x_boot_task_state boot_task;
+static struct n1x_dla_job boot_task;
+static struct n1x_dla_job_queue boot_queue;
 static bool enable_bypass_task=true;
 static unsigned char allocation[4096] __attribute__((aligned(256)));
 static struct n1x_dla_io transport;static void (*synchronize)(void);
@@ -69,6 +69,7 @@ static void dma_wmb(void) {}
 static void dma_rmb(void) {synchronize();}
 '''
     shim = '#define HOST_ADDRESS '+hex(HOST)+'ULL\n'+shim+phase+r'''
+void native_queue_reset(void) {memset(&boot_queue,0,sizeof(boot_queue));}
 void native_setup(const struct n1x_dla_io *io,void (*sync)(void))
 {transport=*io;synchronize=sync;memset(&boot_task,0,sizeof(boot_task));memset(allocation,0,sizeof(allocation));}
 void *native_buffer(void) {return allocation;}
@@ -77,14 +78,14 @@ u32 native_result(unsigned field)
 {switch(field){case 0:return boot_task.attempted;case 1:return boot_task.accepted;
  case 2:return boot_task.signal_seen;case 3:return boot_task.verified;case 4:return boot_task.response_valid;
  case 5:return boot_task.response.word;case 6:return boot_task.fence;case 7:return !!boot_task.buffer;
- default:return 0;}}
+ case 8:return boot_task.fence_value;default:return 0;}}
 '''
     code, library = directory/'shim.c', directory/'native.so'
     code.write_text(shim)
     subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
         '-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-Werror', '-I'+str(ROOT/'include'),
         str(code), str(ROOT/'driver/n1x_dla_task.c'), str(ROOT/'driver/n1x_dla_command.c'),
-        str(ROOT/'driver/n1x_dla_response.c'), '-o', str(library)], check=True)
+        str(ROOT/'driver/n1x_dla_response.c'), str(ROOT/'driver/n1x_dla_job.c'), '-o', str(library)], check=True)
     lib = ctypes.CDLL(str(library))
     lib.native_setup.argtypes = [ctypes.POINTER(IO), SYNC]
     lib.native_buffer.restype = ctypes.c_void_p
@@ -94,6 +95,7 @@ u32 native_result(unsigned field)
 
 
 def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1, revoke_after_acceptance=False):
+    lib.native_queue_reset()
     state = {'active': False, 'sent': False, 'paused': False, 'trap_finished': False,
              'scheduler_finished': False, 'device_backing_revoked': False}
     live, frames, errors, trace = [], [], [], []
@@ -239,7 +241,7 @@ def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1, revo
 
     @SYNC
     def sync():
-        if state['device_backing_revoked']:
+        if not state['sent'] or state['device_backing_revoked']:
             return  # CPU backing is retained; only modeled device mapping is revoked.
         try:
             ctypes.memmove(lib.native_buffer(), bytes(u.mem_read(HOST, 4096)), 4096)
@@ -265,7 +267,7 @@ def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1, revo
         status = lib.native_run()
         if not revoke_after_acceptance:
             assert not errors, errors
-        fields = [lib.native_result(i) for i in range(8)]
+        fields = [lib.native_result(i) for i in range(9)]
         assert fields[0] == fields[7] == 1 and lib.native_run() == -errno.EALREADY
         assert bytes(u.mem_read(0x100000, 36864)) == blob[512:512+36864]
         if revoke_after_acceptance:
@@ -297,7 +299,7 @@ def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1, revo
             assert len(initial['dma_commands'])-initial_dma == 11
         if fault is None:
             assert status == 0 and fields[1:5] == [1, 1, 1, 1]
-            assert fields[5:7] == [0x702, 0x12345678]
+            assert fields[5:7] == [0x702, iteration+1] and fields[8] == iteration+1
             assert frames == [(0x702, HOST >> 8)] and word(u, 8) == 0
             assert state['trap_finished'] and state['scheduler_finished']
             assert struct.unpack('<I', u.mem_read(0x180114, 4))[0] == 0
@@ -305,14 +307,14 @@ def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1, revo
             assert status == -errno.EREMOTEIO and not fields[3]
             expected = {'version': 0x90701, 'execution': 0x8003070a, 'postaction': 0x8007070a}[fault]
             assert fields[5] == expected and frames[-1] == (expected, HOST >> 8)
-            assert fields[6] == 0xdeadbeef
+            assert fields[6] == (fields[8] ^ 0xffffffff)
             # Native stops immediately on error, so its last CPU fence observation
             # can predate the firmware's postaction write. Inspect modeled DMA RAM.
             actual_fence = struct.unpack('<I', u.mem_read(HOST+768, 4))[0]
-            assert actual_fence == (0x12345678 if fault == 'postaction' else 0xdeadbeef)
+            assert actual_fence == (fields[8] if fault == 'postaction' else fields[8] ^ 0xffffffff)
         assert len(initial['dma_commands'])-initial_dma == {None: 11, 'version': 4, 'execution': 13, 'postaction': 11}[fault]
         record = {'fault': fault, 'native_return': status, 'frames': list(frames),
-                'accepted': bool(fields[1]), 'verified': bool(fields[3]),
+                'completion_value': fields[8], 'accepted': bool(fields[1]), 'verified': bool(fields[3]),
                 'dma_retained': bool(fields[7]), 'firmware_code_unmodified': True,
                 'original_dma_commands': len(initial['dma_commands'])-initial_dma,
                 'completion_boundary': completion_boundary, 'native_return_pc': native_return_pc,
@@ -339,7 +341,7 @@ def main():
                                       'Original firmware reset/trap/scheduler/DMA code runs; no firmware function stubs',
                                       'MMIO/FIFO/IRQ, synchronous DMA completion, coherence and handshake devices are modeled',
                                       'Error cases stop with retained backing while firmware may still be in its IRQ handler',
-                                      'Repeated runs reset the host harness only; production driver remains one-shot',
+                                      'Repeated runs preserve the native queue and firmware; only per-job host state is reset; sysfs probes remain one-shot',
                                       'Post-SWGEN0 revocation covers bypass descriptors, not neural-engine buffers or teardown',
                                       'No opaque-image equivalence, physical boot/IRQ/DMA or numerical inference']}, indent=2))
 

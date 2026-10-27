@@ -211,7 +211,8 @@ when the emulator resumes.
 At that point, the bypass trace shows:
 
 - all 11 task DMA operations have completed in the synchronous register model;
-- the fence contains `0x12345678`;
+- the fence contains the submitted completion value (`0x12345678` in the
+  original retirement test; unique per-job values in the executor below);
 - queue count at `0x180114` is zero;
 - firmware task-slot in-use field at `0x18027c` is zero;
 - the native runner can complete successfully before firmware reaches WFI.
@@ -237,3 +238,51 @@ Local result: `results/native-fw-retirement-boundary.json`; UBSan counterpart:
 raw firmware's bypass lifetime ordering under the modeled device. It does not
 prove physical engine DMA quiescence, reset safety or error-path reclamation.
 In particular, a failed task must not inherit the successful-task release rule.
+
+
+## Shared serialized job executor (2026-10-27)
+
+`driver/n1x_dla_job.c` and `include/n1x_dla_job.h` separate the recovered
+submission/completion protocol from bootstrap allocation and sysfs handling.
+Both physical-probe wrappers now call this component. The caller holds the
+device lock, validates/maps the complete task, drains stale notifications and
+owns all backing. The executor does not expose raw pointers to userspace,
+allocate/free memory, reset firmware, or establish a public ABI.
+
+Each fresh job consumes a queue-local completion value from 1 through
+`UINT32_MAX`. The publish callback patches the owned fenced-v2 descriptor,
+initializes the coherent fence to the bitwise complement and publishes the
+buffer before method 0x307. The core rejects an already-signaled fence before
+any device I/O. A consumed value is never reused, even if preparation fails;
+the next job needs a fresh job object. Exhaustion fails without wrapping.
+
+Completion still requires the matching acceptance response, SWGEN0 and the
+expected fence, with pending errors processed first. Any error after method
+publication may have begun poisons the shared queue. Later jobs fail without
+I/O; callers must retain potentially live DMA backing. A pre-publication
+callback failure leaves the queue usable, and the bootstrap wrappers free
+only backing that was never submitted. These rules do not provide recovery or
+prove whole-device quiescence.
+
+The native lifecycle test covers 74 cases and 14 I/O fault positions, including
+stale fences, the last legal sequence value, counter exhaustion, a pre-signaled
+fence, callback failures before and after submission, and queue poisoning.
+The ReLU preparation test covers 28 cases, including freeing unpublished
+backing exactly once after firmware-image release. Both pass normally and
+with UBSan.
+
+The original-firmware integration test now retains **both** the native queue
+and the original firmware instance across 32 submissions. Only the per-job
+host state and modeled mapping are recreated. It verifies fence values 1..32,
+post-SWGEN0 backing revocation, and the existing failure/early-revocation
+controls. The UBSan result is `results/job-executor-fw-ubsan.json`; the complete
+startup regression log is `results/job-executor-p16-tests.log`.
+
+The bootstrap sysfs entry points remain one attempt each. On a fresh run their
+expected completion values are 1 for bypass and 2 for ReLU; sysfs reports
+`task_fence_value`/`fence_value` and `queue_poisoned`. Historical physical logs
+with the fixed `0x12345678` remain valid for their recorded build. The rebuilt
+module is not loaded on the machine; physical repetition, resource release,
+interrupt-driven execution and the application-facing API remain unverified
+or unimplemented. The build is recorded separately in
+`results/npu2-job-executor-build-manifest.json`.
