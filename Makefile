@@ -46,6 +46,7 @@ test: tests/test_firmware
 test-vendor: test
 	venv/bin/python scripts/inspect_windows_submission.py
 	venv/bin/python scripts/inspect_kmd_task_submission.py
+	venv/bin/python scripts/inspect_kmd_completion.py
 	venv/bin/python scripts/inspect_cudla_release.py
 	venv/bin/python scripts/test_acpi_collection.py
 	venv/bin/python scripts/test_iort.py

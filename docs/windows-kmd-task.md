@@ -257,8 +257,9 @@ the separate field `job+0x30` into result state. Both call `0xdd1428`, whose
 index descriptor is `F+0x52c` (the entry marker), so treating those reads as
 completion reads would be incorrect. Accessors `0x92e30` and `0x92f10` read
 and write a different cached sequence at state `+0x2e9c + 4*engine + 32*node`.
-The relationship between raw completion-bank reads, that cache, job-record
-retirement and `DxgkCbNotifyInterrupt` still needs an executed trace.
+The raw completion-bank path to `DxgkCbNotifyInterrupt` is now executed as
+described below. Its relationship to this separate cache, deferred cleanup,
+OS scheduling and actual memory reclamation remains open.
 
 ```sh
 venv/bin/python scripts/inspect_kmd_task_submission.py > results/kmd-task-submission.json
@@ -270,3 +271,87 @@ handling, two address-encoding probes, 12 higher-level ring submissions,
 producer cases, 16 preaction-consumer cases, one disabled preaction producer
 and four control-gate writers. All run offline; no device, boot configuration
 or register is changed.
+
+## Completion-bank selection and OS notification
+
+`scripts/inspect_kmd_completion.py` executes the original ARM64 completion
+reader and notification path using the same pinned KMD image. The tested chain
+is:
+
+```text
+e22500   read completion value; select matching job ring record
+  dd1548   CPU semaphore mapping F+4f0
+  dd15b0 -> dd7708   completion-bank index F+508
+  e218b8   selected-job accounting and notification
+    e05cf8 -> e07010   OS notification wrapper and metadata extraction
+      DXGKRNL_INTERFACE+80   modeled DxgkCbNotifyInterrupt
+```
+
+For the memory-backed branch (`object.u8[0x480c] != 0`), the selector reads
+`F.u64[0x4f0] + 4 * index`, where:
+
+```text
+input = Q.u32[0xf00] * node + engine
+index = F.u32[0x508] + (F.u32[0x510] >> 2) * input
+q = node * 8 + engine
+previous = scheduler.u32[0x137c + 4*q]
+record = scheduler.u64[8 + 8*q]
+       + ((next_sequence % scheduler.u32[0x7d8 + 4*q]) * 0x1f0)
+```
+
+This is the CPU view of the completion bank used by the postaction producer,
+not the `F+0x52c` entry marker. The initial reader accepts a modular forward
+distance below 32; it does not notify for equal, stale or distance-32 values
+in the tested policy. For invalid deltas, tests explicitly set capability bit
+13 in `object[0x1c8]+4` to skip recovery; other error/recovery branches are not
+executed. The job's owner and sequence are checked before retirement; bit 10
+in `job+0x1e8` stops processing without advancing the completed sequence.
+
+The alternate branch (`object.u8[0x480c] == 0`) uses the submitted sequence
+at scheduler `+0xf9c+4*q`, even when the raw completion word is older. It is
+tested as a distinct software policy, not adopted as hardware completion
+evidence for Linux. Its activation on a live DLA adapter is unproven.
+
+`e218b8` decrements outstanding counters, records a completion timestamp and,
+unless `job.flags & 0x18`, performs the optional job callback and then records:
+
+- `scheduler+0x26dc+4*q`: the independent OS fence from `job+0x30`.
+- `scheduler+0x1f1c+4*q`: the internal sequence from `job+0x2c`.
+- An OS interrupt notification of type 1 (`DMA_COMPLETED`), carrying that OS
+  fence, node and engine. The notification flags are zero on this path.
+
+The original wrapper obtains the OS interface through `object+0x1988`, reads
+its device handle at `+8` and calls callback `+0x80`. This layout matches
+Microsoft's [DXGKRNL_INTERFACE](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/dispmprt/ns-dispmprt-_dxgkrnl_interface)
+and [notification data](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/d3dkmddi/ns-d3dkmddi-_dxgkargcb_notify_interrupt_data).
+Only the actual OS callback, getters, clocks and logging are synthetic. The
+wrapper sets `object+0x4b48` after the callback with a release store/barrier.
+Neither the notification nor the tested counter update frees the job record.
+
+The 134 passing cases comprise 48 selected-job notifications, 70 selector
+cases and 16 linked producer/firmware/reader cases. They cover sequence zero,
+ring wrap, the signed boundary and `0xffffffff`, distinct OS fences, queue
+indices, suppression flags, pending/stale/out-of-window completion values,
+missing CPU mapping, the alternate policy and the bit-10 processing stop.
+The linked cases execute the original Windows postaction producer, feed its
+descriptor to the original RV32 postaction caller, then copy the resulting
+RAM completion word into the original Windows reader's CPU mapping. Successful
+task status advances it and notifies; failed status skips the postaction and
+produces no notification. No arithmetic engine or physical DMA is modeled.
+
+Static call-site follow-up found `e22500` passed to `dca2b0` at `e1aad0`,
+`19e1cfc` and other sites. That wrapper dispatches through OS-interface `+0x48`
+(`DxgkCbSynchronizeExecution`); it is not executed by this test. Separately,
+`e21e20` advances scheduler `+0x1b3c` and calls `e21448`, whose static body
+contains further callbacks and updates `+0x2abc`. That deferred cleanup path
+is the next lead, not an already proven allocation-destruction boundary.
+
+For Linux, this strengthens the interpretation of the unique firmware fence
+and its distinction from acceptance/IRQ acknowledgment. It does **not** prove
+that all device DMA is quiescent, that Windows memory destruction is immediate,
+or that our native driver may now free retained images. Physical repeated
+execution, coherent observation and safe reclamation/reset remain required.
+
+```sh
+venv/bin/python scripts/inspect_kmd_completion.py > results/kmd-completion.json
+```
