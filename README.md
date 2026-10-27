@@ -2,6 +2,11 @@
 
 Reverse engineering of the NVIDIA NPU on ASUS ProArt P16 H7607BA to implement
 Linux support. **Physical firmware boot and inference are not verified.** The
+actual BIOS-300 board policy has now been captured read-only and matched
+against the original Windows parser and initializer. The `npu2` bootstrap
+connects guarded HFRP handshake/configuration/power-on before SROOT upload;
+physical qualification is pending. See [P16 board startup](docs/p16-board-start.md)
+for current inputs, reproduction, and remaining limits. The
 current driver components validate the firmware, translate register offsets,
 upload firmware words, select/start the RISC-V core, wait for idle without a
 start write, and send methods through
@@ -31,7 +36,7 @@ The original Windows decoder confirms those fields; their error meanings
 remain unresolved. The DMA buffer is retained, with no automatic retry.
 After reboot, one variant-1 upload was also rejected, with reply `0x253ff018`
 (status `1023`, detail `37`, no payload). Its meanings remain unknown too.
-The current bootstrap retains that allocation, and no later NPU phase ran.
+That attempt retained its allocation until reboot, and no later NPU phase ran.
 The initial host runtime-PM preflight defect was corrected before that attempt.
 This remains a one-attempt experiment requiring retained DMA storage/reboot, and does not
 complete IRQ/configuration initialization or inference. An additional opt-in
@@ -43,7 +48,7 @@ on immutable CPU snapshots; see [history evidence](docs/region5-history.md) and
 [region-5 setup](docs/region5.md).
 The auxiliary HFRP register/IRQ capture and shared Windows dispatch are now
 cross-checked against L4T. Bounded HFRP command/reply ring helpers are compared
-against the original Windows code but are not connected to the live modules;
+against the original Windows code and now connected to the manual bootstrap;
 the Linux handshake and single-command channel are tested against a synthetic
 peer. Version discovery and the power-on packet now use that checked channel;
 offline comparisons cover the original Windows version/power policy. Startup

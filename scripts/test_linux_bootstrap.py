@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
-    validator = source[source.index('static int n1x_boot_validate_firmware('):
-                       source.index('/* Caller holds boot_lock.')]
+    validator_start = source.index('static int n1x_boot_validate_firmware(')
+    validator = source[validator_start:source.index('/* Caller holds boot_lock.', validator_start)]
     upload = source[source.index('static int n1x_boot_upload('):
                     source.index('/* Caller holds boot_lock. The upload already')]
     store = source[source.index('static ssize_t upload_store('):
@@ -61,6 +61,7 @@ static struct device root_dev={0},dla_dev={1};
 static struct n1x_boot_endpoint root_ep={&root_dev},dla_ep={&dla_dev};
 static struct n1x_boot_endpoint *boot_sroot,*boot_dla;
 static bool enable_upload,machine_ok,boot_attempted;
+static struct {bool powered;} boot_hfrp = {true};
 static unsigned int firmware_variant,selected_variant;
 static struct n1x_dla_sroot_load_result boot_result;
 static void *boot_buffer;
@@ -145,6 +146,7 @@ int main(int argc,char **argv)
  assert(n1x_boot_validate_firmware(NULL)==-EBADMSG);
  reset();enable_upload=false;check(-EPERM,0,0,0,false);
  reset();machine_ok=false;check(-EPERM,0,0,0,false);
+ reset();boot_hfrp.powered=false;check(-EHOSTDOWN,0,0,0,false);boot_hfrp.powered=true;
  reset();firmware_variant=2;check(-EINVAL,0,0,0,false);
  reset();firmware_variant=~0U;check(-EINVAL,0,0,0,false);
  reset();firmware_variant=1-selected_variant;assert(n1x_boot_validate_firmware(&firmware)==-EBADMSG);

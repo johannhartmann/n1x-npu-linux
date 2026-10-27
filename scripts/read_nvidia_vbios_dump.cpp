@@ -44,7 +44,7 @@ struct Client {
  NvHandle alloc(NvHandle parent,NvU32 cls,void* p,NvU32 size,NvHandle requested){NVOS21_PARAMETERS a{};a.hRoot=root;a.hObjectParent=parent;a.hObjectNew=requested;a.hClass=cls;a.pAllocParms=p;a.paramsSize=size;call(ctl,NV_ESC_RM_ALLOC,a);fprintf(stderr,"alloc class=0x%x status=%s root=0x%x new=0x%x\n",cls,status_name(a.status),a.hRoot,a.hObjectNew);if(a.status!=NV_OK)throw std::runtime_error(status_name(a.status));return a.hObjectNew;}
 };
 int main(int argc,char** argv){try{
- if(argc!=2)throw std::runtime_error("Usage: read_nvidia_vbios_dump OUTPUT (new file)");
+ if(argc!=2)throw std::runtime_error("Usage: read_nvidia_vbios_dump OUTPUT (new file) | --probe-rom-api");
  std::ifstream version_file("/sys/module/nvidia/version");std::string running_version;std::getline(version_file,running_version);if(running_version!="615.78.08")throw std::runtime_error("Running NVIDIA version differs from pinned 615.78.08 headers");
  Client c;c.ctl=open("/dev/nvidiactl",O_RDWR|O_CLOEXEC);if(c.ctl<0)throw std::runtime_error(strerror(errno));
  nv_ioctl_card_info_t cards[32]{};call(c.ctl,NV_ESC_CARD_INFO,cards);nv_ioctl_card_info_t* card=nullptr;
@@ -55,6 +55,18 @@ int main(int argc,char** argv){try{
  NV0000_CTRL_GPU_GET_ID_INFO_V2_PARAMS info{};info.gpuId=card->gpu_id;auto rc=c.control(c.root,NV0000_CTRL_CMD_GPU_GET_ID_INFO_V2,&info,sizeof(info));if(rc!=NV_OK)throw std::runtime_error(status_name(rc));
  NV0080_ALLOC_PARAMETERS dp{};dp.deviceId=info.deviceInstance;auto dev=c.alloc(c.root,NV01_DEVICE_0,&dp,sizeof(dp),0x1001);
  NV2080_ALLOC_PARAMETERS sp{};sp.subDeviceId=info.subDeviceInstance;auto sub=c.alloc(dev,NV20_SUBDEVICE_0,&sp,sizeof(sp),0x1002);
+
+ // Offline-discovered command 0x20800801, GSP handler 0x1420110.
+ // Probe only: zero size is rejected before the handler dereferences pBuffer.
+ // No guessed pointer serialization or full-ROM request is attempted here.
+ if(std::string(argv[1])=="--probe-rom-api") {
+  struct { NvU32 size; NvU32 padding; NvU64 pBuffer; } probe{};
+  static_assert(sizeof(probe)==16);
+  rc=c.control(sub,0x20800801,&probe,sizeof(probe));
+  printf("rom_api_probe command=0x20800801 status=%s size=%u buffer=0x%llx\n",
+         status_name(rc),probe.size,(unsigned long long)probe.pBuffer);
+  return 0;
+ }
 
  NV2080_CTRL_NVD_GET_DUMP_SIZE_PARAMS query{};
  query.component=NVDUMP_COMPONENT_ENG_VBIOS;

@@ -224,7 +224,7 @@ def fixture(*, rom_base=0, bit_offset=0x100, entry_size=8, token=0x6c,
     return bytes(image)
 
 
-def run(pe, image, *, entry=0xd3d010, locator_word=0):
+def run(pe, image, *, entry=0xd3d010, locator_word=0, instruction_limit=1000000):
     assert len(image) == 0x110000
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     for page in (0xd3b000, 0xd3c000, 0xd3d000, 0xd39000, 0xd57000, 0xcd000, 0xce000, 0xeec000,
@@ -285,7 +285,7 @@ def run(pe, image, *, entry=0xd3d010, locator_word=0):
     u.reg_write(regs.UC_ARM64_REG_SP, STACK+0x8000)
     u.reg_write(regs.UC_ARM64_REG_LR, STOP)
     try:
-        u.emu_start(BASE+entry, STOP, count=1000000)
+        u.emu_start(BASE+entry, STOP, count=instruction_limit)
     except Exception as exc:
         raise RuntimeError(f'PC={u.reg_read(regs.UC_ARM64_REG_PC):x}; parsed={parsed}') from exc
     assert u.reg_read(regs.UC_ARM64_REG_PC) == STOP

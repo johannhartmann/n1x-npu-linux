@@ -24,8 +24,10 @@
 #include "n1x_dla_control.h"
 #include "n1x_dla_registers.h"
 #include "n1x_dla_task.h"
+#include "n1x_hfrp_setup.h"
 
-#define N1X_BOOT_KERNEL "7.2.8-23-omarchy-p16-asus-npu1"
+#define N1X_BOOT_KERNEL "7.2.8-23-omarchy-p16-asus-npu2"
+#define N1X_BOARD_FIRMWARE "nvidia/n1x/p16-bios300-physical.rom"
 #define N1X_BOOT_FIRMWARE "nvidia/n1x/p16-sroot-v0.bin"
 #define N1X_BOOT_FALLBACK_FIRMWARE "nvidia/n1x/p16-sroot-v1.bin"
 #define N1X_BOOT_BYTES 67508
@@ -38,6 +40,10 @@
 static bool enable_upload;
 module_param(enable_upload, bool, 0400);
 MODULE_PARM_DESC(enable_upload, "Permit root's explicit one-attempt upload trigger (default false)");
+
+static bool enable_hfrp;
+module_param(enable_hfrp, bool, 0400);
+MODULE_PARM_DESC(enable_hfrp, "Permit one explicit board-policy HFRP prepare/power-on attempt (default false)");
 
 static unsigned int firmware_variant;
 module_param(firmware_variant, uint, 0400);
@@ -70,6 +76,7 @@ MODULE_PARM_DESC(enable_bypass_task, "Permit one explicit single bypass task aft
 struct n1x_boot_endpoint {
 	struct device *dev;
 	void __iomem *base;
+	void __iomem *hfrp;
 	resource_size_t bytes;
 	u32 first;
 	bool sroot;
@@ -82,6 +89,18 @@ static void *boot_buffer;
 static dma_addr_t boot_dma;
 static int boot_error;
 static bool boot_attempted;
+static struct {
+	struct n1x_hfrp_channel channel;
+	struct n1x_hfrp_version version;
+	struct n1x_hfrp_exchange_result exchange;
+	struct n1x_hfrp_setup_result setup;
+	struct n1x_dla_vbios_policy policy;
+	struct n1x_dla_gating_policy gating;
+	struct n1x_dla_vbios_location location;
+	bool attempted, powered;
+	u32 phase;
+	int error;
+} boot_hfrp;
 static struct {
 	void *buffer;
 	dma_addr_t dma;
@@ -222,6 +241,140 @@ static void n1x_boot_delay(void *context, u32 interval_us)
 	usleep_range(interval_us, interval_us + 100);
 }
 
+/* Separate, bounded HFRP resource. Never pass these offsets through the DLA
+ * register remapper. No IRQ handler consumes these rings concurrently.
+ */
+static bool n1x_boot_hfrp_allowed(u32 offset, bool write)
+{
+	if (offset & 3)
+		return false;
+	if (write)
+		return offset == 4 || offset == 0x100 || offset == 0x10c ||
+		       (offset >= 0x110 && offset <= 0x184);
+	return offset == 0 || offset == 0x100 || offset == 0x104 ||
+	       (offset >= 0x110 && offset <= 0x1fc);
+}
+
+static int n1x_boot_hfrp_read(void *context, u32 offset, u32 *value)
+{
+	struct n1x_boot_endpoint *endpoint = context;
+	if (!endpoint->hfrp || !n1x_boot_hfrp_allowed(offset, false))
+		return -EINVAL;
+	*value = readl(endpoint->hfrp + offset);
+	return 0;
+}
+
+static int n1x_boot_hfrp_write(void *context, u32 offset, u32 value)
+{
+	struct n1x_boot_endpoint *endpoint = context;
+	if (!endpoint->hfrp || !n1x_boot_hfrp_allowed(offset, true))
+		return -EINVAL;
+	writel(value, endpoint->hfrp + offset);
+	return 0;
+}
+
+/* Verify the complete immutable capture before parsing; synthetic/default
+ * policy is never accepted as a hardware input. This file is locally acquired,
+ * not redistributed vendor firmware. */
+static int n1x_boot_board_policy(const struct firmware *firmware)
+{
+	static const u8 expected[SHA256_DIGEST_SIZE] = {
+		0xa8, 0x2a, 0xf1, 0x4d, 0x15, 0xef, 0xfa, 0x98,
+		0xa7, 0x5b, 0x19, 0xd9, 0x13, 0x54, 0x21, 0xc7,
+		0xc2, 0x7f, 0x20, 0xcc, 0xa7, 0x39, 0x8d, 0x0b,
+		0x0a, 0x7b, 0xa8, 0x75, 0x47, 0xb8, 0xb6, 0x4c,
+	};
+	u8 digest[SHA256_DIGEST_SIZE];
+	int err;
+	if (!firmware || !firmware->data || firmware->size != 0x110000)
+		return -EBADMSG;
+	sha256(firmware->data, firmware->size, digest);
+	if (memcmp(digest, expected, sizeof(digest)))
+		return -EBADMSG;
+	err = n1x_dla_parse_vbios_policy(firmware->data, firmware->size,
+			&boot_hfrp.policy, &boot_hfrp.location);
+	if (err)
+		return err;
+	return n1x_dla_prepare_gating(&boot_hfrp.policy, &boot_hfrp.gating);
+}
+
+/* Caller holds boot_lock. Hold PM/module lifetime from BEFORE the first write,
+ * on failure as well as success. No retry, reset, IRQ enable or SROOT upload.
+ * Unknown asynchronous responses fail closed in the common channel code.
+ */
+static int n1x_boot_prepare_hfrp_once(void)
+{
+	const struct firmware *firmware;
+	struct n1x_dla_io io;
+	u32 stamp;
+	int err;
+	if (!enable_hfrp || !n1x_boot_machine())
+		return -EPERM;
+	if (!boot_dla || !boot_dla->hfrp || !boot_sroot)
+		return -ENODEV;
+	if (boot_hfrp.attempted || boot_attempted)
+		return -EALREADY;
+	err = n1x_boot_dma_gate(boot_dla);
+	if (!err)
+		err = n1x_boot_dma_gate(boot_sroot);
+	if (err)
+		return err;
+	err = request_firmware_direct(&firmware, N1X_BOARD_FIRMWARE, boot_dla->dev);
+	if (err)
+		return err;
+	err = n1x_boot_board_policy(firmware);
+	release_firmware(firmware);
+	if (err)
+		return err;
+	err = pm_runtime_resume_and_get(boot_dla->dev);
+	if (err < 0)
+		return err;
+	err = n1x_boot_hfrp_read(boot_dla, 0, &stamp);
+	if (!err && stamp != 0x20251722)
+		err = -EOPNOTSUPP;
+	if (err)
+		goto put;
+	if (!try_module_get(THIS_MODULE)) {
+		err = -ENODEV;
+		goto put;
+	}
+	io = (struct n1x_dla_io){boot_dla, n1x_boot_hfrp_write,
+				n1x_boot_hfrp_read, n1x_boot_delay};
+	boot_hfrp.attempted = true;
+	boot_hfrp.phase = 1;
+	err = n1x_hfrp_handshake(&io, &boot_hfrp.channel, 5001, 1000, &boot_hfrp.exchange);
+	if (err)
+		goto done;
+	boot_hfrp.phase = 2;
+	err = n1x_hfrp_discover_version(&io, &boot_hfrp.channel, 5001, 1000,
+			&boot_hfrp.version, &boot_hfrp.exchange);
+	if (err)
+		goto done;
+	boot_hfrp.phase = 3;
+	err = n1x_hfrp_configure_policy(&io, &boot_hfrp.channel, &boot_hfrp.version,
+			&boot_hfrp.policy, 5001, 1000, &boot_hfrp.setup);
+	if (err)
+		goto done;
+	boot_hfrp.phase = 4;
+	err = n1x_hfrp_power_on(&io, &boot_hfrp.channel, &boot_hfrp.version,
+			boot_hfrp.gating.policy_bytes[2], 5001, 1000, &boot_hfrp.exchange);
+	if (!err) {
+		boot_hfrp.powered = true;
+		boot_hfrp.phase = 5;
+	}
+done:
+	dev_info(boot_dla->dev,
+		 "HFRP phase=%u error=%d version=%u.%u command=%u completed=%u setup_reply=%#x/%u final_reply=%#x/%u power_accepted=%u; retained until reboot\n",
+		 boot_hfrp.phase, err, boot_hfrp.version.major, boot_hfrp.version.minor,
+		 boot_hfrp.setup.command, boot_hfrp.setup.completed_commands,
+		 boot_hfrp.setup.exchange.reply.header, boot_hfrp.setup.exchange.reply.length,
+		 boot_hfrp.exchange.reply.header, boot_hfrp.exchange.reply.length, boot_hfrp.powered);
+	return err;
+put:
+	pm_runtime_put(boot_dla->dev);
+	return err;
+}
+
 static int n1x_boot_validate_firmware(const struct firmware *firmware)
 {
 	static const u8 expected[2][SHA256_DIGEST_SIZE] = {{
@@ -259,6 +412,8 @@ static int n1x_boot_upload(void)
 		return -ENODEV;
 	if (boot_attempted)
 		return -EALREADY;
+	if (!boot_hfrp.powered)
+		return -EHOSTDOWN;
 	if (firmware_variant > 1)
 		return -EINVAL;
 	err = n1x_boot_dma_gate(boot_sroot);
@@ -863,6 +1018,46 @@ static ssize_t upload_store(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR_WO(upload);
 
+static ssize_t prepare_hfrp_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	int err;
+	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "prepare"))
+		return -EPERM;
+	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev)
+		err = -ENODEV;
+	else if (boot_hfrp.attempted)
+		err = -EALREADY;
+	else {
+		err = n1x_boot_prepare_hfrp_once();
+		boot_hfrp.error = err;
+	}
+	mutex_unlock(&boot_lock);
+	return err ? err : (ssize_t)count;
+}
+static DEVICE_ATTR_WO(prepare_hfrp);
+
+static ssize_t hfrp_status_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	ssize_t size;
+	mutex_lock(&boot_lock);
+	size = sysfs_emit(buf,
+		"enabled=%u attempted=%u phase=%u error=%d state=%u pending=%u stamp=%#x version=%u.%u configured=%u command=%u completed=%u setup_reply=%#x setup_length=%u setup_payload=%*phN final_reply=%#x final_length=%u final_payload=%*phN power_accepted=%u frequency_khz=%u gating=%#x\n",
+		enable_hfrp, boot_hfrp.attempted, boot_hfrp.phase, boot_hfrp.error,
+		boot_hfrp.channel.state, boot_hfrp.channel.pending_sequence,
+		boot_hfrp.version.stamp, boot_hfrp.version.major, boot_hfrp.version.minor,
+		boot_hfrp.setup.configured, boot_hfrp.setup.command, boot_hfrp.setup.completed_commands,
+		boot_hfrp.setup.exchange.reply.header, boot_hfrp.setup.exchange.reply.length,
+		(int)boot_hfrp.setup.exchange.reply.length, boot_hfrp.setup.exchange.reply.payload,
+		boot_hfrp.exchange.reply.header, boot_hfrp.exchange.reply.length,
+		(int)boot_hfrp.exchange.reply.length, boot_hfrp.exchange.reply.payload,
+		boot_hfrp.powered, boot_hfrp.policy.frequency_khz, boot_hfrp.gating.request_mask);
+	mutex_unlock(&boot_lock);
+	return size;
+}
+static struct device_attribute dev_attr_hfrp_status = __ATTR(hfrp_status, 0400, hfrp_status_show, NULL);
+
 static ssize_t status_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	ssize_t size;
@@ -890,6 +1085,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 }
 static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_show, NULL);
 static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
+	&dev_attr_prepare_hfrp.attr, &dev_attr_hfrp_status.attr,
 	&dev_attr_config_snapshot.attr, &dev_attr_init_region5.attr,
 	&dev_attr_apply_config.attr, &dev_attr_apply_lpwr.attr, &dev_attr_bypass_task.attr, &dev_attr_status.attr, NULL};
 ATTRIBUTE_GROUPS(boot);
@@ -938,6 +1134,14 @@ static int n1x_boot_probe(struct platform_device *pdev)
 	endpoint->base = devm_ioremap_resource(dev, &registers);
 	if (IS_ERR(endpoint->base))
 		return PTR_ERR(endpoint->base);
+	if (!sroot) {
+		/* Only the decoded transport's first 512 bytes, not the full 64 KiB. */
+		registers.start = second->start;
+		registers.end = second->start + 0x1ff;
+		endpoint->hfrp = devm_ioremap_resource(dev, &registers);
+		if (IS_ERR(endpoint->hfrp))
+			return PTR_ERR(endpoint->hfrp);
+	}
 	/* Platform devices start with runtime PM disabled. Keep the normal
 	 * subsystem resume path; do not force ACTIVE or skip its callbacks.
 	 * Devres disables PM on failed probe or removal before any upload.
@@ -974,7 +1178,7 @@ static int n1x_boot_suspend(struct device *dev)
 	int err;
 
 	mutex_lock(&boot_lock);
-	err = boot_attempted ? -EBUSY : 0;
+	err = (boot_attempted || boot_hfrp.attempted) ? -EBUSY : 0;
 	mutex_unlock(&boot_lock);
 	return err;
 }
@@ -1021,3 +1225,4 @@ MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Explicit one-attempt P16 SROOT upload qualification; reboot required after attempt");
 MODULE_FIRMWARE(N1X_BOOT_FIRMWARE);
 MODULE_FIRMWARE(N1X_BOOT_FALLBACK_FIRMWARE);
+MODULE_FIRMWARE(N1X_BOARD_FIRMWARE);
