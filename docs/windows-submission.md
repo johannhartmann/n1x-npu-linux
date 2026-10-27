@@ -110,3 +110,10 @@ this locates the missing guarantee below the user-mode API: identify how the
 KMD marks the command complete to the Windows scheduler, and prove the
 equivalent firmware/engine boundary on Linux. Completion of a WDDM signal
 cannot be replaced by return from `D3DKMTSubmitCommand` or return from cuDLA.
+
+The [concrete DPC trace](hfrp-irq.md#concrete-dpc-path-and-primary-interrupt-acknowledgment-2026-10-27)
+now follows IRQ acknowledgment through deferred SWGEN0 processing. That path
+only reaches the internal HAL counter update, without an observed task ID or
+WDDM completion notification. A separate command-submission lead, method
+`0x35800001` -> `0xd45050` -> HAL `0xd4a400`, is recorded there for further
+analysis; its higher-level caller and retirement handling are not yet executed.

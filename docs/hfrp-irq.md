@@ -82,8 +82,10 @@ The parent function `0xd39198` checks HFRP through parent `+0x300` first. If the
 enabled HFRP callback reports nonzero status, this invocation skips the primary
 DLA probe. Otherwise it calls the primary object's status callback `+0x280`;
 a nonzero successful result is accumulated at `+0x4a0` and its `+0xe0` callback
-is invoked to schedule subsequent work. A primary accessor error prevents that
-accumulation/scheduling. The original 48-case parent test uses explicit primary status/scheduling
+is invoked. The concrete HAL-1 callback clears masked IRQ bits, as established
+below; deferred work is queued separately by the entry wrapper. A primary
+accessor error prevents accumulation/clear dispatch. The original 48-case
+parent test uses explicit primary status/callback
 stubs. A further 60 cases now execute the original primary initializer and
 callbacks described below; only lower OS/MMIO/provider boundaries are modeled.
 
@@ -160,9 +162,9 @@ IoConnectInterruptEx/vtable path above.
 Executing `0xd36ee8` shows that it obtains the owner from global `0x1512148`,
 looks up the parent through `0x93630`, gets an outer object through `0xd39160`,
 then calls the shared HFRP-first/DLA dispatcher. It finally invokes
-`0xd3b4a0(outer, parent->0x160, 0)` and returns 1. That final helper is an
-explicit test boundary; its notification/synchronization semantics are not
-reconstructed here. The tested input register x0 does not affect this path.
+`0xd3b4a0(outer, parent->0x160, 0)` and returns 1. The original wrapper tests
+modeled that helper; the additional DPC tests below execute it through
+`KeInsertQueueDpc`. The tested input register x0 does not affect this path.
 Its external semantic name is unknown; the test values are not IRQ numbers.
 
 Thirty cases vary that input over 0, 1, 2, 0x12345678, UINT32_MAX, HFRP status
@@ -182,11 +184,12 @@ for these additional cases:
   offset **8**, preserving its error return. This reads DLA IRQSTAT, distinct
   from HFRP resource id 2 / offset 0x104.
 - On a successful nonzero status the parent ORs all raw bits into primary
-  `+0x4a0`. A failed accessor neither accumulates nor schedules.
+  `+0x4a0`. A failed accessor neither accumulates nor dispatches a clear.
 - `0xd45670` follows primary `+0x68` to the provider, reads its ownership mask
   at `+0x54`, ANDs it with accumulated `+0x4a0`, then calls provider vtable
   **+0xb0** with a pointer to the filtered u32. The provider callback is an
-  explicit test boundary, not evidence that Windows work/IRQ delivery occurred.
+  explicit boundary in these original 60 cases. The concrete callback is now
+  identified as IRQ clearing below, not a scheduler-completion notification.
 
 Sixty combinations vary HFRP enabled/status, primary IRQSTAT (including an
 unknown bit 0x100) and ownership masks 0/0x40/0xc0. They verify HFRP-first
@@ -200,6 +203,83 @@ new cases perform no MMIO on this machine and change no Linux IRQ registration.
 They recover more of the required software dispatch/ownership chain; physical
 463/800 assignment, GIC delivery, deferred-work consumption, reset/recovery and
 numerical execution remain unresolved.
+
+## Concrete DPC path and primary interrupt acknowledgment (2026-10-27)
+
+The additional 35 cases in `test_hfrp_irq.py` execute the original DPC allocator
+wrapper, IRQ entry, primary clear callback, DPC callback, pending-bit consumer
+and HAL-1 SWGEN0 handler. They close the earlier provider/notification stubs for
+this selected path. Windows allocation, `KeInitializeDpc`, `KeInsertQueueDpc`,
+locks, lookups, timestamps and MMIO remain modeled. HFRP is absent and SWGEN1
+is excluded in these additional cases; physical IRQ routing is not tested.
+
+The PE import table identifies `0xe3e108` as `KeInitializeDpc` and `0xe3e110`
+as `KeInsertQueueDpc`. Constructor code at `0xd39694..0xd396a8` passes callback
+`0xd39380`, parent as its context, and parent `+0x160` as output storage to
+helper `0xd3b428`. That helper allocates 64 bytes and initializes the DPC.
+IRQ wrapper helper `0xd3b4a0` queues that object with both system arguments
+zero. Its input `w2` is used for tracing, not forwarded as a DPC argument.
+
+The concrete primary factory `0x195d038` sets main vtable `0x108e9a0`, the
+subobject vtable at primary `+8` to `0x108e9b8`, and primary `+0x68` to that
+subobject. These constructor stores were inspected statically; tests construct
+the corresponding objects and execute the original HAL initializer.
+
+| Step | Original code / dispatch |
+| --- | --- |
+| Read and accumulate IRQSTAT | `0xd39198` -> `0xd48830`; pending bits at primary `+0x4a0` |
+| Filter ownership mask | primary `+0xe0` -> `0xd45670` |
+| Acknowledge hardware IRQ bits | subobject vtable `+0xb0` -> `0x641b90` -> primary `+0x290` -> `0xd4a8f0` |
+| Queue deferred work | `0xd3b4a0` -> `KeInsertQueueDpc` |
+| DPC entry | `0xd39380`, parent context; optional HFRP work first |
+| Dispatch primary deferred work | parent `+0x178` -> subobject vtable `+0x218` -> `0x142470` |
+| Consume pending snapshot | main vtable `+0x298` -> `0xd43fd0` |
+| Process HAL interrupt | primary `+0x110` -> `0xd48ce0` |
+
+`0xd4a8f0` writes the filtered DWORD to resource 0, logical offset 4
+(IRQCLR). Thus the previously labeled "schedule" callback is the hardware
+acknowledgment path. The pending snapshot remains the **raw** accumulated
+status, including bits outside the ownership mask; the DPC is not passed the
+filtered clear mask. With ownership zero, a nonzero status still produces a
+zero IRQCLR write followed by raw-status processing. This observation does
+not establish ownership of unknown interrupt bits on Linux.
+
+The DPC consumer skips work when primary `+0x524` is nonzero or there are no
+pending bits. Otherwise it atomically XORs the captured snapshot out of the
+pending word before invoking the HAL callback. The test is single-threaded;
+it does not prove race-free behavior for a newly arriving identical IRQ bit.
+
+If the HAL callback cannot acquire its lock, it ORs the snapshot back into
+pending state and queues the same DPC again. The test denies the first lock,
+allows the second, and verifies two DPC executions with only one counter
+decrement. A modeled already-queued DPC returns false from insertion, but the
+original IRQ wrapper still returns 1 and the queued consumer processes the
+pending snapshot. That boolean is not an inference-success result.
+
+The 32 matrix cases vary raw bits 0/0x40/0x100/0x140, ownership masks 0/0x40,
+counter values 0/2 and whether a DPC was already queued. The counter is
+unchanged before DPC processing. SWGEN0 then decrements a positive counter
+once; an unknown bit alone does not. Three extra cases cover lock retry,
+ignored IRQCLR write error, and disabled primary processing. The ignored
+write error is vendor behavior, not a recommended Linux error policy.
+
+No task ID, WDDM command completion or scheduler-notify call appears in the
+executed SWGEN0 path. It reaches the already-known HAL counter handling and
+returns. This narrows the search: the WDDM completion contract is not supplied
+by merely queuing or draining this DPC. Preserve the Linux separation between
+IRQ acknowledgment, output readiness and proven buffer retirement.
+
+### Next command-submission lead
+
+Static inspection finds a separate task path: KMD method-table record
+`0x108e7c0` maps method `0x35800001`, input size 16, to `0xd45050`. That
+handler reads two input QWORDs and invokes primary `+0x140` with flags 4.
+The HAL-1 initializer installs `0xd4a400` in that slot; this function shifts
+the descriptor address by 8 and invokes method sender `+0xf8` with command 7.
+At `0x19d8800..0x19d8808`, a higher-level path selects `0x35800001` when its
+mode is 2 before calling `0xdd1dc8`. These are static leads, not an executed
+WDDM-to-firmware trace or a completion guarantee. They provide a concrete next
+entry point beyond the now-resolved DPC path.
 
 ## Pre-loader reset and idle commands
 
