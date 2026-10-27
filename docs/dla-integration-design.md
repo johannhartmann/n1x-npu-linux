@@ -1,7 +1,8 @@
 # How to expose N1X DLA to Linux applications
 
-Research date: 2026-10-27. This is an architectural recommendation, not an
-implemented API or a claim of NVIDIA library compatibility. No hardware state
+Research date: 2026-10-27. This records the architectural recommendation; the experimental native
+implementation is tracked in [native-runtime.md](native-runtime.md). It does
+not claim NVIDIA library compatibility. No hardware state
 was changed during this investigation.
 
 ## Decision
@@ -171,8 +172,10 @@ across jobs, assigns unique completion values and blocks subsequent submissions
 after uncertain execution errors. Both bootstrap probes use that executor.
 The integrated firmware test exercises 32 jobs on the same native queue and
 firmware instance. This is still an internal component: the sysfs probes remain
-one-shot, physical repetition/reclamation is unqualified, and the userspace
-runtime and public device API are not implemented.
+one-shot, physical repetition/reclamation is unqualified. An optional RAWIO-only
+accel API and C/Python runtime now implement prepared-image submission and
+result reading, with bounded retained allocations; their hardware qualification
+and general loadable ingestion remain open.
 
 1. **Reusable device lifecycle:** extend the proven startup path to repeated
    jobs, distinct completion IDs, bounded failures and demonstrably safe buffer

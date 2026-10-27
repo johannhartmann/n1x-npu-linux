@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Explicit-load, one-attempt SROOT upload qualification backend.
- * No aliases, inference UAPI, automatic upload, IRQ setup or reset/recovery.
+ * No aliases, automatic upload, IRQ setup or reset/recovery.
+ * Optional RAWIO-only accel API uses the explicitly initialized backend.
  * After an attempted upload, retain DMA/runtime/module references until reboot.
  */
 #include <crypto/sha2.h>
@@ -25,6 +26,7 @@
 #include "n1x_dla_registers.h"
 #include "n1x_dla_task.h"
 #include "n1x_dla_job.h"
+#include "n1x_dla_accel.h"
 #include "n1x_hfrp_setup.h"
 
 #define N1X_BOOT_KERNEL "7.2.8-23-omarchy-p16-asus-npu2"
@@ -83,6 +85,10 @@ static bool enable_relu_probe;
 module_param(enable_relu_probe, bool, 0400);
 MODULE_PARM_DESC(enable_relu_probe, "Permit one pinned FP16 ReLU numerical probe after verified bypass (default false)");
 
+static bool enable_accel;
+module_param(enable_accel, bool, 0400);
+MODULE_PARM_DESC(enable_accel, "Register experimental RAWIO-only accel API; explicit startup still required (default false)");
+
 struct n1x_boot_endpoint {
 	struct device *dev;
 	void __iomem *base;
@@ -90,6 +96,7 @@ struct n1x_boot_endpoint {
 	resource_size_t bytes;
 	u32 first;
 	bool sroot;
+	struct n1x_dla_accel *accel;
 };
 
 static DEFINE_MUTEX(boot_lock);
@@ -1277,6 +1284,33 @@ static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.a
 	&dev_attr_apply_config.attr, &dev_attr_apply_lpwr.attr, &dev_attr_bypass_task.attr, &dev_attr_status.attr, NULL};
 ATTRIBUTE_GROUPS(boot);
 
+/* accel->lock is outside boot_lock; sysfs never takes accel->lock. */
+static int n1x_boot_accel_submit(struct device *dev, struct n1x_dla_job *job,
+                                const struct n1x_dla_job_ops *ops)
+{
+    struct n1x_dla_io io;
+    int err;
+    mutex_lock(&boot_lock);
+    if (!enable_accel || !n1x_boot_machine() || !boot_dla || boot_dla->dev != dev ||
+        !boot_sroot || !boot_task.verified || !boot_lpwr.accepted ||
+        !boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid ||
+        (boot_relu.attempted && !boot_relu_numeric)) {
+        err = -ENODEV;
+        goto out;
+    }
+    /* Successful startup already retained module/runtime references. */
+    err = n1x_boot_dma_gate(boot_dla);
+    if (!err)
+        err = n1x_boot_drain_task_idle(job);
+    if (!err) {
+        io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+        err = n1x_dla_job_execute(&boot_queue, &io, ops, job);
+    }
+out:
+    mutex_unlock(&boot_lock);
+    return err;
+}
+
 static int n1x_boot_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -1347,11 +1381,24 @@ static int n1x_boot_probe(struct platform_device *pdev)
 		platform_set_drvdata(pdev, endpoint);
 	}
 	mutex_unlock(&boot_lock);
+	if (!err && !sroot && enable_accel) {
+		endpoint->accel = n1x_dla_accel_register(dev, n1x_boot_accel_submit);
+		if (IS_ERR(endpoint->accel)) {
+			err = PTR_ERR(endpoint->accel);
+			endpoint->accel = NULL;
+			mutex_lock(&boot_lock);
+			boot_dla = NULL;
+			mutex_unlock(&boot_lock);
+		}
+	}
 	return err;
 }
 
 static void n1x_boot_remove(struct platform_device *pdev)
 {
+	struct n1x_boot_endpoint *endpoint = platform_get_drvdata(pdev);
+	if (endpoint && endpoint->accel)
+		n1x_dla_accel_unregister(endpoint->accel);
 	mutex_lock(&boot_lock);
 	if (boot_sroot && boot_sroot->dev == &pdev->dev)
 		boot_sroot = NULL;

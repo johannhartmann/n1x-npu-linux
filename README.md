@@ -6,7 +6,8 @@ reconstructed from the pinned NVIDIA 617.42 Windows ARM64 driver, checked
 against original-code emulation and NVIDIA's public Jetson sources.
 
 **Firmware startup, a bypass task and one numerical FP16 ReLU graph work on
-the physical P16 under Linux. A general `/dev/accel` API is not yet provided.**
+the physical P16 under Linux. An experimental `/dev/accel` interface now
+builds and passes offline tests; it has not yet been hardware-qualified.**
 This is a manual research driver, not a production replacement for a vendor SDK.
 
 ## What this project does
@@ -33,9 +34,11 @@ output matches the complete CPU-reference hash. This demonstrates arithmetic
 execution beyond device enumeration, a firmware response or a bypass task.
 
 The current scope is one board/BIOS/kernel combination and one fixed graph.
-There is no general model-loading API, framework integration or `/dev/accel`
-device yet. Repeated execution, interrupt-driven operation, safe resource
-release, recovery and suspend/resume still need implementation or qualification.
+An optional RAWIO-only `/dev/accel` interface and C/Python runtime can submit
+prepared images with changing tensors; see [native runtime](docs/native-runtime.md)
+for its offline evidence and current limits. General loadable compilation/loading
+and framework integration remain unfinished. Physical repeated execution,
+interrupt-driven operation, safe resource release, recovery and suspend/resume still need implementation or qualification.
 The hardware path is deliberately manual and guarded for the tested machine;
 it is not an installer for arbitrary N1X systems. Vendor binaries, firmware,
 board ROM captures and generated model artifacts are not included. Reproduction
@@ -127,6 +130,7 @@ This is one successful execution, not a throughput or sustained-stability benchm
 
 - [Driver and serializer code](driver/), [interfaces](include/), [tests/tools](scripts/).
 - [Current board startup and recovery constraints](docs/p16-board-start.md).
+- [Experimental native accel interface and C/Python runtime](docs/native-runtime.md).
 - [DLA integration analysis and recommended Linux API architecture](docs/dla-integration-design.md).
 - [ACPI power/resource audit](docs/acpi-audit.md), [Linux/DMA backend](docs/linux-backend.md).
 - [HFRP protocol](docs/hfrp-irq.md), [VBIOS reverse engineering](docs/hfrp-vbios.md).

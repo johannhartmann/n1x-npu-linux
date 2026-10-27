@@ -14,6 +14,9 @@ test-p16-start:
 	venv/bin/python scripts/test_npu_dma_domains.py
 	venv/bin/python scripts/test_qualify_p16_start.py
 	venv/bin/python scripts/test_linux_lpwr_config.py
+	venv/bin/python scripts/test_dla_runtime.py
+	venv/bin/python scripts/test_linux_accel_backend.py
+	venv/bin/python scripts/test_linux_accel.py
 	venv/bin/python scripts/test_linux_bypass_task.py
 	venv/bin/python scripts/test_linux_bypass_firmware.py
 	venv/bin/python scripts/test_response.py
@@ -134,6 +137,9 @@ test-vendor: test
 	venv/bin/python scripts/emulate_task_header_checks.py
 	venv/bin/python scripts/test_task_descriptor.py
 	venv/bin/python scripts/test_bypass_task.py
+	venv/bin/python scripts/test_dla_runtime.py
+	venv/bin/python scripts/test_linux_accel_backend.py
+	venv/bin/python scripts/test_linux_accel.py
 	venv/bin/python scripts/test_linux_bypass_task.py
 	venv/bin/python scripts/test_linux_bypass_firmware.py
 	venv/bin/python scripts/emulate_firmware_commands.py
@@ -150,7 +156,12 @@ test-vendor: test
 kernel-check:
 	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" n1x_dla_vbios.o n1x_dla_ring.o n1x_hfrp.o n1x_hfrp_setup.o n1x_dla_control.o n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_job.o n1x_dla_response.o n1x_dla_statistics.o n1x_dla_model.o n1x_sroot.o
 clean:
-	rm -f tests/test_firmware
+	rm -f tests/test_firmware runtime/libn1x_dla.so
 
 module:
 	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" modules
+
+.PHONY: runtime
+runtime: runtime/libn1x_dla.so
+runtime/libn1x_dla.so: runtime/n1x_dla.c runtime/n1x_dla.h include/uapi/n1x_dla_accel.h
+	$(CC) $(CFLAGS) -fPIC -shared -Iinclude runtime/n1x_dla.c -o $@

@@ -71,7 +71,11 @@ def main():
     parser.add_argument('--log', type=Path, required=True, help='new JSONL file, never overwritten')
     parser.add_argument('--after-hfrp', action='store_true',
                         help='continue this boot after verified HFRP; never repeat handshake/upload')
+    parser.add_argument('--enable-accel', action='store_true',
+                        help='register experimental RAWIO-only accel API during fresh module load')
     args = parser.parse_args()
+    if args.enable_accel and args.after_hfrp:
+        parser.error('--enable-accel must be selected at fresh module load')
     if os.geteuid() or platform.release() != KERNEL:
         parser.error('requires root on the audited npu2 kernel')
     loaded = Path('/sys/module/n1x_npu_bootstrap')
@@ -105,7 +109,7 @@ def main():
 
         record(boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
                kernel=KERNEL, module_sha256=hashlib.sha256(module.read_bytes()).hexdigest(),
-               rom_sha256=ROM_SHA256, through=args.through, after_hfrp=args.after_hfrp, groups=rows)
+               rom_sha256=ROM_SHA256, through=args.through, after_hfrp=args.after_hfrp, groups=rows, enable_accel=args.enable_accel)
         if args.through == 'relu_probe':
             template = (ROOT/'results/p16-relu-template.bin').read_bytes()
             if len(template) != 2834432 or hashlib.sha256(template).hexdigest() != RELU_SHA256:
@@ -147,7 +151,7 @@ def main():
         subprocess.run(['/usr/bin/insmod', str(module), 'enable_hfrp=1', 'enable_upload=1',
                         'enable_ping=1', 'enable_region5=1', 'enable_config_snapshot=1',
                         'enable_config_apply=1', 'enable_lpwr_config=1', 'enable_bypass_task=1',
-                        'enable_relu_probe=1'], check=True)
+                        'enable_relu_probe=1', 'enable_accel='+str(int(args.enable_accel))], check=True)
         dev = Path('/sys/bus/platform/devices/NVDA200A:00')
         if (dev/'driver').resolve().name != 'n1x-npu-bootstrap':
             raise RuntimeError('DLA did not bind to the bootstrap')
