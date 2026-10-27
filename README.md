@@ -88,6 +88,10 @@ for this board.
 Live inspection now reports FRTS offset `0xb9500000`, but the host-requested
 size is zero and the final firmware extent/CPU mapping remain unknown. A
 successful privileged VBIOS diagnostic returns metadata, without raw ROM.
+Offline execution now verifies its strict ROM-size gate; the live dump's flag
+selects a budget below 16 KiB. A second cache reader selects NBSI payloads and
+is not an established whole-ROM export. See the
+[ROM export and NBSI tests](docs/hfrp-vbios.md#rom-export-limits-and-the-nbsi-alternative-2026-10-27).
 Its scratch registers suggest an insecure sysmem copy at `0xfc000000`, size
 36 KiB, under the public GB100 layout. This CPU-address candidate overlaps
 the running kernel's SWIOTLB pool, which is cleared during initialization.

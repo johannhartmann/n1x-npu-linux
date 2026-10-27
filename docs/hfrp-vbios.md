@@ -730,8 +730,8 @@ show a conditional bytes-field-10 descriptor at `0x1c4cac8`: the candidate
 ROM pointer/length are `OBJVBIOS+0x2a8/+0x2b0`. Copying is gated by pointer
 presence and available encoder space, divided by 4 or 2 according to the
 object flag at `+0xfa8`. A separate table-copy branch needs more than
-65536 bytes of encoder space. This is static evidence, not a replay of the
-complete exporter or a measurement of the live pointer/length.
+65536 bytes of encoder space. These eligibility branches are now replayed
+offline as described below; the live ROM pointer/length remain unmeasured.
 
 The host `rpcDumpProtobufComponent_v18_12` in `kernel/vgpu/rpc.c` caps the
 GSP output to `min(maxRpcSize - headers, encoder_space)`. The normal GSP queue
@@ -753,6 +753,69 @@ Still needed: the final firmware extent and verified CPU mapping, or a
 supported export of the cached ROM. Root authentication is no longer the
 observed blocker for these completed captures. No NPU upload or restart was
 performed, and physical NPU firmware boot remains unverified.
+
+### ROM export limits and the NBSI alternative (2026-10-27)
+
+`scripts/test_gsp_component9_export.py` executes the original exporter at
+`0x11bd55c` in the SHA256-pinned RM ELF
+`eb092d6d6f156e1403b479bcdc33c6f0d7470ad20f259b9c97ff3e06ef80eb5c`.
+All **93 cases pass**. Protobuf encoding and the register-dump callback are
+stubbed with controlled remaining space; the original machine code performs
+the eligibility decisions. This is not an end-to-end encoded dump test.
+
+The ROM condition is strict: `rom_size < (remaining_space >> shift)`, where
+`shift=2` for object flag zero, otherwise `shift=1`. Exact equality omits the
+ROM. The callback runs before this decision and can reduce the remaining
+space; a callback error also omits the ROM. The table branch requires strictly
+more than 65536 bytes. Null pointers, zero lengths, nonzero flag values,
+threshold neighbours and callback failure are covered.
+
+The same replay establishes that `OBJVBIOS+0xfa8` is emitted as **VBIOS field
+11**, descriptor `0x1c4cae0`. The physical capture
+`results/npu2-vbios-component9-20261027.pb` contains field 11 = **0**. Combined
+with the host RPC limit above, this implies an effective raw-ROM eligibility
+ceiling below 16 KiB for this dump, not merely below 64 KiB. The capture still
+does not establish whether the cached ROM exists or its actual size. No flag,
+queue size or firmware memory was modified.
+
+Tracing direct callers of the cache-copy routine `0x117dd54` found calls at
+`0x1acad8c` (VBIOS initialization) and `0x1b8ca22` (NBSI processing, function
+entry `0x1b8c258`). Instruction inspection confirms both AUIPC/JALR pairs.
+The latter allocates 256 KiB initially, copies the ROM cache, then calls
+`0x1c1adb4`. It copies the selected payload into a separate allocation and
+frees the temporary ROM copy. The existence of this internal copy therefore
+does not establish a public whole-ROM export.
+
+`scripts/test_gsp_nbsi_rom.py` executes that selector at `0x1c1adb4` with
+synthetic PCI ROM chains. All **4 cases pass**, with only logging stubbed:
+an ordinary final ROM image is rejected; a PCI image of code type `0x70`
+returns the payload following its PCI data structure; an ordinary image can
+be skipped to find that payload in a later image; an invalid ROM signature
+is rejected. The tagged payload comparison is numeric `0x4e425349`, bytes
+`ISBN` in little-endian storage. This tests the selector, not the downstream
+NBSI object parser. The path is a selective BIOS-configuration view, not a
+demonstrated export of the BIT `l` table needed for NPU startup.
+
+The public SDK's `NV2080_CTRL_CMD_BIOS_GET_NBSI_OBJ` describes object selection,
+source selection and offset-based reads, but that alone does not establish
+this command's live availability or access to arbitrary VBIOS bytes. No
+speculative NBSI command was sent to the device.
+
+Reproduce the offline tests against the extracted, hash-matching firmware:
+
+```sh
+venv/bin/python scripts/test_gsp_component9_export.py --elf /path/to/gsp-rm.elf
+venv/bin/python scripts/test_gsp_nbsi_rom.py --elf /path/to/gsp-rm.elf
+```
+
+The remaining acquisition question is the actual GB20B producer/address
+translation of the scratch candidate, or a separately established ROM export.
+The GH100/GB100 host writer uses `AT_GPU` addresses and is not dispatched for
+GB20B; its address cannot simply be treated as a CPU physical address. A
+constant scan of the extracted firmware has not identified a confirmed
+GB20B writer. Two apparent `0x14f4/0x14f8` hits were rejected after disassembly
+because of register clobbering and unrelated size/object-offset uses.
+This negative search does not establish that the writer is absent.
 
 ### Scratch candidate and early RAM capture
 
