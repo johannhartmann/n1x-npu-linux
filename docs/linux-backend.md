@@ -1,10 +1,14 @@
 # Linux platform backend
 
+Current integration: [P16 board policy and HFRP startup](p16-board-start.md)
+adds the missing pre-upload power/configuration stage on `npu2`. The variant
+results below refer to earlier `npu1` boots, before that stage existed.
+
 The current `n1x_npu_observe.ko` is an observation module, not a working NPU
 inference driver. It builds against the running P16 kernel. It is not installed
 or auto-loaded and has no register-write implementation. Loading is explicit.
 
-## Latest hardware result: variant 1 rejected
+## Earlier npu1 hardware result: variant 1 rejected
 
 After the user's reboot, the same test kernel
 **7.2.8-23-omarchy-p16-asus-npu1** ran with boot ID

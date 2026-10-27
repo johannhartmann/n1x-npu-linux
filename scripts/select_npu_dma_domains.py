@@ -56,7 +56,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
-    if platform.release() != '7.2.8-23-omarchy-p16-asus-npu1':
+    if platform.release() not in ('7.2.8-23-omarchy-p16-asus-npu1',
+                                  '7.2.8-23-omarchy-p16-asus-npu2'):
         parser.error('requires the isolated SROOT test kernel; current kernel is unchanged')
     rows = plan()
     print(json.dumps(rows, indent=2), flush=True)

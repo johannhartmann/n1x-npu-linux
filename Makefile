@@ -2,7 +2,17 @@ CC ?= cc
 CFLAGS ?= -O2 -g -Wall -Wextra -Werror
 # Explicit installed-kernel target; builds only, never installs/loads modules.
 KERNEL_RELEASE ?= $(shell uname -r)
-.PHONY: test test-vendor test-relu kernel-check module clean generate-probe
+.PHONY: test test-vendor test-relu test-p16-start kernel-check module clean generate-probe
+# Requires the exact ignored physical BIOS-300 capture and pinned vendor KMD.
+# Offline: no root, module load, hardware access or firmware installation.
+test-p16-start:
+	venv/bin/python scripts/verify_p16_board_policy.py results/p16-bios300-physical.rom
+	venv/bin/python scripts/test_linux_hfrp_prepare.py
+	venv/bin/python scripts/test_linux_bootstrap.py
+	venv/bin/python scripts/test_linux_bootstrap_guards.py
+	venv/bin/python scripts/test_hfrp_setup.py
+	venv/bin/python scripts/test_npu_dma_domains.py
+	venv/bin/python scripts/test_qualify_p16_start.py
 generate-probe:
 	venv/bin/python scripts/create_relu_probe.py
 # Requires the generated ReLU source, checked Windows outputs and serialized

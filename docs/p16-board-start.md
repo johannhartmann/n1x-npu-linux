@@ -36,6 +36,9 @@ stay ignored, not redistributed. The full-window SHA256 is
 `0x27f00`; the BIT header is at `0x280b0` and its ASCII letters at `0x280b2`.
 The window need not begin with `55aa`. The directory is at `0x283b0`;
 frequency, tuning and gating tables are at `0x5272b`, `0x5273d`, `0x5275d`.
+PCIR identifies `10de:2e03`, matching the installed GPU. The image contains
+`GB20B T254 Production VBIOS` and `Version 9a.0B.31.00.04`, also matching the
+live driver's VBIOS version.
 
 | Parsed input | Actual value |
 | --- | --- |
@@ -118,3 +121,20 @@ later phase or repeat attempt occurs. OS/transport edges are synthetic there;
 packet/peer fault tests remain separate. Physical qualification is pending.
 In particular the startup response lengths are inferred, IRQ roles remain
 unqualified, and no accel API or inference readiness is claimed.
+
+The repeatable qualification entry point is:
+
+```sh
+pkexec /usr/bin/python3 "$PWD/scripts/qualify_p16_start.py" \
+  --through prepare_hfrp --log "$PWD/results/NEW-hfrp-run.jsonl"
+```
+
+It requires initially unbound devices, checks the machine/module/capture,
+selects only the dedicated DLA/SROOT DMA domains, installs the hash-checked
+local ROM if absent, and loads the manual module. Each phase is preceded by
+a durable log entry; one unbuffered sysfs write follows, then recorded state
+and the phase's success predicate are checked. Failure stops the sequence.
+For a separately reviewed longer prefix, `--through` accepts the existing
+phase names up to `bypass_task`. Even bypass success is not numerical inference
+or production-driver readiness. No module autoload, boot-menu change or reboot
+is performed. Do not rerun after an attempted phase in the same boot.

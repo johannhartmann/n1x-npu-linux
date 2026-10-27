@@ -1,5 +1,9 @@
 # NPU power-policy source: VBIOS BIT `l`
 
+Update: the actual P16 BIOS-300 physical ROM has now been captured and compared
+with the original parser/initializer. See [board startup](p16-board-start.md).
+The sections below preserve the preceding acquisition investigation.
+
 This is static and emulated evidence from the pinned Windows KMD, SHA-256
 `73b3187cdf84c0306df78595e49626d096e84dfc1e6356543db57b145007f987`.
 No physical VBIOS read, firmware upload, power setting or register write is

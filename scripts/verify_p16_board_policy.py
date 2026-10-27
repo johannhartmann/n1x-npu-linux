@@ -70,6 +70,9 @@ def main():
     assert policy.boot_tables_valid == 1
     assert location.bit_offset == original['bit_offset']
     assert location.rom_base == original['rom_base']
+    assert data[0x28070:0x28078] == bytes.fromhex('50434952de10032e')
+    version_text = b'Version 9a.0B.31.00.04'
+    assert data[0x27fb5:0x27fb5+len(version_text)] == version_text
     initialized = init_windows(pe, fields)
     assert initialized['status'] == 0
     assert gating.request_mask == initialized['mask']
@@ -79,6 +82,7 @@ def main():
     print(json.dumps({'passed': True, 'hardware_access': False,
                       'rom_sha256': ROM_SHA256, 'kmd_sha256': KMD_SHA256,
                       'bytes': len(data), 'policy': values(policy), 'location': values(location),
+                      'pcir_vendor_device': '10de:2e03', 'vbios_version': '9a.0B.31.00.04',
                       'gating': values(gating), 'windows_initializer': initialized,
                       'limitation': 'Original parser/initializer replay with OS/setup stubs; no physical boot'},
                      indent=2))
