@@ -699,12 +699,14 @@ no engine register backend or device is used.
   6 read 16 bytes and may perform additional reads when address/size are nonzero;
   their complete buffer semantics remain open. Zero address/size succeeds for
   all four IDs, but is not evidence that logging is configured or safely disabled.
-- **Command 17 is a preemption path, not SET_INIT_CONFIG.** The dispatch calls
+- **HAL-2 command 17 is a preemption path, not SET_INIT_CONFIG.** The dispatch calls
   `0x105e78`, whose original diagnostic says the current state does not allow
   preemption. With actual firmware state variable `0x18930c` set to 2, 3 or 4,
   it returns error 12 without DMA. Static analysis shows the allowed path calls
   `0x105d5c` and executes preemption-related engine logic; it has not been run.
   The R38.4 public enum assigning SET_INIT_CONFIG=17 cannot be reused here.
+  The P16 HAL-1 image instead uses commands 18 and 28, as verified in
+  [the HAL-1 preemption investigation](#hal-1-preemption-command-and-idle-completion).
 
 These observations invalidate a blanket reuse of Jetson command numbers even
 where the task and semaphore layouts agree. No initialization command list has
@@ -953,6 +955,9 @@ has been bound, no NPU MMIO read/write issued, and no firmware boot attempted.
 
 ## HAL-1 interrupt-mask policy after method-2 idle
 
+See also the [preemption command investigation](#hal-1-preemption-command-and-idle-completion)
+for the distinction between an accepted stop request and its later notification.
+
 `emulate_irq_mask.py` executes the complete original KMD callback at RVA
 `0xd49800`, its three original subobject forwarding thunks, and HAL-1 register
 accessors. Only logging, the indirect-call guard and generic register I/O are stubbed.
@@ -987,6 +992,80 @@ CPU-control start write to the SROOT boot path. The response ACK helper clears
 SWGEN1 in the same 0xd24 mask register. Firmware-side rearming for basic
 HAL-1 mailbox replies is now established below; physical routing and the
 complete host IRQ lifecycle remain unverified. No physical backend is enabled.
+
+## HAL-1 preemption command and idle completion
+
+Research date: 2026-10-28. `scripts/test_profile1_preemption.py` verifies the
+P16 profile-1 image independently of the older HAL-2 command-17 findings.
+The test pins both firmware and Windows KMD hashes. All MMIO and DMA are
+synthetic; no live command is sent.
+
+The original Windows producer at RVA `0xd482f0` accepts a two-QWORD record:
+an owner/callback value and a DMA address. It stores the former at outer
+`+0x4c0`, shifts the latter by 8, and invokes HAL `+0xf8` with command **18**
+and flags 4. The full original constructor `0x195d038` selects method wrapper
+`0xd49fc0`; executing it reaches low-level sender `0xd4c800` with method
+**`0x212`** and data `DMA >> 8`. That sender, OS locks, lookup and logging
+are modeled; no complete RM preemption dispatch or Windows scheduler is
+claimed. Six cases cover zero/sub-256 addresses, two nonzero addresses and
+injected sender errors. A zero shifted address returns `0x1f` and clears
+the saved owner. In the tested direct-send branch, even a sender error `0x65`
+is ignored by the method wrapper: the producer returns zero and retains its
+owner. Thus its return value is not a completed-preemption indication.
+
+The original HAL-1 dispatcher at `0x102232` distinguishes:
+
+| Command | Firmware entry | Observed role |
+| --- | --- | --- |
+| 17 | unsupported dispatch branch | Error 1 (`0x11101` with error reporting enabled) |
+| 18 | `0x105b90` | Preemption request |
+| 28 | `0x105e10` | Preemption enable/disable, using method-data bit 0 |
+
+These roles are also supported by the original diagnostic strings at
+`0x108c6c` and `0x108cd0`. Command 28 takes its value directly from method
+data, not a DMA-fetched configuration record. It only changes the enable
+byte when firmware state is zero and no preemption is outstanding; other
+tested states/outstanding conditions return error 12. Inputs 0/1/2/3/255/256
+establish the low-bit encoding.
+
+Thirty RV32 cases execute unchanged reset, trap, dispatcher, response/ACK
+and return code. Rejection cases inject firmware software state explicitly:
+state is at `0x1862a4`, outstanding byte at `0x183720`, enable byte at
+`0x183728`. Those addresses describe this pinned image's internal state,
+not host MMIO or an interface Linux should write. Command 18 rejects disabled
+preemption, an already-outstanding request, and states 2/3. Active-task
+acceptance in states 1/4 is not qualified by these tests.
+
+The idle lifecycle runs several commands on one reset-initialized firmware
+instance, using method flags `0x300` to request both success/error reporting:
+
+1. Command 28/data 1 enables preemption and replies `0x1c02`.
+2. Command 18/data 0 replies **`0x1202`** with the outstanding byte still 1.
+3. Another command 18 is rejected with `0xc1201`; disabling through command
+   28 is rejected with `0xc1c01` while the request remains outstanding.
+4. Resuming the original scheduler produces the separate notification
+   **`0x120b`, data 0**. Outstanding is still set when the host observes that
+   notification; after its ACK the original code clears it and returns to
+   scheduler WFI.
+
+The matching test without scheduler resumption leaves outstanding set and
+has no `0x120b` notification. No DMA transfer or arithmetic-engine register
+access occurs in either idle case. Method-data zero specifically takes the
+preemption payload helper's no-buffer branch; this does not exercise the
+nonzero request-buffer format used by Windows or preemption of a running
+convolution. The producer and consumer tests identify the same command, but
+are not yet a full nonzero-payload end-to-end preemption test.
+
+This yields a concrete next recovery contract: distinguish command acceptance
+from the later message-11 notification, then recover the nonzero request's
+save/restore buffers and active-engine completion conditions. Neither the
+idle notification nor this synthetic scheduler execution proves physical
+DMA quiescence. The Linux executor continues to retain attempted allocations;
+no new preemption or memory-release operation is enabled by this test.
+
+```sh
+venv/bin/python scripts/test_profile1_preemption.py > results/profile1-preemption.json
+```
 
 ## HAL-1 firmware rearms each mailbox response
 
