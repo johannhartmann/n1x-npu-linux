@@ -132,6 +132,12 @@ has since returned `0x253ff018` (status `1023`, detail `37`) and was rejected.
 Its mathematical signature validity and raw-image equality did not establish
 hardware acceptance. The new error's meaning remains unresolved.
 
+Later hardware result: after adding the actual board's HFRP setup/power
+prelude, **variant 0 was accepted and executed**, including DMA ping and
+bypass-task completion. See [the physical record](p16-board-start.md).
+This does not identify the transformation of its opaque payload or decode the
+earlier errors, and variant 1 has not been retested after that prelude.
+
 ```sh
 venv/bin/python scripts/inspect_sroot_variants.py
 venv/bin/python scripts/emulate_boot_variants.py

@@ -4,7 +4,9 @@ The actual P16 policy is now available. The original NVIDIA 617.42 Windows
 parser and complete policy initializer both return zero on the physical ROM
 capture. All fields used by the native parser and the derived gating policy
 match the original code. This resolves the missing board-policy input; it
-does not establish a successful hardware boot.
+alone does not establish a successful NPU firmware boot. The physical sequence
+has now reached successful firmware startup and bypass-task completion; see
+the results below. Numerical inference remains pending.
 
 ## Reproducible read-only acquisition
 
@@ -118,9 +120,9 @@ make -C /lib/modules/7.2.8-23-omarchy-p16-asus-npu2/build \
 The lifecycle test compiles the actual Linux prelude and native ROM parser,
 checks the genuine capture/hash, injects each phase failure, and verifies no
 later phase or repeat attempt occurs. OS/transport edges are synthetic there;
-packet/peer fault tests remain separate. Physical qualification is pending.
-In particular the startup response lengths are inferred, IRQ roles remain
-unqualified, and no accel API or inference readiness is claimed.
+packet/peer fault tests remain separate. The physical prelude now satisfies
+those response contracts on this board; IRQ roles remain unqualified, and
+no accel API or inference readiness is claimed.
 
 The repeatable qualification entry point is:
 
@@ -138,3 +140,123 @@ For a separately reviewed longer prefix, `--through` accepts the existing
 phase names up to `bypass_task`. Even bypass success is not numerical inference
 or production-driver readiness. No module autoload, boot-menu change or reboot
 is performed. Do not rerun after an attempted phase in the same boot.
+
+A successful HFRP-only run can be continued explicitly, without loading a
+second module or repeating the handshake:
+
+```sh
+pkexec /usr/bin/python3 "$PWD/scripts/qualify_p16_start.py" \
+  --after-hfrp --through bypass_task --log "$PWD/results/NEW-after-hfrp.jsonl"
+```
+
+This requires the loaded module's source version to match the reviewed build,
+HFRP phase 5/configured/power-accepted with error zero, and **no earlier upload
+attempt**. A failed or completed upload is never resumed/retried through it.
+The offline runner tests cover both prefixes and stop on rejected writes or
+missing success evidence.
+
+## Physical HFRP result, 2026-10-27
+
+At 20:42:47 +01:00 on `7.2.8-23-omarchy-p16-asus-npu2`, boot ID
+`6c8ae50e-4de7-4b42-b5ca-24b896556b8b`, the manual prelude completed with error
+zero. The module SHA256 was
+`51a8a948ab5df17aca4923d8f42641b079351d32daf1ef54bf1412d2b8403b2a`.
+The machine remained in `performance`; only dedicated groups 19/24 were moved
+from identity to DMA. Both guarded platform endpoints bound successfully.
+
+Observed result: handshake succeeded; stamp `0x20251722` selected version 1.5;
+all eight setup commands passed their transport, status and payload-shape
+checks; command 400 returned header `0xa06`, two payload bytes `8c00`, status
+zero. Final state was phase 5, READY, no pending sequence, configured and
+power-accepted. The last statistics reply was `0x91e`, length 26. The durable
+local record is `results/p16-hfrp-qualified-20261027.jsonl`.
+
+This validates the recovered configuration/power protocol on this machine.
+It is not a physical rail measurement or proof that the NPU firmware has
+started. At this boundary no SROOT upload, DMA buffer, ping, region-5,
+configuration import or task had been attempted. PM/module lifetime remains
+held; no automatic reset/unload was performed. No new Xid, SError or IOMMU
+fault appeared in the inspected kernel log.
+
+## Physical firmware startup and bypass completion
+
+At 20:45:40 +01:00 in the same boot, the explicit `--after-hfrp` continuation
+completed every stage through `bypass_task`. Durable local record:
+`results/p16-after-hfrp-20261027.jsonl`. The first successful module and both
+execution logs are archived in `results/p16-first-success/`.
+
+| Stage | Physical result |
+| --- | --- |
+| SROOT variant 0 | Reply `0x18`, status/detail zero, DLA idle observed |
+| Upload backing | SROOT DMA `0xfffe0000`, retained |
+| DMA-word ping | `0x44444444`, verified |
+| Region 5 | Registered with a matching zero-status response |
+| Config export / import | Replies `0x1602` / `0x1502`, accepted |
+| Low-power config import | Reply `0x1702`, accepted with the then-existing provider-4 fallback |
+| Bypass task | Reply `0x702`, data `0xfffdfd0`, accepted |
+| Completion | SWGEN0 observed and fence `0x12345678`, verified |
+
+This establishes firmware execution, bidirectional host DMA/control traffic,
+configuration acceptance and one scheduler/postaction completion on the P16.
+The descriptor uses BYPASS_EXEC, so no neural-network arithmetic is established.
+No firmware authentication bypass, core-start register write or automatic retry
+was used. The formerly rejected initial variant now succeeds after adding the
+actual HFRP setup/power prelude. That strongly implicates the missing prelude;
+it does not assign verified meanings to the earlier status/detail codes.
+
+All published DMA buffers and runtime/module references remain held. No reset,
+unload, suspend/resume or production recovery mechanism has been qualified.
+No new Xid, SError or IOMMU fault appeared in the inspected kernel log.
+
+## Board-correct low-power setting and next numerical test
+
+The first successful run still used the old command-23 zero-input fallback 4,
+which produced the raw word 8000. The captured policy instead has provider
+`+0xf4 = 1`; the full original initializer preserves it. The current code uses
+that value (raw word 2000) and the derived HAL flag, with the Windows fallback
+only when the board value is zero. The actual Linux phase matches all 4096
+bytes produced by the original Windows builder for provider 1; its raw HAL-1
+set/get roundtrip and 30 lifecycle/failure cases pass. **This correction has
+not been applied to the retained live instance.**
+
+The new optional `relu_probe` phase requires the already verified bypass and
+the same pinned board setup. It requests an exact 2,834,432-byte template,
+SHA256 `b5792ecfbdc5d190fec9cdf7ecc17c7ba6919a42d5c1528e2acbcc2fc47f997c`.
+The graph is one FP16 ReLU, `[1,32,7,7]`, with 3136-byte CHW16 input/output.
+Its preparation is reproducible with `scripts/prepare_p16_relu.py`; generated
+vendor/compiler bytes stay ignored. No arbitrary model, address, length or
+command is accepted from userspace.
+
+The kernel checks the full template hash before allocation, requires a
+4-KiB-aligned coherent 36-bit DMA extent, constructs its own eight-entry address
+list and fenced descriptor, and uses the same completion loop as the proven
+bypass. The output starts poisoned. Only command acceptance, SWGEN0, fence,
+unchanged input digest and expected output digest together pass the numerical
+check. Expected output SHA256:
+`6e043c4c2ae0ddfcaca4341ab36f15fdebf066157af5da6483bc56cd6786404f`.
+The CPU reference was checked independently with NumPy and ONNX.
+
+`test_linux_relu.py` checks the actual Linux preparation/lifetime/oracle code
+in 27 cases, including transport success with unchanged output and corrupted
+input. The exact prepared bytes also run through the unmodified raw HAL-1
+reset/trap/DMA/scheduler code to engine wait, with the expected seven engine
+address pairs. This emulates control processing, not engine arithmetic. The
+shared completion loop retains its 44 fault/lifecycle tests. The complete
+runner has 59 prefix/failure/precondition tests. Normal and UBSan checks pass.
+
+The rebuilt module targets the existing `npu2` kernel; source version
+`E936E960ECE1CFAEFA88E1D`, SHA256
+`9a5b2b90e8477ab5ca9660f99a8c54e68009f02fe14b55e4bee2efec467f1e85`.
+Its exact build/source/template manifest is
+`results/npu2-relu-build-manifest.json`. It has not replaced the pinned live
+module. A fresh boot into the same `npu2` entry is required before loading it:
+
+```sh
+powerprofilesctl set performance
+pkexec /usr/bin/python3 "$PWD/scripts/qualify_p16_start.py" \
+  --through relu_probe --log "$PWD/results/NEW-relu-start.jsonl"
+```
+
+No new kernel/UKI or boot-menu change is needed. General model submission,
+an accel userspace API, asynchronous IRQ handling and safe teardown remain
+outside this one-attempt qualification path.

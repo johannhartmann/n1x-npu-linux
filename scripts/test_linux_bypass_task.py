@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
-    function = source[source.index('static int n1x_boot_bypass_task_once('):
+    function = source[source.index('static int n1x_boot_run_task('):
                       source.index('static ssize_t bypass_task_store(')]
     harness = r'''
 #include <assert.h>
@@ -41,8 +41,9 @@ static struct n1x_boot_endpoint *boot_sroot,*boot_dla;
 static struct {bool verified;} boot_ping;
 static struct {bool registered;} boot_region5;
 static struct {bool accepted;} boot_config_apply,boot_lpwr;
-static struct {void *buffer;dma_addr_t dma;struct n1x_dla_response response;
- u32 pending,fence;bool attempted,response_valid,accepted,signal_seen,verified;int error;} boot_task;
+struct n1x_boot_task_state {void *buffer;dma_addr_t dma;struct n1x_dla_response response;
+ u32 pending,fence;bool attempted,response_valid,accepted,signal_seen,verified;int error;};
+static struct n1x_boot_task_state boot_task;
 static bool enable_bypass_task,machine_ok,allocation_fail,sent;
 static unsigned char allocation[4096] __attribute__((aligned(256)));
 static dma_addr_t allocation_address;

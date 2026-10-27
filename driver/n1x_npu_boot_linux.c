@@ -31,6 +31,11 @@
 #define N1X_BOOT_FIRMWARE "nvidia/n1x/p16-sroot-v0.bin"
 #define N1X_BOOT_FALLBACK_FIRMWARE "nvidia/n1x/p16-sroot-v1.bin"
 #define N1X_BOOT_BYTES 67508
+#define N1X_RELU_FIRMWARE "nvidia/n1x/p16-relu-template.bin"
+#define N1X_RELU_BYTES 2834432U
+#define N1X_RELU_INPUT 8192U
+#define N1X_RELU_OUTPUT 12288U
+#define N1X_RELU_IO_BYTES 3136U
 #define N1X_REGION5_ALLOC (1U << 20)
 #define N1X_REGION5_OFFSET 16U
 #define N1X_REGION5_STRIDE 52U
@@ -67,11 +72,15 @@ MODULE_PARM_DESC(enable_config_apply, "Permit one explicit default config import
 
 static bool enable_lpwr_config;
 module_param(enable_lpwr_config, bool, 0400);
-MODULE_PARM_DESC(enable_lpwr_config, "Permit one explicit command-23 Windows fallback config import (default false)");
+MODULE_PARM_DESC(enable_lpwr_config, "Permit one explicit command-23 board-policy config import (default false)");
 
 static bool enable_bypass_task;
 module_param(enable_bypass_task, bool, 0400);
 MODULE_PARM_DESC(enable_bypass_task, "Permit one explicit single bypass task after config qualification (default false)");
+
+static bool enable_relu_probe;
+module_param(enable_relu_probe, bool, 0400);
+MODULE_PARM_DESC(enable_relu_probe, "Permit one pinned FP16 ReLU numerical probe after verified bypass (default false)");
 
 struct n1x_boot_endpoint {
 	struct device *dev;
@@ -137,14 +146,17 @@ static struct {
 	int error;
 } boot_lpwr;
 
-static struct {
+struct n1x_boot_task_state {
 	void *buffer;
 	dma_addr_t dma;
 	struct n1x_dla_response response;
 	u32 pending, fence;
 	bool attempted, response_valid, accepted, signal_seen, verified;
 	int error;
-} boot_task;
+};
+static struct n1x_boot_task_state boot_task, boot_relu;
+static bool boot_relu_numeric;
+static u8 boot_relu_input_hash[SHA256_DIGEST_SIZE], boot_relu_output_hash[SHA256_DIGEST_SIZE];
 
 static bool n1x_boot_machine(void)
 {
@@ -760,9 +772,8 @@ static ssize_t apply_config_store(struct device *dev, struct device_attribute *a
 }
 static DEVICE_ATTR_WO(apply_config);
 
-/* Windows setup uses provider +0xf4=4 only when the original field is zero.
- * This explicit experiment imports that recovered fallback, not a measured
- * live Windows policy. Do not interpret the field as a physical time unit.
+/* Windows setup preserves the actual board's provider +0xf4, substituting 4
+ * only for zero. BIOS-300 supplies 1. Do not infer physical time units here.
  */
 static int n1x_boot_apply_lpwr_once(void)
 {
@@ -773,7 +784,8 @@ static int n1x_boot_apply_lpwr_once(void)
 	if (!enable_lpwr_config || !n1x_boot_machine())
 		return -EPERM;
 	if (!boot_sroot || !boot_dla || !boot_ping.verified ||
-	    !boot_region5.registered || !boot_config_apply.accepted)
+	    !boot_region5.registered || !boot_config_apply.accepted ||
+	    !boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid)
 		return -ENODEV;
 	if (boot_lpwr.attempted)
 		return -EALREADY;
@@ -793,7 +805,9 @@ static int n1x_boot_apply_lpwr_once(void)
 		goto free;
 	}
 	memset(boot_lpwr.buffer, 0, 4096);
-	err = n1x_dla_build_command23(boot_lpwr.buffer, 4096, 1, 1, 4);
+	err = n1x_dla_build_command23(boot_lpwr.buffer, 4096,
+			boot_hfrp.gating.hal_flags[0], 1,
+			boot_hfrp.policy.gating_bytes[0] ?: 4);
 	if (err)
 		goto free;
 	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
@@ -836,13 +850,68 @@ static DEVICE_ATTR_WO(apply_lpwr);
  * A changed fence alone is insufficient; require submission acceptance and
  * SWGEN0, processing pending mailbox errors first. Never infer DMA quiescence.
  */
-static int n1x_boot_bypass_task_once(void)
+static int n1x_boot_run_task(struct n1x_boot_task_state *task)
 {
 	struct n1x_dla_response_fields fields;
-	struct n1x_dla_task_args args = {0};
 	struct n1x_dla_io io;
-	u64 maximum = DMA_BIT_MASK(36), network;
 	u32 attempt;
+	int err;
+	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+	dma_wmb();
+	task->attempted = true;
+	err = n1x_dla_send_method(&io, 0x307, task->dma >> 8, 5001, 1000);
+	if (err)
+		return err;
+	for (attempt = 0; attempt < 5001; attempt++) {
+		err = n1x_boot_read(boot_dla, 8, &task->pending);
+		if (err)
+			return err;
+		if (task->pending & 0x80) {
+			err = n1x_dla_take_response(&io, &task->response);
+			if (err)
+				return err;
+			task->response_valid = true;
+			err = n1x_dla_decode_response(&task->response, &fields);
+			if (err)
+				return err;
+			if (fields.command != 7 || fields.data != task->dma >> 8)
+				return -EPROTO;
+			if (fields.status || fields.message == 1 || fields.message == 8 ||
+			    fields.message == 9 || fields.message == 10)
+				return -EREMOTEIO;
+			if (fields.upper || fields.message != 2 || task->accepted)
+				return -EPROTO;
+			task->accepted = true;
+		}
+		if (task->pending & 0x40)
+			task->signal_seen = true;
+		dma_rmb();
+		task->fence = le32_to_cpu(READ_ONCE(*(__le32 *)(task->buffer + 768)));
+		if (task->accepted && task->signal_seen && task->fence == 0x12345678) {
+			/* A later error can coexist with a written fence. Recheck before
+			 * acknowledging SWGEN0; leave new mailbox work for the next poll.
+			 */
+			err = n1x_boot_read(boot_dla, 8, &task->pending);
+			if (err)
+				return err;
+			if (!(task->pending & 0x80)) {
+				err = n1x_boot_write(boot_dla, 4, 0x40);
+				if (err)
+					return err;
+				task->verified = true;
+				return 0;
+			}
+		}
+		if (attempt + 1 < 5001)
+			n1x_boot_delay(boot_dla, 1000);
+	}
+	return -ETIMEDOUT;
+}
+
+static int n1x_boot_bypass_task_once(void)
+{
+	struct n1x_dla_task_args args = {0};
+	u64 maximum = DMA_BIT_MASK(36), network;
 	int err;
 
 	if (!enable_bypass_task || !n1x_boot_machine())
@@ -884,56 +953,7 @@ static int n1x_boot_bypass_task_once(void)
 		goto free;
 	WRITE_ONCE(*(__le32 *)(boot_task.buffer + 768), cpu_to_le32(0xdeadbeef));
 	boot_task.fence = 0xdeadbeef;
-	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
-	dma_wmb();
-	boot_task.attempted = true;
-	err = n1x_dla_send_method(&io, 0x307, boot_task.dma >> 8, 5001, 1000);
-	if (err)
-		return err;
-	for (attempt = 0; attempt < 5001; attempt++) {
-		err = n1x_boot_read(boot_dla, 8, &boot_task.pending);
-		if (err)
-			return err;
-		if (boot_task.pending & 0x80) {
-			err = n1x_dla_take_response(&io, &boot_task.response);
-			if (err)
-				return err;
-			boot_task.response_valid = true;
-			err = n1x_dla_decode_response(&boot_task.response, &fields);
-			if (err)
-				return err;
-			if (fields.command != 7 || fields.data != boot_task.dma >> 8)
-				return -EPROTO;
-			if (fields.status || fields.message == 1 || fields.message == 8 ||
-			    fields.message == 9 || fields.message == 10)
-				return -EREMOTEIO;
-			if (fields.upper || fields.message != 2 || boot_task.accepted)
-				return -EPROTO;
-			boot_task.accepted = true;
-		}
-		if (boot_task.pending & 0x40)
-			boot_task.signal_seen = true;
-		dma_rmb();
-		boot_task.fence = le32_to_cpu(READ_ONCE(*(__le32 *)(boot_task.buffer + 768)));
-		if (boot_task.accepted && boot_task.signal_seen && boot_task.fence == 0x12345678) {
-			/* A later error can coexist with a written fence. Recheck before
-			 * acknowledging SWGEN0; leave new mailbox work for the next poll.
-			 */
-			err = n1x_boot_read(boot_dla, 8, &boot_task.pending);
-			if (err)
-				return err;
-			if (!(boot_task.pending & 0x80)) {
-				err = n1x_boot_write(boot_dla, 4, 0x40);
-				if (err)
-					return err;
-				boot_task.verified = true;
-				return 0;
-			}
-		}
-		if (attempt + 1 < 5001)
-			n1x_boot_delay(boot_dla, 1000);
-	}
-	return -ETIMEDOUT;
+	return n1x_boot_run_task(&boot_task);
 free:
 	dma_free_coherent(boot_dla->dev, 4096, boot_task.buffer, boot_task.dma);
 	boot_task.buffer = NULL;
@@ -958,6 +978,146 @@ static ssize_t bypass_task_store(struct device *dev, struct device_attribute *at
 	return err ? err : count;
 }
 static DEVICE_ATTR_WO(bypass_task);
+
+
+/* One compiler-produced graph, immutable hash-checked backing. No arbitrary
+ * model/UAPI, FlatBuffers parsing in kernel, or caller-provided addresses.
+ */
+static int n1x_boot_validate_relu_firmware(const struct firmware *firmware)
+{
+    static const u8 expected[SHA256_DIGEST_SIZE] = {0xb5, 0x79, 0x2e, 0xcf, 0xbd, 0xc5, 0xd1, 0x90, 0xfe, 0xc9, 0xcd, 0xf7, 0xec, 0xc1, 0x7c, 0x7b, 0xa6, 0x91, 0x9a, 0x42, 0xd5, 0xc1, 0x52, 0x8e, 0x2a, 0xcb, 0xcc, 0x2f, 0xc4, 0x7f, 0x99, 0x7c};
+    u8 digest[SHA256_DIGEST_SIZE];
+    if (!firmware || !firmware->data || firmware->size != N1X_RELU_BYTES)
+        return -EBADMSG;
+    sha256(firmware->data, firmware->size, digest);
+    return memcmp(digest, expected, sizeof(digest)) ? -EBADMSG : 0;
+}
+
+static int n1x_boot_check_relu(void)
+{
+    static const u8 input[SHA256_DIGEST_SIZE] = {0x73, 0xcc, 0x50, 0x1f, 0x70, 0x2f, 0xa3, 0xfd, 0xd1, 0xa4, 0x68, 0xfe, 0xfc, 0x31, 0x6d, 0x1b, 0x83, 0x89, 0x41, 0xfd, 0xc1, 0x39, 0x7d, 0x4a, 0x7f, 0xf9, 0xb3, 0x0e, 0xe4, 0xa8, 0x1f, 0x45};
+    static const u8 output[SHA256_DIGEST_SIZE] = {0x6e, 0x04, 0x3c, 0x4c, 0x2a, 0xe0, 0xdd, 0xfc, 0xac, 0xa4, 0x34, 0x1a, 0xb3, 0x6f, 0x15, 0xfd, 0xeb, 0xf0, 0x66, 0x15, 0x7a, 0xf5, 0xda, 0x64, 0x83, 0xbc, 0x56, 0xcd, 0x67, 0x86, 0x40, 0x4f};
+    /* The fence/ACK path has completed; retain DMA nevertheless. */
+    dma_rmb();
+    sha256(boot_relu.buffer + N1X_RELU_INPUT, N1X_RELU_IO_BYTES, boot_relu_input_hash);
+    sha256(boot_relu.buffer + N1X_RELU_OUTPUT, N1X_RELU_IO_BYTES, boot_relu_output_hash);
+    if (memcmp(input, boot_relu_input_hash, sizeof(input)) ||
+        memcmp(output, boot_relu_output_hash, sizeof(output)))
+        return -EBADMSG;
+    boot_relu_numeric = true;
+    return 0;
+}
+
+static int n1x_boot_relu_once(void)
+{
+    static const u32 offsets[8] = {16384, 8192, 12288, 20480, 53248, 57344, 2797568, 2830336};
+    const struct firmware *firmware;
+    struct n1x_dla_task_args args = {0};
+    u64 maximum = DMA_BIT_MASK(36), addresses[8];
+    unsigned int i;
+    int err;
+
+    if (!enable_relu_probe || !n1x_boot_machine())
+        return -EPERM;
+    if (!boot_dla || !boot_sroot || !boot_task.verified || !boot_lpwr.accepted ||
+        !boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid)
+        return -ENODEV;
+    if (boot_relu.attempted)
+        return -EALREADY;
+    err = n1x_boot_dma_gate(boot_dla);
+    if (err)
+        return err;
+    err = n1x_boot_read(boot_dla, 8, &boot_relu.pending);
+    if (err)
+        return err;
+    if (boot_relu.pending & 0xc0)
+        return -EBUSY;
+    err = request_firmware_direct(&firmware, N1X_RELU_FIRMWARE, boot_dla->dev);
+    if (err)
+        return err;
+    err = n1x_boot_validate_relu_firmware(firmware);
+    if (err)
+        goto release;
+    err = dma_set_mask_and_coherent(boot_dla->dev, maximum);
+    if (err)
+        goto release;
+    boot_relu.buffer = dma_alloc_coherent(boot_dla->dev, N1X_RELU_BYTES,
+                                         &boot_relu.dma, GFP_KERNEL);
+    if (!boot_relu.buffer) {
+        err = -ENOMEM;
+        goto release;
+    }
+    if (!boot_relu.dma || (boot_relu.dma & 4095) || boot_relu.dma > maximum ||
+        N1X_RELU_BYTES - 1 > maximum - boot_relu.dma) {
+        err = -ERANGE;
+        goto free;
+    }
+    memcpy(boot_relu.buffer, firmware->data, N1X_RELU_BYTES);
+    for (i = 0; i < 8; i++)
+        addresses[i] = boot_relu.dma + offsets[i];
+    args.address_list = boot_relu.dma + 256;
+    args.timeout = 1000000;
+    args.num_addresses = 8;
+    err = n1x_dla_build_address_list(boot_relu.buffer + 256, 256, addresses, 8);
+    if (!err)
+        err = n1x_dla_build_fenced_task_v2(boot_relu.buffer, 256, &args,
+                                         boot_relu.dma + 768, 0x12345678);
+    if (err)
+        goto free;
+    WRITE_ONCE(*(__le32 *)(boot_relu.buffer + 768), cpu_to_le32(0xdeadbeef));
+    boot_relu.fence = 0xdeadbeef;
+    release_firmware(firmware);
+    err = n1x_boot_run_task(&boot_relu);
+    if (!err)
+        err = n1x_boot_check_relu();
+    dev_info(boot_dla->dev, "ReLU error=%d accepted=%u completed=%u numerical_match=%u input=%*phN output=%*phN; DMA retained until reboot\n",
+             err, boot_relu.accepted, boot_relu.verified, boot_relu_numeric,
+             SHA256_DIGEST_SIZE, boot_relu_input_hash, SHA256_DIGEST_SIZE, boot_relu_output_hash);
+    return err;
+free:
+    dma_free_coherent(boot_dla->dev, N1X_RELU_BYTES, boot_relu.buffer, boot_relu.dma);
+    boot_relu.buffer = NULL;
+    boot_relu.dma = 0;
+release:
+    release_firmware(firmware);
+    return err;
+}
+
+static ssize_t relu_probe_store(struct device *dev, struct device_attribute *attr,
+                                const char *buf, size_t count)
+{
+    int err;
+    if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "run"))
+        return -EPERM;
+    mutex_lock(&boot_lock);
+    if (!boot_dla || boot_dla->dev != dev)
+        err = -ENODEV;
+    else if (boot_relu.attempted)
+        err = -EALREADY;
+    else {
+        err = n1x_boot_relu_once();
+        boot_relu.error = err;
+    }
+    mutex_unlock(&boot_lock);
+    return err ? err : count;
+}
+static DEVICE_ATTR_WO(relu_probe);
+
+static ssize_t relu_status_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    ssize_t size;
+    mutex_lock(&boot_lock);
+    size = sysfs_emit(buf,
+        "enabled=%u attempted=%u error=%d accepted=%u completed=%u signal_seen=%u pending=%#x reply=%#x data=%#x fence=%#x numeric_verified=%u input_sha256=%*phN output_sha256=%*phN retained=%u\n",
+        enable_relu_probe, boot_relu.attempted, boot_relu.error, boot_relu.accepted,
+        boot_relu.verified, boot_relu.signal_seen, boot_relu.pending,
+        boot_relu.response.word, boot_relu.response.data, boot_relu.fence, boot_relu_numeric,
+        SHA256_DIGEST_SIZE, boot_relu_input_hash, SHA256_DIGEST_SIZE, boot_relu_output_hash,
+        !!boot_relu.buffer);
+    mutex_unlock(&boot_lock);
+    return size;
+}
+static struct device_attribute dev_attr_relu_status = __ATTR(relu_status, 0400, relu_status_show, NULL);
 
 static ssize_t config_snapshot_show(struct device *dev, struct device_attribute *attr,
 				    char *buf)
@@ -1086,6 +1246,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_show, NULL);
 static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
 	&dev_attr_prepare_hfrp.attr, &dev_attr_hfrp_status.attr,
+	&dev_attr_relu_probe.attr, &dev_attr_relu_status.attr,
 	&dev_attr_config_snapshot.attr, &dev_attr_init_region5.attr,
 	&dev_attr_apply_config.attr, &dev_attr_apply_lpwr.attr, &dev_attr_bypass_task.attr, &dev_attr_status.attr, NULL};
 ATTRIBUTE_GROUPS(boot);
@@ -1226,3 +1387,5 @@ MODULE_DESCRIPTION("Explicit one-attempt P16 SROOT upload qualification; reboot 
 MODULE_FIRMWARE(N1X_BOOT_FIRMWARE);
 MODULE_FIRMWARE(N1X_BOOT_FALLBACK_FIRMWARE);
 MODULE_FIRMWARE(N1X_BOARD_FIRMWARE);
+
+MODULE_FIRMWARE(N1X_RELU_FIRMWARE);

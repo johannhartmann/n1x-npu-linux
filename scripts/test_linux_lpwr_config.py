@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify native LPWR import against the original Windows fallback payload."""
+"""Verify native LPWR import against the original Windows board-policy payload."""
 import hashlib
 import os
 from pathlib import Path
@@ -15,7 +15,7 @@ from emulate_profile1_commands import run, MMIO, ACK, PROFILE1_HASH
 def main():
     path = ROOT/'sources/nvidia/Display.Driver/nvlddmkm.sys'
     assert hashlib.sha256(path.read_bytes()).hexdigest() == KMD_SHA256
-    original = windows(pefile.PE(str(path), fast_load=True), 1, 1, 4)
+    original = windows(pefile.PE(str(path), fast_load=True), 1, 1, 1)
     assert original['status'] == 0
     reference_bytes = original['record'] + original['tail']
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
@@ -30,6 +30,7 @@ def main():
 #include <errno.h>
 #include "n1x_dla_control.h"
 #include "n1x_dla_command.h"
+#include "n1x_dla_vbios.h"
 typedef uint32_t u32;
 typedef uint64_t u64;
 typedef uint64_t dma_addr_t;
@@ -44,6 +45,7 @@ static struct n1x_boot_endpoint *boot_sroot,*boot_dla;
 static struct {bool verified;} boot_ping;
 static struct {bool registered;} boot_region5;
 static struct {bool accepted;} boot_config_apply;
+static struct {bool powered;struct n1x_dla_vbios_policy policy;struct n1x_dla_gating_policy gating;} boot_hfrp;
 static struct {void *buffer;dma_addr_t dma;struct n1x_dla_control_result transaction;
  bool attempted,accepted;int error;} boot_lpwr;
 static bool enable_lpwr_config,machine_ok,allocation_fail,stale,sent;
@@ -87,6 +89,8 @@ static void dma_wmb(void) {barriers++;}
     harness += r'''
 static void reset(void)
 {boot_sroot=boot_dla=&endpoint;boot_ping.verified=boot_region5.registered=boot_config_apply.accepted=true;enable_lpwr_config=machine_ok=true;
+ boot_hfrp.powered=true;boot_hfrp.policy.boot_tables_valid=1;
+ boot_hfrp.policy.gating_bytes[0]=1;boot_hfrp.gating.hal_flags[0]=1;
  allocation_fail=stale=sent=false;allocation_address=HOST_ADDRESS;
  gate_error=mask_error=allocations=frees=barriers=io_calls=0;fail_at=-1;
  response_word=0x1702;response_data=allocation_address>>8;method_data=0;
@@ -107,6 +111,8 @@ int main(int argc,char **argv)
  reset();boot_ping.verified=false;check(-ENODEV,0,0,false,false);
  reset();boot_region5.registered=false;check(-ENODEV,0,0,false,false);
  reset();boot_config_apply.accepted=false;check(-ENODEV,0,0,false,false);
+ reset();boot_hfrp.powered=false;check(-ENODEV,0,0,false,false);
+ reset();boot_hfrp.policy.boot_tables_valid=0;check(-ENODEV,0,0,false,false);
  reset();gate_error=-EOPNOTSUPP;check(-EOPNOTSUPP,0,0,false,false);
  reset();mask_error=-EIO;check(-EIO,0,0,false,false);
  reset();allocation_fail=true;check(-ENOMEM,1,0,false,false);
@@ -117,7 +123,7 @@ int main(int argc,char **argv)
  reset();response_word=0x111701;check(-EREMOTEIO,1,0,true,false);assert(boot_lpwr.transaction.response_valid);
  reset();response_data++;check(-EPROTO,1,0,true,false);assert(boot_lpwr.transaction.response_valid);
  reset();check(0,1,0,true,true);assert(boot_lpwr.transaction.response_valid);
- printf("%d LPWR lifecycle cases and full Windows 4-KiB fallback buffer equivalence passed; no hardware access\n",cases);
+ printf("%d LPWR lifecycle cases and full Windows 4-KiB board-policy buffer equivalence passed; no hardware access\n",cases);
  return 0;}
 '''
     harness = '#define HOST_ADDRESS '+hex(HOST)+'ULL\n'+harness
@@ -162,7 +168,7 @@ int main(int argc,char **argv)
     assert result['interrupts'] == [(0x1702, HOST >> 8), (0x1802, HOST >> 8)]
     assert len(result['dma_commands']) == 20
     assert local == [reference_bytes[:40]]*2 and exported == [reference_bytes]
-    print('Same-instance original HAL-1 command 23/24 fallback roundtrip passed; 20 modeled DMA words, no hardware access')
+    print('Same-instance original HAL-1 command 23/24 board-policy roundtrip passed; 20 modeled DMA words, no hardware access')
 
 
 if __name__ == '__main__':
