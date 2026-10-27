@@ -9,6 +9,38 @@ against original-code emulation and NVIDIA's public Jetson sources.
 the physical P16 under Linux. A general `/dev/accel` API is not yet provided.**
 This is a manual research driver, not a production replacement for a vendor SDK.
 
+## What this project does
+
+The goal is to make the N1X's dedicated neural-network accelerator usable from
+Linux. This work targets the NPU/DLA path, independently of the GPU's CUDA
+stack. It is separate from the broader
+[P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux)
+and the [spark_hwmon telemetry driver](https://github.com/johannhartmann/spark_hwmon).
+
+The implementation reconstructs the startup and task protocols from NVIDIA's
+Windows ARM64 binaries. Original driver and RISC-V firmware code is executed
+in offline emulators to compare its behavior with the Linux implementation;
+public Jetson sources provide additional protocol references. The hardware
+test itself runs entirely on Linux and does not require a Windows installation.
+The repository contains the Linux module, protocol serializers, analysis tools,
+regression tests and the evidence behind the reconstructed interfaces.
+
+On the tested P16, the Linux module reads the verified board policy, performs
+the power/configuration handshake, uploads the extracted firmware, establishes
+DMA communication and submits a compiler-produced task. The numerical test
+runs ReLU, `output = max(input, 0)`, on 1,568 FP16 values. The device-written
+output matches the complete CPU-reference hash. This demonstrates arithmetic
+execution beyond device enumeration, a firmware response or a bypass task.
+
+The current scope is one board/BIOS/kernel combination and one fixed graph.
+There is no general model-loading API, framework integration or `/dev/accel`
+device yet. Repeated execution, interrupt-driven operation, safe resource
+release, recovery and suspend/resume still need implementation or qualification.
+The hardware path is deliberately manual and guarded for the tested machine;
+it is not an installer for arbitrary N1X systems. Vendor binaries, firmware,
+board ROM captures and generated model artifacts are not included. Reproduction
+requires obtaining the pinned inputs described in the linked documentation.
+
 ## Verified hardware behavior
 
 On `7.2.8-23-omarchy-p16-asus-npu2`:
