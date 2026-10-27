@@ -127,6 +127,7 @@ This is one successful execution, not a throughput or sustained-stability benchm
 
 - [Driver and serializer code](driver/), [interfaces](include/), [tests/tools](scripts/).
 - [Current board startup and recovery constraints](docs/p16-board-start.md).
+- [DLA integration analysis and recommended Linux API architecture](docs/dla-integration-design.md).
 - [ACPI power/resource audit](docs/acpi-audit.md), [Linux/DMA backend](docs/linux-backend.md).
 - [HFRP protocol](docs/hfrp-irq.md), [VBIOS reverse engineering](docs/hfrp-vbios.md).
 - [SROOT transport](docs/sroot-transport.md), [vendor envelopes](docs/sroot-envelope.md).
