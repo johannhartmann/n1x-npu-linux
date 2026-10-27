@@ -139,10 +139,13 @@ The existing [firmware retirement tests](bypass-task.md#completion-boundary-and-
 show the successful firmware tail no longer accesses the modeled job after
 SWGEN0. That remains stronger task-specific evidence than the userspace
 unregister return, but its synchronous DMA/engine model does not establish
-physical ordering. The next missing evidence is the Windows KMD's connection
-between task completion, scheduler fences and deferred destruction, together
-with physical repeated-job qualification. The Linux retained-memory policy
-remains unchanged until that boundary is qualified.
+physical ordering. The [normal KMD completion reader](windows-kmd-task.md)
+now connects the device-written semaphore to job selection and Windows
+scheduler notification. Its [outstanding-job recovery helper](windows-kmd-task.md#software-retirement-is-not-device-completion)
+can also advance software completion/cleanup counters without reading a new
+device completion. These paths must remain distinct. Physical repeated-job
+qualification, device ordering and error/reset quiescence remain missing;
+the Linux retained-memory policy is unchanged.
 
 ## Reproduce
 

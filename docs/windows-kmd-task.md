@@ -605,3 +605,63 @@ arithmetic producer must explicitly clear the inner bypass flag, validate
 counts before narrowing, and distinguish command completion from numerical
 correctness. The successful RAM replay does not establish cache coherence,
 engine DMA quiescence, safe allocation release or physical repeated inference.
+
+## Software retirement is not device completion
+
+Research date: 2026-10-28. The DLA adapter vtable at `0xe9c910`, slot `0x40`,
+points to `0xdd52f0`. Static inspection shows a capability/state gate at
+`0x1a89a68`, the previously recovered control-gate writer `0xe18220`, and an
+OS synchronization boundary `0xdca2b0`. The latter selects helper `0xe183b0`
+or `0xe18a30` according to capability bit 13. The caller subsequently performs
+additional context, entry-bank and queue operations before reopening the gate.
+This is not a recovered complete physical-reset procedure.
+
+`scripts/inspect_kmd_recovery.py` isolates and executes original `0xe183b0`
+with the capability-bit-clear selection's constructed queue/context state.
+It uses the original entry-bank accessors `0xdd1548`, `0xdd1428`, `0xdd7708`,
+the concrete adapter predicates `0x5bf0`/`0x5be0`, and worker wrapper
+`0xdd6440`. IRQL, timestamps, logging and the final context/worker virtual
+callbacks remain modeled. The original helper requires IRQL above 2; the
+test supplies 3, rather than claiming an actual Windows scheduler context.
+
+For outstanding records with nonzero submission timestamps, job type 1 and
+the tested context mode `+0x8c = 2`, the helper:
+
+1. Reads the entry-marker bank once, without polling the completion bank.
+2. Sets job flag bit 3 and appends each outstanding internal sequence to the
+   caller's output array.
+3. Calls the first selected context's virtual slot `0x98` with argument zero,
+   sets context `+0x234` bit 2 and records the selected job. Later selected
+   records go through the worker callback. Those callbacks' hardware effects
+   are not established by this test.
+4. Advances software `scheduler+0x137c+4*q` and `+0x1b3c+4*q` to the submitted
+   sequence, clears the outstanding counter at `+0xbb8+4*q`, clears the byte
+   at `+0x3754+q`, and copies `+0x384c+4*q` to `+0x3c2c+4*q`.
+5. Returns boolean true and status zero, even though the modeled device
+   completion word still contains the earlier sequence.
+
+Here `q = node*8+engine`. The reported OS fence normally comes from the first
+selected record's `+0x30`. If job flag bit 2 is set and bit 9 clear, the helper
+retains the prior reported fence instead. An empty queue performs bookkeeping
+without reading either semaphore bank. For the tested first-record context
+mode zero, the helper takes an earlier rejection path with status
+`0xc00000bb`, without advancing the completion/cleanup counters.
+
+Sixteen cases cover zero, one and three outstanding records, ring wrap, u32
+sequence wrap with a valid current entry marker, OS-fence flag combinations,
+and that rejection. Read/write hooks verify that no semaphore-bank write is
+performed and that the completion bank is not read; the return/output counters
+are checked against the original code's writes.
+
+```sh
+venv/bin/python scripts/inspect_kmd_recovery.py > results/windows-kmd-recovery.json
+```
+
+The result does not show that Windows frees live DMA unsafely: the caller's
+gate and synchronization, the alternative helper, modeled virtual callbacks
+and surrounding recovery still matter. It does show why copying software
+counter advancement from this path into Linux cannot establish device
+completion or authorize buffer reuse. The normal device-semaphore reader and
+this software retirement helper have different evidence boundaries. Our Linux
+fail-stop queue and retention policy remain unchanged; safe error reclamation
+requires a demonstrated stop/reset contract, not merely matching counters.
