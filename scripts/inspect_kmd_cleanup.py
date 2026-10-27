@@ -58,7 +58,7 @@ def cleanup(pe, *, previous, count, node=0, engine=0, flags=0,
         m.write(record, 'QQQQ', OBJECT, OWNER + 0x3000, OWNER + 0x1000, 0)
         m.write(record + 0x20, 'IIIII', node, engine, ordinal, sequence, 100 + ordinal)
         m.write(record + 0xf8, 'Q', PRIMARY + 0x4000 + ordinal * 16)
-        m.write(record + 0x100, 'I', 6)
+        m.write(record + 0x100, 'I', 1)  # Type emitted by the virtual-submit translator.
         m.write(record + 0x118, 'Q', STUB + 32)
         m.write(record + 0x130, 'QQ', STUB + 36, 0x20000 + ordinal)
         m.write(record + 0x1e8, 'I', flags)

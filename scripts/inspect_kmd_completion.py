@@ -17,7 +17,7 @@ from inspect_kmd_task_submission import (
 
 
 def complete(pe, *, sequence, os_fence, flags=0, node=0, engine=0, callback=False,
-             selection=None, observed_word=None, object_type=(1, 1)):
+             selection=None, observed_word=None, object_type=(1, 1), job_type=6):
     m = Machine(pe)
     for page in (0xe21000, 0xe22000, 0xe05000, 0xe07000, 0xdeb000, 0xc000,
                  0x14be000, 0x14c1000):
@@ -38,7 +38,7 @@ def complete(pe, *, sequence, os_fence, flags=0, node=0, engine=0, callback=Fals
     m.write(OWNER + 0x5000 + 0x80, 'Q', STUB + 24)
     m.write(JOB, 'QQQQ', OBJECT, OWNER + 0x3000, OWNER + 0x1000, OWNER + 0x2000)
     m.write(JOB + 0x20, 'IIIII', node, engine, 0x1234, sequence, os_fence)
-    m.write(JOB + 0x100, 'I', 6)
+    m.write(JOB + 0x100, 'I', job_type)
     m.write(JOB + 0x1b0, 'Q', 900)
     m.write(JOB + 0x1e8, 'I', flags)
     m.write(OWNER + 0x2000 + 0x118, 'I', 1)
@@ -182,11 +182,12 @@ def main():
     # The DLA-specific dd5ab0 dispatcher checks object class (5,2), while
     # some optional graphics branches require (1,1)/(4,1). Do not establish
     # the common completion contract solely with the latter constructed type.
-    for flags in (0, 8, 16, 24):
-        for selection in (None, 'ready', 'pending', 'blocked'):
-            args = dict(sequence=32, os_fence=0x12345678, flags=flags,
-                        selection=selection, object_type=(5, 2))
-            rows.append({**args, **complete(pe, **args)})
+    for job_type in (1, 6):
+        for flags in (0, 8, 16, 24):
+            for selection in (None, 'ready', 'pending', 'blocked'):
+                args = dict(sequence=32, os_fence=0x12345678, flags=flags,
+                            selection=selection, object_type=(5, 2), job_type=job_type)
+                rows.append({**args, **complete(pe, **args)})
     firmware = (ROOT / 'sources/dla-profile1-verified.bin').read_bytes()
     assert hashlib.sha256(firmware).hexdigest() == PROFILE1_HASH
     for sequence in (0, 1, 0x80000000, 0xffffffff):

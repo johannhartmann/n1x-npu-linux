@@ -119,3 +119,10 @@ executes the separate higher-level caller `0xdd6888`, envelope `0xdd22c8`,
 command `0x35800001` handler and HAL direct-send branch. It also verifies the
 Windows postaction producer against the original firmware consumer. Generic
 object lookup, OS scheduling and physical retirement remain unproven.
+
+The [virtual-submit translation replay](windows-kmd-task.md#runtime-private-data-to-concrete-npu-job)
+now feeds this runtime's actual private block into the original NPU-class KMD
+dispatcher and metadata/job producers. It distinguishes the 852-byte UMD
+payload from the expanded 1,424-byte kernel metadata and finds no per-job APC
+callback on this path. The user/kernel scheduling transition remains modeled;
+this is not a live Windows trace or a physical retirement guarantee.

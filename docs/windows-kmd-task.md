@@ -328,11 +328,13 @@ Only the actual OS callback, getters, clocks and logging are synthetic. The
 wrapper sets `object+0x4b48` after the callback with a release store/barrier.
 Neither the notification nor the tested counter update frees the job record.
 
-The 150 passing cases comprise 48 selected-job notifications, 70 selector
-cases, 16 additional class `(5,2)` cases and 16 linked producer/firmware/reader
+The 166 passing cases comprise 48 selected-job notifications, 70 selector
+cases, 32 additional class `(5,2)` cases and 16 linked producer/firmware/reader
 cases. Class `(5,2)` is checked by the DLA dispatcher `dd5ab0`; the additional
 cases verify that the shared completion behavior does not depend on the
-constructed class `(1,1)` used to cover optional graphics-side branches.
+constructed class `(1,1)` used to cover optional graphics-side branches. They
+cover both the empty producer's type 6 and the virtual-submit translator's
+type 1 job described below.
 They cover sequence zero,
 ring wrap, the signed boundary and `0xffffffff`, distinct OS fences, queue
 indices, suppression flags, pending/stale/out-of-window completion values,
@@ -404,21 +406,89 @@ then invokes the function supplied as APC argument 1 with `(job, argument2)`.
 That final per-job callback remains synthetic; neither Windows APC scheduling
 nor the full ring initialization executes. Static producer `dd28f8` copies
 the callback and context from private-record `+0x178/+0x180` to job
-`+0x130/+0x138`. Reconstructing their concrete DLA values is a remaining lead.
+`+0x130/+0x138`. The concrete runtime-generated path is now traced below and
+leaves these fields zero; the synthetic APC cases must not be mistaken for
+proof that DLA uses this optional mechanism.
 
 There are 195 passing cases: four sequence boundaries, zero/one/three completed
 records, two queues, two object classes and four suppression-flag combinations,
 plus busy and direct-helper controls. Every case has an extra submitted record
 which must remain untouched. The multi-record cases also cross ring-slot and
 32-bit sequence boundaries. Actual imports for IRQL, queued spin locks and
-APC insertion are verified against the pinned PE before testing.
+APC insertion are verified against the pinned PE before testing. These cases
+now use job type 1, as produced by the virtual-submit translator below;
+their nonzero optional callbacks are still deliberate test inputs.
 
 This establishes a separate deferred callback stage and rules out treating
 the cleanup counter or cleared job link alone as proof of physical DMA
-reclamation. The native retained-memory policy remains unchanged. The next
-useful trace is the concrete private-record callback producer and any actual
-memory-destruction/reset operations it reaches.
+reclamation. The native retained-memory policy remains unchanged. The concrete
+private-record producer below rules out the APC as a demonstrated DLA
+destruction mechanism on that path.
 
 ```sh
 venv/bin/python scripts/inspect_kmd_cleanup.py > results/kmd-cleanup.json
+```
+
+## Runtime private data to concrete NPU job
+
+`scripts/inspect_kmd_virtual_submit.py` connects the original runtime-generated
+private block to the original KMD translation and job producer. It first runs
+the existing `nvdla_runtime.dll -> nvcudla.dll -> D3DKMTSubmitCommand` harness,
+then transfers its actual 852-byte private block into a constructed kernel
+submission argument. It executes:
+
+```text
+19b1500 -> dca010   original object-class (5,2) dispatcher
+dd3130             validate/translate runtime private header
+dd6188             populate expanded kernel private metadata
+dd28f8             allocate ring slot and populate job record
+[final virtual dispatch modeled; no firmware submission]
+```
+
+The argument layout matches Microsoft's 64-bit
+[DXGKARG_SUBMITCOMMANDVIRTUAL](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/d3dkmddi/ns-d3dkmddi-_dxgkarg_submitcommandvirtual):
+context at `+0`, command GPU address at `+8`, command length at `+0x10`, private
+pointer at `+0x18`, allocated private capacity at `+0x20`, UMD data length at
+`+0x24`, OS fence at `+0x28`. The two private lengths are distinct: the OS
+allocates the KMD-requested capacity and copies in the UMD bytes. The test
+constructs capacity `0x590`; it does not execute CreateContext negotiation,
+public DDI registration or the actual OS scheduling transition.
+
+The original translator recognizes the runtime's `ADVN`, version 4/subtype 1,
+zero flags and `0x354` header. It clears a `0x590`-byte temporary structure,
+sets type 1, populates adapter/device references and sequence bookkeeping,
+then invokes `dd6188`. With the runtime's zero payload, optional imported
+handles, callbacks and auxiliary data remain absent. The expanded structure
+is copied into the kernel private buffer; marker byte `+0x53c` becomes 1 and
+DWORD `+0x540` becomes `0x4e564441`. The memset/memcpy functions are exact byte
+models, while header validation, expansion, field copies and branches execute
+as original instructions.
+
+The resulting job has type 1, its own queue sequence at `+0x2c`, the independent
+OS fence at `+0x30`, the submitted command GPU address at `+0x38` and the expanded
+private pointer at `+0xf8`. **Every byte in `job+0x108..0x1af` is zero.** In
+particular, the interrupt callback, deferred callback, APC callback/context,
+registry handles and embedded APC are absent. This corrects the earlier
+hypothesis that the generic cleanup APC necessarily provides the DLA buffer
+destruction step. It does not establish that every possible runtime submission
+variant has the same behavior.
+
+The 32 cases cover four sequence boundaries, two OS fences, two queues and
+with/without a second invocation using the translated metadata. That second
+invocation takes the original cached-metadata branch: it leaves the private
+block unchanged and skips rebuilding it, but creates a fresh ring job with
+the next internal sequence and the supplied new OS fence. The metadata cache
+is not command deduplication or cancellation; this must not become automatic
+retry behavior in the Linux runtime.
+
+All object getters, OS locks, the runtime command builder and final KMD task
+dispatch remain explicit modeled boundaries. The source blob is genuinely
+produced by the pinned runtime, but no Windows process, device or physical
+DMA is exercised. The remaining lifetime question is the device/firmware
+retirement guarantee paired with WDDM-managed allocation lifetime, rather
+than an assumed per-job APC free callback. Physical native-API repetition and
+safe successful/error-path reclamation are still unqualified.
+
+```sh
+venv/bin/python scripts/inspect_kmd_virtual_submit.py > results/kmd-virtual-submit.json
 ```
