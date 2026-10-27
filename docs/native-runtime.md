@@ -8,8 +8,9 @@ physical ReLU success still belongs to the earlier sysfs probe build.
 This is a step from the manual probe toward a reusable driver, not a completed
 production runtime or NVIDIA cuDLA/TensorRT compatibility layer. It accepts a
 prepared N1X model image and task-local address ranges, not arbitrary ONNX or a
-TensorRT engine. Compiler target support and FlatBuffers loadable materialization
-remain separate work.
+TensorRT engine. The [native loadable loader](loadable-runtime.md) now materializes a checked
+NVDA 0.9.0 subset in userspace. Compiler target coverage and broader loadable
+features remain separate work.
 
 ## Device interface
 

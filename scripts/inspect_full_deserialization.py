@@ -25,7 +25,8 @@ STAGES = (0x8deb0, 0x895d0, 0x893e8, 0x88d10, 0x87fc0,
 CRT_INITIALIZERS = (0x5f5a0, 0x5f650, 0x56aa0, 0x585f0, 0x4df38)
 
 
-def execute(pe, data, poison, initialize_regex=True, after_deserialize=None):
+def execute(pe, data, poison, initialize_regex=True, after_deserialize=None,
+            expected_context_version=(3, 0, 0)):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     u.mem_map(BASE, (pe.OPTIONAL_HEADER.SizeOfImage + 4095) & ~4095)
     u.mem_write(BASE, pe.get_memory_mapped_image())
@@ -235,7 +236,9 @@ def execute(pe, data, poison, initialize_regex=True, after_deserialize=None):
     assert stages == list(STAGES)
     stats_nodes = nodes(CTX+0x1b0)
     assert scalar(CTX+0x1c0, '<I') == 0
-    assert bytes(u.mem_read(CTX+0x1a8, 3)) == bytes([3, 0, 0])
+    context_version = bytes(u.mem_read(CTX+0x1a8, 3))
+    assert context_version == bytes(expected_context_version), (list(context_version), list(expected_context_version))
+    report["context_version"] = list(context_version)
     projected, view = inspect(data), Buffer(data)
     root = view.u('<I', 0)
     tasks = [dict(id=scalar(a, '<H'), interface=scalar(a+4, '<I'),
@@ -260,6 +263,7 @@ def execute(pe, data, poison, initialize_regex=True, after_deserialize=None):
     assert [string(n+32) for n in content_nodes] == sorted(string(n+32) for n in content_nodes)
     by_name = {view.string(t, 0): t for t in view.tables(root, 5)}
     assert len(content_nodes) == len(by_name) == 8
+    content_extensions = {}
     for n in content_nodes:
         name = string(n+32).decode()
         assert string(n+64).decode() == name
@@ -272,6 +276,12 @@ def execute(pe, data, poison, initialize_regex=True, after_deserialize=None):
             assert scalar(n+offset, '<I') == view.scalar(t, field, '<I')
         f = view.field(t, 4)
         assert bytes(u.mem_read(n+104, 3)) == data[f:f+3]
+        auxiliary = view.field(t, 6)
+        expected_aux = data[auxiliary:auxiliary+3] if auxiliary is not None else bytes((3, 13, 0))
+        actual_aux = bytes(u.mem_read(n+107, 3))
+        assert actual_aux == expected_aux
+        content_extensions[name] = list(actual_aux)
+    report['content_auxiliary_versions'] = content_extensions
     assert [e['name'] for e in regex_calls if e['match']] == ['task-0-stats']
     assert len(regex_calls) == 8
     stats_table = by_name['task-0-stats']
@@ -289,10 +299,12 @@ def execute(pe, data, poison, initialize_regex=True, after_deserialize=None):
     report['statistics_header_words'] = header
     report['statistics_layer_name_offsets'] = name_offsets
     report['actual_statistics_bytes'] = len(stats)
-    if not initialize_regex:
+    if context_version != bytes((3, 0, 0)):
+        assert stats_returns == [2] and stats_missing_regex == [False] and not stats_headers and not stats_nodes
+    elif not initialize_regex:
         assert stats_returns == [8] and stats_missing_regex == [True] and not stats_headers and not stats_nodes
     else:
-        assert stats_missing_regex == [False] and stats_headers == [stats[:12].hex()]
+        assert stats_missing_regex == [False] and stats_headers == [stats[:12].hex()], (list(context_version), stats_returns, stats_missing_regex, stats_headers, len(stats_nodes))
         if stats[4] == 2:
             assert stats_returns == [2] and not stats_nodes
         else:

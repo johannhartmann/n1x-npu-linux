@@ -14,6 +14,7 @@ test-p16-start:
 	venv/bin/python scripts/test_npu_dma_domains.py
 	venv/bin/python scripts/test_qualify_p16_start.py
 	venv/bin/python scripts/test_linux_lpwr_config.py
+	venv/bin/python scripts/test_native_loadable.py
 	venv/bin/python scripts/test_dla_runtime.py
 	venv/bin/python scripts/test_linux_accel_backend.py
 	venv/bin/python scripts/test_linux_accel.py
@@ -31,6 +32,7 @@ test-relu:
 	venv/bin/python scripts/inspect_loadable_version_gate.py --relu
 	venv/bin/python scripts/inspect_content_materialization.py --relu
 	venv/bin/python scripts/inspect_full_deserialization.py
+	venv/bin/python scripts/inspect_loadable_extensions.py
 	venv/bin/python scripts/inspect_memory_initialization.py
 	venv/bin/python scripts/test_statistics_v2.py
 	venv/bin/python scripts/test_model_addresses.py
@@ -137,6 +139,7 @@ test-vendor: test
 	venv/bin/python scripts/emulate_task_header_checks.py
 	venv/bin/python scripts/test_task_descriptor.py
 	venv/bin/python scripts/test_bypass_task.py
+	venv/bin/python scripts/test_native_loadable.py
 	venv/bin/python scripts/test_dla_runtime.py
 	venv/bin/python scripts/test_linux_accel_backend.py
 	venv/bin/python scripts/test_linux_accel.py

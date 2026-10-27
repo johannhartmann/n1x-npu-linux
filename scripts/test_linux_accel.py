@@ -137,13 +137,13 @@ static void check(int expected)
 int main(int argc,char **argv)
 {
  accel.drm.dev=&device;accel.submit=backend;INIT_LIST_HEAD(&accel.jobs);memset(image,0xab,image_bytes);
- if(argc==3){
-  FILE *in=fopen(argv[1],"rb");assert(in);image_bytes=2826240;
+ if(argc==4){
+  FILE *in=fopen(argv[1],"rb");assert(in&&!fseek(in,0,SEEK_END));long n=ftell(in);
+  assert(n>0&&(size_t)n<=sizeof(image)&&!fseek(in,0,SEEK_SET));image_bytes=n;
   assert(fread(image,1,image_bytes,in)==image_bytes&&fgetc(in)==EOF&&!fclose(in));
-  capture_file=argv[2];reset_request();dma_address=CAPTURE_DMA;req.num_addresses=8;
-  u64 off[]={8192,0,4096,12288,45056,49152,2789376,2822144};
-  u64 sizes[]={256,3136,3136,30464,320,2738944,28736,4096};
-  for(int i=0;i<8;i++)ranges[i]=(struct n1x_dla_accel_range){off[i],sizes[i]};
+  capture_file=argv[3];reset_request();dma_address=CAPTURE_DMA;req.num_addresses=8;
+  in=fopen(argv[2],"rb");assert(in);
+  assert(fread(ranges,1,sizeof(ranges),in)==sizeof(ranges)&&fgetc(in)==EOF&&!fclose(in));
   check(-ECANCELED);return 0;
  }
  assert(argc==1);
@@ -215,13 +215,24 @@ int main(int argc,char **argv)
         input_bytes = struct.pack('<1568e', *[1.5 if i % 2 else -2.5 for i in range(1568)])
         image, ranges, expected = prepare(template, input_bytes)
         assert expected == struct.pack('<1568e', *[1.5 if i % 2 else 0 for i in range(1568)])
-        payload_path, captured = Path(directory)/'image.bin', Path(directory)/'prepared.bin'
-        payload_path.write_bytes(image)
-        subprocess.run([str(binary), str(payload_path), str(captured)], check=True)
-        payload = bytearray(captured.read_bytes())
-        assert payload[8192:8192+3136] == input_bytes
-        assert payload[12288:12288+3136] == b'\xa5'*3136
-        assert [struct.unpack_from('<Q', payload, 512+8*i)[0] for i in range(8)] == [HOST+8192+offset for offset, _ in ranges]
+        from loadable import Model
+        model = Model.from_file(ROOT/'results/native-compile-t254/relu.nvda')
+        native_image, native_ranges = model.prepare({'input': input_bytes})
+        cases = []
+        for label, source_image, source_ranges, input_offset in (
+                ('template', image, ranges, 0),
+                ('native_loadable', native_image, native_ranges, model.inputs[0].offset)):
+            payload_path, captured = Path(directory)/'image.bin', Path(directory)/'prepared.bin'
+            range_path = Path(directory)/'ranges.bin'
+            payload_path.write_bytes(source_image)
+            range_path.write_bytes(b''.join(struct.pack('<QQ', *r) for r in source_ranges))
+            subprocess.run([str(binary), str(payload_path), str(range_path), str(captured)], check=True)
+            payload = bytearray(captured.read_bytes())
+            assert payload[8192+input_offset:8192+input_offset+3136] == input_bytes
+            if label == 'template':
+                assert payload[12288:12288+3136] == b'\xa5'*3136
+            assert [struct.unpack_from('<Q', payload, 512+8*i)[0] for i in range(8)] == [HOST+8192+offset for offset, _ in source_ranges]
+            cases.append((label, payload, source_ranges))
     firmware = (ROOT/'sources/dla-profile1-verified.bin').read_bytes()
     assert hashlib.sha256(firmware).hexdigest() == PROFILE1_HASH
     def response(u):
@@ -229,15 +240,16 @@ int main(int argc,char **argv)
             value = struct.unpack('<I', u.mem_read(MMIO+offset, 4))[0]
             u.mem_write(MMIO+offset, struct.pack('<I', value & ~128))
         u.mem_write(MMIO+0x40, struct.pack('<I', ACK))
-    result = run(firmware, method=0x307, host_payload=payload, host_handler=response,
-                 boot_from_reset=True, via_trap=True, dma_register_model=True, resume_scheduler=True)
-    assert result['returned'] and result['scheduler_wfi']
-    assert not result['function_stubs'] and result['firmware_code_unmodified']
-    assert result['interrupts'] == [(0x702, HOST >> 8)] and not result['task_interrupts']
-    for i, (offset, _) in enumerate(ranges[:7]):
-        assert (0x2505c+8*i, 4, HOST+8192+offset) in result['scheduler_mmio_writes']
-        assert (0x25060+8*i, 4, 0) in result['scheduler_mmio_writes']
-    print('Runtime image -> actual accel ioctl serializer -> original firmware scheduler passed; engine arithmetic unmodeled')
+    for label, payload, ranges in cases:
+        result = run(firmware, method=0x307, host_payload=payload, host_handler=response,
+                     boot_from_reset=True, via_trap=True, dma_register_model=True, resume_scheduler=True)
+        assert result['returned'] and result['scheduler_wfi']
+        assert not result['function_stubs'] and result['firmware_code_unmodified']
+        assert result['interrupts'] == [(0x702, HOST >> 8)] and not result['task_interrupts']
+        for i, (offset, _) in enumerate(ranges[:7]):
+            assert (0x2505c+8*i, 4, HOST+8192+offset) in result['scheduler_mmio_writes']
+            assert (0x25060+8*i, 4, 0) in result['scheduler_mmio_writes']
+        print(label + ': runtime image -> actual accel ioctl serializer -> original firmware scheduler passed; engine arithmetic unmodeled')
 
 
 if __name__ == '__main__':

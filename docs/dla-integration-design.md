@@ -175,7 +175,9 @@ firmware instance. This is still an internal component: the sysfs probes remain
 one-shot, physical repetition/reclamation is unqualified. An optional RAWIO-only
 accel API and C/Python runtime now implement prepared-image submission and
 result reading, with bounded retained allocations; their hardware qualification
-and general loadable ingestion remain open.
+remains open. The [native loader](loadable-runtime.md) now ingests NVDA 0.9.0
+loadables with the recovered single-task DRAM contract; broader loadable
+features and arbitrary-model compilation remain open.
 
 1. **Reusable device lifecycle:** extend the proven startup path to repeated
    jobs, distinct completion IDs, bounded failures and demonstrably safe buffer

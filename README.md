@@ -36,7 +36,8 @@ execution beyond device enumeration, a firmware response or a bypass task.
 The current scope is one board/BIOS/kernel combination and one fixed graph.
 An optional RAWIO-only `/dev/accel` interface and C/Python runtime can submit
 prepared images with changing tensors; see [native runtime](docs/native-runtime.md)
-for its offline evidence and current limits. General loadable compilation/loading
+for its offline evidence and current limits. The [native loadable loader](docs/loadable-runtime.md)
+reads a checked NVDA 0.9.0 subset directly. Broader model compilation/loading
 and framework integration remain unfinished. Physical repeated execution,
 interrupt-driven operation, safe resource release, recovery and suspend/resume still need implementation or qualification.
 The hardware path is deliberately manual and guarded for the tested machine;
@@ -130,6 +131,7 @@ This is one successful execution, not a throughput or sustained-stability benchm
 
 - [Driver and serializer code](driver/), [interfaces](include/), [tests/tools](scripts/).
 - [Current board startup and recovery constraints](docs/p16-board-start.md).
+- [Native NVDA loadable ingestion and metadata reverse engineering](docs/loadable-runtime.md).
 - [Experimental native accel interface and C/Python runtime](docs/native-runtime.md).
 - [DLA integration analysis and recommended Linux API architecture](docs/dla-integration-design.md).
 - [ACPI power/resource audit](docs/acpi-audit.md), [Linux/DMA backend](docs/linux-backend.md).
