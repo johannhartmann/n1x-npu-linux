@@ -153,6 +153,7 @@ test-vendor: test
 	venv/bin/python scripts/test_sroot_full_upload.py
 	venv/bin/python scripts/test_sroot_upload_phase.py
 	venv/bin/python scripts/test_sroot_reinit.py
+	venv/bin/python scripts/inspect_sroot_reinit_handler.py
 	venv/bin/python scripts/emulate_method2_start.py
 	venv/bin/python scripts/emulate_common_loader.py
 	venv/bin/python scripts/emulate_postinit_commands.py

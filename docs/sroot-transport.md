@@ -551,9 +551,10 @@ IOCTL `0x150218` reaches `NotifySrootReinitFw` at RVA `0x31760`. Its pure
 normalizer `0x37f0` accepts either four bytes (little-endian image identifier,
 implicit mode 1) or eight bytes (identifier followed by u32 mode). Identifiers
 are the same six values as image upload; mode must be 1 or 2. Unsupported sizes,
-identifiers and modes return `0xc000000d`. The surrounding WDF size gate rejects
-sizes above eight; the helper's size checks also reject shorter non-four/eight
-requests. These are request encodings, not established descriptions of what
+identifiers and modes return `0xc000000d`. The surrounding WDF size gate skips
+the helper and command for sizes above eight, but the full-handler replay below
+shows that it can return success on that path. The helper's size checks reject
+shorter non-four/eight requests. These are request encodings, not descriptions of what
 modes 1/2 do in secure firmware.
 
 Original builder `0x31a34..0x31a88` sends command **0x1a**, count **3**, payload
@@ -569,8 +570,50 @@ success alone does not prove successful reinitialization or NPU readiness.
 slice for 18 valid and 13 invalid cases, compares Linux payloads, tests null
 parameters and matches a complete original/C exchange trace for the exact P16
 request (TX header 0x31a). All WDF objects, readiness and replies are synthetic;
-no real reset/reinitialization was attempted. Both wrappers require zero
-transport and decoded status/detail on their success path.
+no real reset/reinitialization was attempted. Once a valid command is submitted,
+both wrappers require zero transport and decoded status/detail for success.
+
+### Complete reinit handler and its success boundary (2026-10-28)
+
+`scripts/inspect_sroot_reinit_handler.py` now runs the entire original
+`NotifySrootReinitFw` at `0x31760`, including the normalizer, packet builder,
+mailbox preparation/TX/echo/RX/decoder, optional output writer `0x31290`, timer
+stop and unlock. The pinned `nvsrootmbx.sys` SHA-256 is
+`f814e861b5e076aa4e00619a8a588df3c4ae9ec2b5026c30748ba493ce0e6d8a`.
+KMDF callbacks and mailbox responses are synthetic; no hardware is accessed.
+Twenty-six cases establish:
+
+- Four-byte ID and eight-byte ID/mode requests transmit exactly
+  `[0x31a, 0xc0302, 0, mode]`, with mode 1 for the four-byte form. The handler
+  starts the same 70-second WDF timer used by upload. All observed device
+  accesses in these cases belong to the mailbox exchange; this handler adds
+  no DLA-engine idle read or DMA-drain operation after the reply.
+- Zero transport status plus zero decoded firmware status/detail yields zero
+  NTSTATUS. Nonzero status or detail yields `0xc0000229`; mailbox busy also
+  yields that failure. The original handler accepts a synthetic zero-status
+  response with command `0x77` for request `0x1a`. Thus its success is not an
+  additional response-identity check.
+- Requests of 9 and 12 bytes return **zero without sending any command**.
+  After successful WDF input retrieval, `w23` still contains zero when the
+  size gate at `0x319d4..0x319e0` branches to cleanup. A synthetic null input
+  pointer takes the same path. This corrects the earlier description that
+  the surrounding size gate returned an error. These are direct handler
+  fixtures, not a demonstrated public-IOCTL exploit or live Windows behavior.
+  Linux's `n1x_sroot_build_reinit()` deliberately rejects invalid sizes.
+- Invalid short lengths reach the normalizer and return `0xc000000d` without
+  mailbox access. WDF input-retrieval errors propagate unchanged.
+- The optional four-byte output copies **context +0x20**, not the just-decoded
+  firmware status. A seeded `0x12345678` is returned unchanged for success,
+  firmware-status error and firmware-detail error. Failure to obtain this
+  optional output does not replace the main operation's status. The actual
+  KMD reinit request supplies no output buffer.
+
+This narrows the remaining reset question: for the exact valid KMD request,
+the provider's success means the mailbox exchange returned zero status/detail;
+physical engine/DMA quiescence still depends on the secure-firmware semantics
+and the enclosing KMD's subsequent checks. Neither an arbitrary successful
+IOCTL nor the optional output word is a retirement guarantee. The Linux
+retained-DMA policy is unchanged; no recovery command is enabled by this test.
 
 **Do not impose an unconditional upload-then-reinit recipe from these two
 IOCTLs alone.** Original KMD method-2 upload helper `0xd45cb0` invokes HAL +0x400

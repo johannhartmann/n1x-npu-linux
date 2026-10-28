@@ -1171,3 +1171,12 @@ DMA, controller reset, firmware authentication or actual device is modeled by
 these cases. Existing bounded Linux HFRP code already keeps firmware status
 separate from transport success; this experiment does not justify adding a
 Linux memory-release action after an HFRP acknowledgment.
+
+The subsequent [complete SROOT reinit handler](sroot-transport.md#complete-reinit-handler-and-its-success-boundary-2026-10-28)
+has now also been executed against a synthetic mailbox. For the valid KMD
+request it checks transport and firmware status/detail, then returns without
+a DLA-engine idle or DMA-drain read. Its optional output is a cached context
+word, and malformed oversized requests can return success without transmitting.
+This provider boundary therefore supplies no additional physical retirement
+guarantee beyond the enclosing KMD checks and the still-opaque secure-firmware
+command semantics.
