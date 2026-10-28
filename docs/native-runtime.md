@@ -73,6 +73,14 @@ Safe reclamation, reset/recovery, asynchronous scheduling and suspend/resume
 remain open requirements. The existing driver still rejects suspend after
 startup. No service or autostart is installed by this change.
 
+The [active firmware preemption tests](contract.md#preemption-after-the-original-scheduler-starts-an-arithmetic-task)
+now distinguish a completed task from an interrupted task under modeled engine
+IRQs. Both can report the same preemption message, and neither emits the usual
+task SWGEN0 in that sequence. This is not yet a Linux cancellation operation:
+save/restore and physical DMA quiescence remain unqualified. Any future cancel
+path must reconcile the task completion word and preemption result rather than
+turning message `0x120b` into successful inference or immediately freeing DMA.
+
 The [Windows release investigation](windows-buffer-lifetime.md) now traces
 cuDLA unregister through error gating and last-reference D3DKMT destruction.
 Its zero destruction flags explicitly allow Windows to defer reclamation.

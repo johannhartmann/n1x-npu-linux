@@ -1144,6 +1144,62 @@ retention behavior is unchanged.
 venv/bin/python scripts/inspect_kmd_preemption_request.py > results/windows-preemption-request.json
 ```
 
+### Preemption after the original scheduler starts an arithmetic task
+
+Research date: 2026-10-28. `test_profile1_active_preemption.py` joins the original
+Windows UMD command builder, KMD v3 task builder and KMD preemption-request
+builder to the unchanged HAL-1 firmware. Unlike the idle tests, it enables
+preemption through **command 28/data 1**, then submits the compiler-produced
+ReLU through command 7. The scheduler programs seven checked engine address
+pairs and waits at `0x102194`, returning to `0x101424`, with state 1 and one
+remaining control record. Arithmetic is not emulated; output remains poisoned.
+
+The test then delivers method `0x212` (or `0x312` to request an acceptance ACK)
+through the original machine trap. Handler `0x105b90` reads the original
+32-byte Windows request and calls instruction interpreter `0x102d7a` with the
+network's record at **+0x54**. For this loadable the interpreted sequence writes
+firmware-local engine offsets **0x3018 = 0x7ff98** and **0x25058 = 1**. These
+are observed compiler-directed writes, not a qualified Linux MMIO recipe.
+State changes to 2, while the task, its remaining record and outstanding
+preemption stay present. No host-memory write or completion notification has
+occurred at the subsequent WFI. A command acceptance ACK is not engine stop.
+
+An independently injected engine IRQ (local source `0x400` or `0x800`) next
+enters original ISR **0x1025e6**. It reads the compiler-provided status pairs
+`{0x3054,4}` and `{0x3054,3}` and executes the network's +0x34 instruction
+record. The low two bits are compared to **1**, not merely tested for bit 0:
+
+| Modeled engine status | Final state | Queue count | Task completion word | Preemption fence / notification |
+| --- | ---: | ---: | ---: | --- |
+| No engine IRQ, or 0 / 2 / 3 | 2 | 1 | Unchanged (0) | Unchanged; no `0x120b` |
+| 1 / 5 | 0 | 0 | Written to 1 | Sequence 8; `0x120b`, data 0 |
+| 4 / 6 / 7 | 3 | 0 | Unchanged (0) | Sequence 8; `0x120b`, data 0 |
+
+The 4/6/7 branch retains one remaining control record in its firmware backing;
+the 1/5 branch decrements it to zero. Both terminal branches run the original
+preemption postactions, writing values 5 then 8 to their shared fence address,
+and notify while outstanding is still set. Firmware clears outstanding after
+the host ACK. Neither branch writes SWGEN0 in this preemption sequence, even
+when the task completion word was written. Thus a Linux cancellation race
+cannot be resolved by waiting for the usual task IRQ or by interpreting
+`0x120b` alone as successful inference.
+
+All **38 cases** check original trap return, exact host-memory changes,
+unchanged firmware code and unchanged input/poisoned output. They cover every
+status value 0..7, both IRQ sources, both reporting flags, absent engine IRQ,
+and two disabled-preemption cases. Disabling through command 28/data 0 causes
+the active request to return `0xc1201`, without request DMA or engine writes.
+
+The fixture uses the KMD's no-save-context header. It does not establish a
+restorable context, resume correctness, physical engine stop, coherency or
+safe memory reclamation. The software state 3 is not evidence of whole-device
+DMA quiescence. Next work is the Windows context-save/restore contract and
+physical verification; Linux retention and recovery policy remain unchanged.
+
+```sh
+venv/bin/python scripts/test_profile1_active_preemption.py > results/active-preemption.json
+```
+
 ## HAL-1 firmware rearms each mailbox response
 
 The earlier inference that masking SWGEN1 on ACK necessarily requires an extra
