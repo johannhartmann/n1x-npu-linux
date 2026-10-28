@@ -4,6 +4,7 @@
 No device is opened. The execution backend is a stub; protocol and firmware are
 covered independently by test_linux_bypass_task/firmware.py.
 """
+import argparse
 import os
 import hashlib
 import struct
@@ -18,6 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--conv', action='store_true', help='also qualify convolution task serialization/scheduling')
+    args = parser.parse_args()
     source = (ROOT / 'driver/n1x_dla_accel.c').read_text()
     body = source[source.index('#define N1X_JOB_PREFIX'):source.index('/* No GEM mmap:')]
     shim = r'''
@@ -62,7 +66,7 @@ static bool privileged=true,copyin_fail,copyout_fail,memdup_fail,dma_fail;
 static int heap_fail_at=-1,heap_calls,allocations,frees,submits,backend_error;
 static bool backend_attempt=true;
 static u64 dma_address=0x100000000ULL;
-static unsigned char image[2834432];
+static unsigned char image[32U << 20];
 static size_t image_bytes=4096;
 static const char *capture_file;
 static void mutex_lock(struct mutex *m) {assert(!m->locked);m->locked=true;}
@@ -89,7 +93,7 @@ static void dma_rmb(void) {}
 static struct device device;
 static struct drm_file owner,other;
 static struct n1x_dla_accel accel;
-static struct n1x_dla_accel_range ranges[8];
+static struct n1x_dla_accel_range ranges[512];
 static struct n1x_dla_accel_exec req;
 static int cases;
 static u64 word64(const u8 *p) {u64 v=0;for(int i=0;i<8;i++)v|=(u64)p[i]<<(8*i);return v;}
@@ -141,9 +145,12 @@ int main(int argc,char **argv)
   FILE *in=fopen(argv[1],"rb");assert(in&&!fseek(in,0,SEEK_END));long n=ftell(in);
   assert(n>0&&(size_t)n<=sizeof(image)&&!fseek(in,0,SEEK_SET));image_bytes=n;
   assert(fread(image,1,image_bytes,in)==image_bytes&&fgetc(in)==EOF&&!fclose(in));
-  capture_file=argv[3];reset_request();dma_address=CAPTURE_DMA;req.num_addresses=8;
+  capture_file=argv[3];reset_request();dma_address=CAPTURE_DMA;
   in=fopen(argv[2],"rb");assert(in);
-  assert(fread(ranges,1,sizeof(ranges),in)==sizeof(ranges)&&fgetc(in)==EOF&&!fclose(in));
+  assert(!fseek(in,0,SEEK_END));n=ftell(in);
+  assert(n>0&&(size_t)n<=sizeof(ranges)&&n%sizeof(ranges[0])==0&&!fseek(in,0,SEEK_SET));
+  req.num_addresses=n/sizeof(ranges[0]);
+  assert(fread(ranges,1,n,in)==(size_t)n&&fgetc(in)==EOF&&!fclose(in));
   check(-ECANCELED);return 0;
  }
  assert(argc==1);
@@ -218,10 +225,17 @@ int main(int argc,char **argv)
         from loadable import Model
         model = Model.from_file(ROOT/'results/native-compile-t254/relu.nvda')
         native_image, native_ranges = model.prepare({'input': input_bytes})
-        cases = []
-        for label, source_image, source_ranges, input_offset in (
+        fixtures = [
                 ('template', image, ranges, 0),
-                ('native_loadable', native_image, native_ranges, model.inputs[0].offset)):
+                ('native_loadable', native_image, native_ranges, model.inputs[0].offset)]
+        if args.conv:
+            from verify_conv_loadable import LOADABLE_HASH as CONV_HASH
+            conv = Model.from_file(ROOT/'results/native-compile-t254-conv1x1/conv1x1.nvda')
+            assert conv.sha256 == CONV_HASH
+            conv_image, conv_ranges = conv.prepare({conv.inputs[0].name: input_bytes})
+            fixtures.append(('conv_loadable', conv_image, conv_ranges, conv.inputs[0].offset))
+        cases = []
+        for label, source_image, source_ranges, input_offset in fixtures:
             payload_path, captured = Path(directory)/'image.bin', Path(directory)/'prepared.bin'
             range_path = Path(directory)/'ranges.bin'
             payload_path.write_bytes(source_image)
@@ -231,7 +245,7 @@ int main(int argc,char **argv)
             assert payload[8192+input_offset:8192+input_offset+3136] == input_bytes
             if label == 'template':
                 assert payload[12288:12288+3136] == b'\xa5'*3136
-            assert [struct.unpack_from('<Q', payload, 512+8*i)[0] for i in range(8)] == [HOST+8192+offset for offset, _ in source_ranges]
+            assert [struct.unpack_from('<Q', payload, 512+8*i)[0] for i in range(len(source_ranges))] == [HOST+8192+offset for offset, _ in source_ranges]
             cases.append((label, payload, source_ranges))
     firmware = (ROOT/'sources/dla-profile1-verified.bin').read_bytes()
     assert hashlib.sha256(firmware).hexdigest() == PROFILE1_HASH
@@ -246,7 +260,7 @@ int main(int argc,char **argv)
         assert result['returned'] and result['scheduler_wfi']
         assert not result['function_stubs'] and result['firmware_code_unmodified']
         assert result['interrupts'] == [(0x702, HOST >> 8)] and not result['task_interrupts']
-        for i, (offset, _) in enumerate(ranges[:7]):
+        for i, (offset, _) in enumerate(ranges[:-1]):
             assert (0x2505c+8*i, 4, HOST+8192+offset) in result['scheduler_mmio_writes']
             assert (0x25060+8*i, 4, 0) in result['scheduler_mmio_writes']
         print(label + ': runtime image -> actual accel ioctl serializer -> original firmware scheduler passed; engine arithmetic unmodeled')

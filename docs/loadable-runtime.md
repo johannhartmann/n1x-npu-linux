@@ -59,15 +59,16 @@ The loader currently accepts:
   relocations, and one terminal event `{id=0,type=0,target=0,value=1,op=SIGNAL}`.
   The kernel's unique fence implements that single terminal completion.
 - DRAM allocations, ordered dense memory/address IDs, allocation/content/input/
-  output flags, power-of-two alignment up to 4096 and zero supported pool
-  properties. Nonzero pool requirements are not silently ignored.
+  output flags and power-of-two alignment up to 4096. Local pool properties
+  must be zero. A nonzero global DRAM property is supported for the checked
+  single initialized raw-constant allocation described below.
 - Static batch-1 tensor descriptions with raw format codes, shape, strides,
   logical byte counts and checked memory/binding references.
 
 The one-task restriction does not mean one neural-network operation: one
 compiled task may contain a larger graph. Its arithmetic and target
 compatibility must still be qualified separately. Multi-task/event chains,
-relocations, SRAM and nonzero auxiliary pools need implementation before those
+relocations, SRAM and additional pool layouts need implementation before those
 loadables can run correctly.
 
 Bounds are checked against both the FlatBuffers object extent and the file.
@@ -147,7 +148,17 @@ multiple jobs and the new loadable-generated layout.
 
 The separate [convolution compiler fixture](convolution-compiler.md) now
 produces a complete loadable with two constants in an 8-KiB allocation and a
-4,224-byte global DRAM pool property. The current loader deliberately rejects
-that nonzero property. Its original-runtime pool contract must be established
-before claiming convolution runtime support; compiler success alone does not
-extend this loader's supported subset.
+4,224-byte global DRAM pool property. Original Windows runtime execution now
+confirms that the tested allocation path uses the memory-table size and copies
+both constants at their listed offsets; the property needs no second backing.
+The loader accepts this layout when one initialized non-I/O allocation contains
+only raw constants, their highest end equals the property, and a task address
+covers that extent. This is our qualified layout restriction, not a universal
+Windows validation rule. The remaining local pools must be zero.
+
+The resulting 2,850,816-byte image matches every original content copy.
+`verify_conv_loadable.py` checks changed inputs/constants and ten invalid pool
+variants; `inspect_conv_memory_allocation.py` exercises eighteen original
+allocation/content cases with explicit provider models. The extended
+`test_linux_accel.py --conv` verifies serialization and original-firmware
+scheduling. No physical convolution result is claimed.

@@ -176,6 +176,7 @@ class Model:
         catalog = {}
         properties = {'property_global_dram_pool_size', 'property_local_cvsram_pool_size',
                       'property_local_dram_pool_size'}
+        self.memory_pools = {}
         self.blob_versions = {}
         for blob in root.tables(5, 7):
             name, payload = blob.name(0), blob.blob(5)
@@ -186,8 +187,13 @@ class Model:
             auxiliary = blob.version(6)
             require(auxiliary == ((3, 16, 0) if interface else (0, 0, 0)), 'unsupported auxiliary content version')
             if name.startswith('property_'):
-                require(name in properties and interface == 0 and bytes(payload) == bytes(8),
-                        'nonzero or unknown memory-pool property')
+                require(name in properties and interface == 0 and len(payload) == 8,
+                        'unknown or malformed memory-pool property')
+                pool_size = struct.unpack('<Q', payload)[0]
+                require(pool_size <= MAX_IMAGE, 'memory-pool property exceeds image limit')
+                require(name == 'property_global_dram_pool_size' or pool_size == 0,
+                        'nonzero local memory pool is not implemented')
+                self.memory_pools[name] = pool_size
             catalog[name] = payload
             self.blob_versions[name] = dict(interface=interface, sub_interface=blob.value(3, '<I'),
                                            version=blob.version(4), auxiliary_version=auxiliary)
@@ -196,6 +202,7 @@ class Model:
         dense(memories)
         dense(addresses)
         layout, initializers, cursor = [], [], 0
+        constant_memories = []
         for memory in memories:
             size, alignment, flags = memory.value(3, '<Q'), memory.value(4, '<I'), memory.value(2, '<H')
             require(memory.value(1, '<B') == 0 and flags & 1 and not flags & ~15, 'unsupported memory domain/flags')
@@ -211,11 +218,16 @@ class Model:
             names, offsets = memory.names(5), memory.numbers(6, '<Q')
             require(len(names) == len(offsets), 'content name/offset length mismatch')
             if flags & 2:
+                raw_constants = []
                 for name, content_offset in zip(names, offsets):
                     require(name in catalog, 'missing named content')
                     content = catalog[name]
                     require(content_offset <= size and len(content) <= size-content_offset, 'content exceeds logical memory')
                     initializers.append((offset+content_offset, content))
+                    if self.blob_versions[name]['interface'] == 0:
+                        raw_constants.append((name, content_offset+len(content)))
+                if raw_constants:
+                    constant_memories.append((len(layout)-1, flags, names, raw_constants))
         resolved = []
         for address in addresses:
             index = address.value(1, '<H')
@@ -227,6 +239,23 @@ class Model:
         task_ids = task.numbers(3, '<H')
         require(0 < len(task_ids) <= 512 and all(i < len(resolved) for i in task_ids), 'invalid task-local address IDs')
         self.ranges = tuple(resolved[i] for i in task_ids)
+        global_pool = self.memory_pools.get('property_global_dram_pool_size', 0)
+        if global_pool:
+            # The original 0x1ec70 -> 0x20d00 path allocates from the memory
+            # descriptor, then copies raw constants at their listed offsets.
+            # Qualify the observed single constant-pool layout; never allocate
+            # a second backing merely because its high-water property is nonzero.
+            require(len(constant_memories) == 1, 'ambiguous global constant pool')
+            index, flags, names, constants = constant_memories[0]
+            require(flags == 3 and len(constants) == len(names) and
+                    all(not name.startswith('property_') for name, _ in constants),
+                    'unsupported global constant-pool contents')
+            require(max(end for _, end in constants) == global_pool,
+                    'global constant-pool extent mismatch')
+            start = layout[index]['offset']
+            require(any(offset <= start and start+global_pool <= offset+size
+                        for offset, size in self.ranges),
+                    'global constant pool is not covered by task addresses')
         tensors, names = [], set()
         for table in root.tables(6, 22):
             name, index, memory_id = table.name(0), table.value(1, '<H'), table.value(2, '<H')
@@ -285,6 +314,7 @@ class Model:
         return dict(sha256=self.sha256, serialization_version=[0, 9, 0], runtime_version=[3, 0, 0],
                     image_bytes=len(self.image), task_addresses=self.ranges,
                     tensors=[asdict(t) for t in self.tensors], blobs=self.blob_versions,
+                    memory_pools=self.memory_pools,
                     instruction_streams_validated=False, hardware_execution=False)
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the convolution artifact and identify the native loader's next gap."""
+"""Verify the convolution artifact, native materialization and pool validation."""
 import hashlib
 import json
 import struct
@@ -57,19 +57,58 @@ def main():
         assert [t['dtype'] for t in tensors[1:]]==['DATA_TYPE_FP16','DATA_TYPE_FP19']
     sys.path.insert(0,str(ROOT/'runtime'))
     from loadable import Model,LoadableError
-    try:Model(data)
-    except LoadableError as exc:
-        loader_gap=str(exc)
-        assert loader_gap=='nonzero or unknown memory-pool property'
-    else:raise AssertionError('Update the qualification test when global-pool support is implemented')
+    model=Model(data)
+    assert model.memory_pools==properties
+    pool_start=model.layout[1]['offset']
+    expected=bytearray(8192)
+    expected[:2048]=blobs['tb-1'];expected[4096:4224]=blobs['tb-2']
+    assert model.image[pool_start:pool_start+8192]==expected
+    assert model.ranges[2]==(pool_start,8192)
+    for value in (0x35,0x79):
+        payload=bytes([value])*3136
+        image,ranges=model.prepare({model.inputs[0].name:payload})
+        assert ranges==model.ranges and image[pool_start:pool_start+8192]==expected
+        start=model.inputs[0].offset
+        assert image[start:start+3136]==payload
+        assert image[:start]==model.image[:start] and image[start+3136:]==model.image[start+3136:]
+    rejected=[]
+    def reject(name,offset,replacement):
+        candidate=bytearray(data);candidate[offset:offset+len(replacement)]=replacement
+        try:Model(candidate)
+        except LoadableError as exc:rejected.append(dict(case=name,reason=str(exc)))
+        else:raise AssertionError('accepted '+name)
+    content_tables={view.string(t,0):t for t in view.tables(root,5)}
+    pool_property=view.vector(content_tables['property_global_dram_pool_size'],5,1).start
+    for name,value in [('pool_too_small',4223),('pool_too_large',4225),('pool_over_limit',1<<63)]:
+        reject(name,pool_property,struct.pack('<Q',value))
+    for name in ('property_local_dram_pool_size','property_local_cvsram_pool_size'):
+        reject(name,view.vector(content_tables[name],5,1).start,struct.pack('<Q',1))
+    memory_table=view.tables(root,2)[1]
+    reject('short_constant_memory',view.field(memory_table,3),struct.pack('<Q',4223))
+    reject('constant_initialization_disabled',view.field(memory_table,2),struct.pack('<H',1))
+    offsets=view.vector(memory_table,6,8)
+    reject('bias_offset_overflow',offsets.start+8,struct.pack('<Q',0xffffffffffffffff))
+    addresses=view.tables(root,3)
+    reject('task_pool_address_short',view.field(addresses[1],3),struct.pack('<Q',4223))
+    task_addresses=view.vector(view.tables(root,1)[0],3,2)
+    reject('task_missing_pool',task_addresses.start+4,struct.pack('<H',0))
+    # No artifact hash allowlist: modified constant bytes are still materialized.
+    candidate=bytearray(data);constant_at=view.vector(content_tables['tb-1'],5,1).start
+    candidate[constant_at]^=1
+    changed=Model(candidate)
+    assert changed.image[pool_start]==model.image[pool_start]^1
+    assert changed.image[:pool_start]==model.image[:pool_start]
+    assert changed.image[pool_start+1:]==model.image[pool_start+1:]
     print(json.dumps({'passed':True,'hardware_access':False,'loadable_sha256':LOADABLE_HASH,
                       'bytes':len(data),'backend_instructions':len(blobs['task-0-inst']),
                       'constant_bytes':[len(blobs[n]) for n in constants],
                       'global_dram_property':4224,'constant_allocation_bytes':8192,
-                      'native_loader_supported':False,'native_loader_gap':loader_gap,
+                      'native_loader_supported':True,'native_image_bytes':len(model.image),
+                      'native_image_sha256':hashlib.sha256(model.image).hexdigest(),
+                      'rejected_cases':rejected,
                       'limitations':['Exact original-compiler fixture, not arbitrary ONNX compilation',
                                       'Compiler describes FP19 bias storage; physical interpretation and numerical results unverified',
-                                      'Nonzero global DRAM pool needs original-runtime investigation before enabling native loading',
+                                      'Only the observed single initialized global constant-pool layout is qualified',
                                       'No physical DLA submission or inference']},indent=2))
 
 

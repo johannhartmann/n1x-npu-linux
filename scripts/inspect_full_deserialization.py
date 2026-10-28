@@ -26,7 +26,8 @@ CRT_INITIALIZERS = (0x5f5a0, 0x5f650, 0x56aa0, 0x585f0, 0x4df38)
 
 
 def execute(pe, data, poison, initialize_regex=True, after_deserialize=None,
-            expected_context_version=(3, 0, 0)):
+            expected_context_version=(3, 0, 0), expected_content_count=8,
+            statistics_layer_prefix='layer-anon-0'):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     u.mem_map(BASE, (pe.OPTIONAL_HEADER.SizeOfImage + 4095) & ~4095)
     u.mem_write(BASE, pe.get_memory_mapped_image())
@@ -262,7 +263,7 @@ def execute(pe, data, poison, initialize_regex=True, after_deserialize=None,
     content_nodes = nodes(CTX+0xd0)
     assert [string(n+32) for n in content_nodes] == sorted(string(n+32) for n in content_nodes)
     by_name = {view.string(t, 0): t for t in view.tables(root, 5)}
-    assert len(content_nodes) == len(by_name) == 8
+    assert len(content_nodes) == len(by_name) == expected_content_count
     content_extensions = {}
     for n in content_nodes:
         name = string(n+32).decode()
@@ -283,7 +284,7 @@ def execute(pe, data, poison, initialize_regex=True, after_deserialize=None,
         content_extensions[name] = list(actual_aux)
     report['content_auxiliary_versions'] = content_extensions
     assert [e['name'] for e in regex_calls if e['match']] == ['task-0-stats']
-    assert len(regex_calls) == 8
+    assert len(regex_calls) == expected_content_count
     stats_table = by_name['task-0-stats']
     extent = view.vector(stats_table, 5, 1)
     stats = data[extent.start:extent.stop]
@@ -295,7 +296,7 @@ def execute(pe, data, poison, initialize_regex=True, after_deserialize=None,
     name_offsets = [28+6144*i for i in range(4)]
     for i, offset in enumerate(name_offsets):
         assert stats[offset:offset+6144].split(b'\0')[0] == (
-            f'layer-anon-0_cpipe_tile_{i}_ts_hwl_cpipe_{i}'.encode())
+            f'{statistics_layer_prefix}_cpipe_tile_{i}_ts_hwl_cpipe_{i}'.encode())
     report['statistics_header_words'] = header
     report['statistics_layer_name_offsets'] = name_offsets
     report['actual_statistics_bytes'] = len(stats)

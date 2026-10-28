@@ -32,6 +32,8 @@ test-conv:
 	venv/bin/python scripts/inspect_conv_pretranslation.py --translate
 	venv/bin/python scripts/probe_native_graph.py --model conv1x1 --target t254 --package-windows-output
 	venv/bin/python scripts/verify_conv_loadable.py
+	venv/bin/python scripts/inspect_conv_memory_allocation.py
+	venv/bin/python scripts/test_linux_accel.py --conv
 
 generate-probe:
 	venv/bin/python scripts/create_relu_probe.py

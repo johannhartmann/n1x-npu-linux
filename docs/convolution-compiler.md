@@ -4,7 +4,10 @@ The offline bridge now produces a second complete NVDA artifact: an FP16
 1x1 convolution with per-channel bias. It uses original native frontend graph
 construction, original Windows pretranslation/translation and original native
 serialization. It is not a general ONNX compiler or a physical inference
-result. The native loader currently rejects its nonzero global DRAM pool.
+result. The native loader now materializes its global DRAM constants, checked
+against the original Windows allocation/content path. The actual Linux ioctl
+serializer and original firmware scheduler accept its task offline; engine
+arithmetic and physical execution remain unverified.
 
 ## Fixture and recovered API
 
@@ -85,10 +88,57 @@ properties are zero. These are producer observations, not a general runtime
 pool contract.
 
 `verify_conv_loadable.py` checks blobs against backend output and captured
-constants, plus shapes, formats and address mapping. It explicitly verifies
-that the current native loader rejects the nonzero pool property. Enabling
-this model requires investigating the original runtime's pool interpretation;
-silently ignoring that property is not a supported workaround.
+constants, plus shapes, formats and address mapping. The native image is
+2,850,816 bytes, SHA-256
+`7ca5a9d72dd1608e5f9aa0f746d02b4de7906424d68bba0e22f52ff356b181db`.
+Changing either input bytes or constant contents works without an artifact
+hash allowlist. Ten malformed/unsupported pool, extent and task-address
+variants are rejected.
+
+## Original runtime allocation evidence
+
+`inspect_conv_memory_allocation.py` executes the hash-pinned 617.42 Windows
+runtime's constructor and complete deserializer on the convolution artifact.
+Original loadable getters at `0x8bb60`, `0x8bd30` and `0x8b8c0` return local
+CVSRAM=0, local DRAM=0 and global DRAM=4,224. Their vtable slots are `0x90`,
+`0x98` and `0xa0`. The global getter delegates to property lookup `0x8c260`,
+which reads an eight-byte payload from the content map.
+
+The original per-memory path `0x1ec70` requests the descriptor's size through
+provider boundary `0x74798`, stores its returned handle/CPU pointer, calls
+boundaries `0x76c58` and `0x74e78`, and enters the full content loader
+`0x20d00`. For memory 1 it requests **8,192 bytes**, then copies 2,048 bytes
+at offset 0 and 128 bytes at offset 4,096. It does not invoke any of the pool
+getters during this tested allocation path or request another 4,224-byte buffer.
+Every initialized memory is compared with the native loader's materialization;
+unused native bytes are zero while unused modeled Windows bytes retain poison.
+
+Eighteen cases cover all ten memory records, exact 4,224-byte capacity,
+one-byte-short and second-offset-at-end destinations, an existing handle,
+a size exceeding `UINT32_MAX`, and failure at each of the three provider calls.
+Short destinations return status 6 after preserving the earlier kernel-constant
+copy. Provider failures prevent subsequent provider calls and content copies.
+The existing-handle branch skips allocation and still initializes content.
+
+This executes original allocation decisions and copy loops, **not a real
+Windows allocation or full model-load orchestration**. Runtime/device objects
+are RAM fixtures; the device getter and three provider boundaries are modeled.
+The optional allocation cache is disabled. The test proves neither physical
+memory reuse safety nor reset/teardown. Output is written locally to
+`results/conv-memory-allocation.json`.
+
+For this observed layout, the native loader requires one initialized,
+non-I/O, raw-constant allocation, a global property equal to the highest
+initialized end offset, and a task address covering that extent. This is an
+explicit supported-layout check, not a claim that the Windows runtime enforces
+the same equality for every model. Nonzero local pools and other global-pool
+layouts remain unsupported. The property does not create a second allocation.
+
+`test_linux_accel.py --conv` sends the prepared image through the actual kernel
+ioctl serializer (with modeled Linux/DMA boundaries), then the unmodified
+HAL-1 firmware reset/trap/scheduler. All nine task addresses are serialized
+correctly and the eight expected engine address pairs are programmed. Firmware
+waits for the engine; no convolution arithmetic or output accuracy is modeled.
 
 ## Reproduce
 

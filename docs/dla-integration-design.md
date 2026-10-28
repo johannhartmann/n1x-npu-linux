@@ -269,6 +269,12 @@ remains open. The [native loader](loadable-runtime.md) now ingests NVDA 0.9.0
 loadables with the recovered single-task DRAM contract; broader loadable
 features and arbitrary-model compilation remain open.
 
+The convolution fixture now also has a checked native-loading path: original
+Windows allocation/content execution confirms its 8-KiB constant allocation,
+and the actual ioctl serializer plus original firmware scheduler accept the
+prepared task offline. Physical convolution arithmetic, broader graph support
+and safe memory reclamation remain open; see [the evidence](convolution-compiler.md).
+
 1. **Reusable device lifecycle:** extend the proven startup path to repeated
    jobs, distinct completion IDs, bounded failures and demonstrably safe buffer
    release. Verify idle handling between tasks and client exit during a task.
