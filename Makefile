@@ -78,6 +78,7 @@ test-vendor: test
 	venv/bin/python scripts/test_hfrp_channel.py
 	venv/bin/python scripts/test_loader_prerequisites.py
 	venv/bin/python scripts/test_profile1_preemption.py
+	venv/bin/python scripts/inspect_kmd_preemption_request.py
 	venv/bin/python scripts/test_hfrp_power_policy.py
 	venv/bin/python scripts/test_hfrp_version.py
 	venv/bin/python scripts/test_hfrp_startup.py

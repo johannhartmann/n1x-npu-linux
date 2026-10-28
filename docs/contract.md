@@ -1053,18 +1053,95 @@ has no `0x120b` notification. No DMA transfer or arithmetic-engine register
 access occurs in either idle case. Method-data zero specifically takes the
 preemption payload helper's no-buffer branch; this does not exercise the
 nonzero request-buffer format used by Windows or preemption of a running
-convolution. The producer and consumer tests identify the same command, but
-are not yet a full nonzero-payload end-to-end preemption test.
+convolution. The nonzero request is now independently tested through the
+original builder and idle firmware path below; active-task preemption is
+still unqualified.
 
 This yields a concrete next recovery contract: distinguish command acceptance
-from the later message-11 notification, then recover the nonzero request's
-save/restore buffers and active-engine completion conditions. Neither the
+from the later message-11 notification, then recover active-task save/restore
+buffers and active-engine completion conditions. Neither the
 idle notification nor this synthetic scheduler execution proves physical
 DMA quiescence. The Linux executor continues to retain attempted allocations;
 no new preemption or memory-release operation is enabled by this test.
 
 ```sh
 venv/bin/python scripts/test_profile1_preemption.py > results/profile1-preemption.json
+```
+
+### Original Windows request consumed by the idle firmware
+
+`scripts/inspect_kmd_preemption_request.py` executes original KMD request
+initializer `0xdd7640` and postaction builder `0xdd6e40`, using the actual
+descriptor-class vtable at `0xe9cb68`. Header size, CPU/GPU addresses and
+postaction locations come from the original virtual helpers. Scheduler/bank
+objects and the last job's required flags (bits 2 and 3) are constructed in
+RAM; the complete Windows reset/preemption caller is not executed. No original
+builder function is stubbed.
+
+The resulting 32-byte header has:
+
+| Byte offset | Size | Original producer/consumer behavior |
+| --- | --- | --- |
+| 0 | 1 | Initializer writes 1; no version-rejection claim |
+| 1 | 2 | Preaction byte length |
+| 3 | 8 | Preaction address; initializer stores its sequence argument here when length is zero, so it is unused in these fixtures |
+| 11 | 2 | Postaction byte length, 27 in the original builder |
+| 13 | 8 | Postaction GPU address |
+| 21–31 | 11 | Zero after initialization; further semantics unresolved |
+
+Fields are packed little-endian. Firmware `0x105b20` DMA-reads the full 32
+bytes into `0x183700`. It decodes the preaction length/address at offsets 1/3
+and invokes the existing preaction interpreter `0x1030ae` only when the length
+is nonzero. Scheduler cleanup `0x105cd8` decodes the postaction pair at offsets
+11/13 and invokes the existing postaction interpreter `0x1037ac`.
+
+The original Windows postaction output consists of two `0x80` semaphore-write
+operations and a zero terminator. Under the constructed bank layout, both
+operations target the same bank entry: first the selected submitted sequence,
+then the preemption sequence. The test checks their actual RAM-DMA write
+values and order, not merely the final word. It does not infer the meaning of
+all Windows bank entries from this synthetic layout.
+
+Twelve valid cases feed the unchanged header/postaction bytes directly into
+the unchanged HAL-1 reset/trap/scheduler code. They cover ring index wrap,
+multiple selected node entries, large u32 sequences, and two reporting modes:
+
+- Actual Windows method **`0x212`** produces no successful command-acceptance
+  mailbox. Only the later `0x120b` notification is observed.
+- Explicit method **`0x312`** adds `0x1202` before scheduler execution. At that
+  first notification the completion semaphore is still poisoned. The later
+  `0x120b` observes the final preemption sequence.
+
+Both modes perform a 32-byte header read, an aligned 256-byte postaction-cache
+read, and two four-byte semaphore writes. The test compares the entire host
+backing after execution: only the expected semaphore word changes. The
+postaction GPU addresses and host mappings are preserved across the KMD and
+firmware models. Only header slots whose resulting address is 256-byte aligned
+are submitted; arbitrary slot-to-method address handling is not established.
+
+Three negative cases expose why neither a notification nor a fence alone is
+a complete validation rule:
+
+- Postaction length zero skips the writes but still sends `0x120b`.
+- Lengths 26 and 28 execute both writes, then the original interpreter returns
+  **-7** for the size mismatch. Scheduler cleanup nevertheless sends the same
+  `0x120b`, with zero mailbox data, and eventually clears outstanding.
+
+Thus a malformed request can produce both the expected fence and the same
+notification. A native recovery implementation must validate action lengths,
+backing extents and targets before submission and keep execution errors
+separate from command transport. It cannot recover a suppressed interpreter
+error merely by decoding message 11. The 256-byte cache read also requires
+mapped backing beyond the 27 logical action bytes.
+
+All these cases start with an empty firmware queue and manually enable its
+preemption flag. They establish serialization, action execution, reporting
+flags and error behavior, not active-engine interruption, task save/restore,
+physical DMA ordering or safe allocation reclamation. The existing Linux
+retention behavior is unchanged.
+
+```sh
+venv/bin/python scripts/inspect_kmd_preemption_request.py > results/windows-preemption-request.json
 ```
 
 ## HAL-1 firmware rearms each mailbox response
