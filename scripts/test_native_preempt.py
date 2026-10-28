@@ -18,6 +18,7 @@ from emulate_profile1_commands import ROOT, HOST, MMIO, ACK, PROFILE1_HASH
 from test_core_control import IO, READ, WRITE, DELAY
 from test_native_context import start_native
 from test_task_descriptor import Args
+from test_profile1_lpwr_consumer import execute as idle_consumer
 
 
 class Snapshot(C.Structure):
@@ -194,7 +195,7 @@ def firmware_case(lib, firmware, model, mode, irq):
             'native_writes': trace, 'firmware_code_unmodified': True, 'output_still_poisoned': True}
 
 
-def fault_cases(lib):
+def fault_cases(lib, idle):
     """Bounded waits, stale DMA, malformed responses and every I/O failure edge."""
     count = 0
 
@@ -302,14 +303,15 @@ def fault_cases(lib):
                               (0x1120b, 0, errno.EREMOTEIO), (0x100120b, 0, errno.EPROTO),
                               (0x1201, 0x10, errno.EREMOTEIO), (0x708, 0, errno.EREMOTEIO),
                               (0x709, 0, errno.EREMOTEIO), (0x70a, 0, errno.EREMOTEIO),
-                              (0x12, 1, errno.EPROTO), (0x99, 0, errno.EPROTO)):
+                              (12, 1, errno.EPROTO), (0x12, 0, errno.EPROTO),
+                              (0x99, 0, errno.EPROTO)):
         rc, result, _, _ = run(messages=((word, data),))
         assert rc == -status and result.outcome == 0 and result.response_valid == 1
         count += 1
-    rc, result, _, _ = run(messages=((0x12, 0), (0x12, 0), (0x120b, 0)))
+    rc, result, _, _ = run(messages=(idle, idle, (0x120b, 0)))
     assert rc == 0 and result.outcome == 1 and result.idle_notifications == 2
     count += 1
-    for kwargs in ({'messages': ()}, {'busy': True}, {'messages': ((0x12, 0),)*5001}):
+    for kwargs in ({'messages': ()}, {'busy': True}, {'messages': (idle,)*5001}):
         rc, result, trace, state = run(**kwargs)
         assert rc == -errno.ETIMEDOUT and result.outcome == 0 and result.attempted == 1
         assert state['delays'] == 5000
@@ -322,9 +324,13 @@ def main():
     firmware = (ROOT/'sources/dla-profile1-verified.bin').read_bytes()
     assert hashlib.sha256(firmware).hexdigest() == PROFILE1_HASH
     model = (ROOT/'results/native-compile-t254/relu.nvda').read_bytes()
+    # Execute the original idle producer with a synthetic timer. Its outbound
+    # notification boundary is intercepted by idle_consumer, not guessed here.
+    idle_events, notified = idle_consumer(firmware, 1, 0, 1)
+    assert idle_events == [[12, 0]] and notified == 1
     with tempfile.TemporaryDirectory(prefix='n1x-preempt-') as tmp:
         lib = library(Path(tmp))
-        faults = fault_cases(lib)
+        faults = fault_cases(lib, tuple(idle_events[0]))
         cases = [firmware_case(lib, firmware, model, mode, irq)
                  for irq in (0x400, 0x800)
                  for mode in ('save', 'save_fail', 'finished', 'finished5', 'finished_before',
@@ -332,8 +338,10 @@ def main():
     print(json.dumps({'passed': True, 'hardware_access': False, 'fault_cases': faults, 'cases': cases,
                       'firmware_sha256': PROFILE1_HASH,
                       'loadable_sha256': hashlib.sha256(model).hexdigest(),
+                      'idle_notification_from_firmware': idle_events[0],
                       'limitations': ['Original firmware; synthetic engine events, MMIO and RAM DMA',
                                       'No arithmetic, physical checkpoint transfer or DMA quiescence proof',
+                                      'Idle producer uses synthetic timer and intercepted outbound boundary',
                                       'Private native primitive, not wired into Linux EXEC']}, indent=2))
 
 

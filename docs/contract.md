@@ -1378,7 +1378,10 @@ and task-fence-only observations are distinct. Missing or contradictory terminal
 evidence, firmware/transport failures and timeouts return errors. It neither
 releases memory nor resumes work. `test_native_preempt.py` covers 14 original
 firmware executions, including save failure and completion races on either side
-of command delivery, plus 51 fault cases. See
+of command delivery, plus 52 fault cases. Its idle fixture is captured from
+the original idle producer: `{word=12,data=0}`, with 12 decimal (`0x0c`), not
+`0x12`. The initial native helper/mock confusion between those values is fixed;
+the latter is now a negative test. See
 [native runtime](native-runtime.md#lifetime-and-failures) for ownership and wait
 bounds. EXEC integration and physical engine qualification remain separate work.
 

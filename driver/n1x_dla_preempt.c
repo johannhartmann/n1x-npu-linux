@@ -42,7 +42,7 @@ int n1x_dla_preempt(const struct n1x_dla_io *io,
             return err;
         if (!err) {
             result->response_valid = 1;
-            if (result->response.word == 0x12 && !result->response.data) {
+            if (result->response.word == 12 && !result->response.data) {
                 result->idle_notifications++;
             } else {
                 n1x_dla_decode_response(&result->response, &fields);

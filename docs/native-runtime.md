@@ -112,12 +112,16 @@ intervals (at most ten seconds of requested delays combined, excluding I/O).
 original HAL-1 firmware with synthetic engine IRQ/status and RAM DMA. Fourteen
 cases cover checkpoint save, save failure, completion with status 1/5, completion
 between preflight and command delivery, disabled preemption and missing engine
-events across both tested engine IRQ bits. Another 51 cases cover stale values,
+events across both tested engine IRQ bits. Another 52 cases cover stale values,
 malformed responses, every transport/snapshot failure edge and bounded waits.
 The original arithmetic executor reports -16 in the save-failure fixture while
 still emitting `0x120b`; the native host correctly returns an error rather than
 claiming a checkpoint. No numerical computation or physical engine-context
-transfer is modeled.
+transfer is modeled. The original idle producer at `0x107318`, run with a
+synthetic timer and intercepted outbound-notification boundary, supplies the
+idle fixture `{12, 0}` (decimal 12, hexadecimal `0x0c`). The helper tolerates
+that exact notification; the distinct value `0x12` is rejected. This corrects
+the initial host helper and its mirrored mock fixture, which both used `0x12`.
 
 This helper is built as an independent kernel component, not linked into the
 bootstrap module or called by EXEC. Its caller must own a single accepted task,
