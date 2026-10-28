@@ -149,7 +149,6 @@ be safely replaced in place.
 
 ```sh
 make -C /usr/lib/modules/$(uname -r)/build M="$PWD/driver" n1x_npu_bootstrap.ko
-powerprofilesctl set performance
 pkexec /usr/bin/python3 "$PWD/scripts/qualify_p16_start.py" \
   --through bypass_task --enable-accel --log "$PWD/results/NEW-cudla-start.jsonl"
 pkexec /usr/bin/python3 "$PWD/scripts/qualify_cudla.py" \

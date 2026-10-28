@@ -32,7 +32,7 @@ def main():
     args=parser.parse_args()
     if os.geteuid()!=0:parser.error('experimental driver requires root/CAP_SYS_RAWIO; use ./demo-superres')
     if os.environ.get('LD_PRELOAD'):parser.error('remove LD_PRELOAD before hardware qualification')
-    if Path('/sys/firmware/acpi/platform_profile').read_text().strip()!='performance':parser.error('select performance profile first')
+    profile=Path('/sys/firmware/acpi/platform_profile').read_text().strip()
     path=ROOT/'results/native-compile-t254-superres/superres.nvda'
     model=Model.from_file(path)
     if model.sha256!=LOADABLE_SHA256:parser.error('model differs from qualified super-resolution artifact')
@@ -61,7 +61,7 @@ def main():
                   tiles=len(plan),tile_shape=[64,64],halo=5,model_sha256=model.sha256,
                   onnx_sha256=MODEL_SHA256,frontend_sha256=FRONTEND_SHA256,
                   backend_sha256=hashlib.sha256((ROOT/'runtime/cudla/libnvcudla.so').read_bytes()).hexdigest(),
-                  kernel=platform.release(),boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+                  kernel=platform.release(),platform_profile=profile,boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
                   module_srcversion=Path('/sys/module/n1x_npu_bootstrap/srcversion').read_text().strip(),
                   transport_before=before,automatic_retry=False,learned_inference='physical N1X DLA via original NVIDIA cuDLA')
     record('attempt.json',metadata)

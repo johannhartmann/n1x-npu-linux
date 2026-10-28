@@ -72,8 +72,7 @@ def main():
     args = parser.parse_args()
     if os.geteuid() or platform.release() != KERNEL:
         parser.error('requires root and the audited npu2 kernel')
-    if Path('/sys/firmware/acpi/platform_profile').read_text().strip() != 'performance':
-        parser.error('requires the user-selected performance profile')
+    profile = Path('/sys/firmware/acpi/platform_profile').read_text().strip()
     module = ROOT/'driver/n1x_npu_bootstrap.ko'
     version = subprocess.check_output(['modinfo', '-F', 'srcversion', str(module)], text=True).strip()
     if MODULE.exists() and ((MODULE/'srcversion').read_text().strip() != version or
@@ -104,7 +103,7 @@ def main():
                     os.fchown(file.fileno(), owner, -1)
 
         record(boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
-               kernel=KERNEL, module_srcversion=version,
+               kernel=KERNEL, platform_profile=profile, module_srcversion=version,
                module_sha256=hashlib.sha256(module.read_bytes()).hexdigest(), cycles=args.cycles)
         kernel_log('before')
 
@@ -139,6 +138,11 @@ def main():
         except BaseException as exc:
             record(failed=True, error=str(exc), automatic_retry=False,
                    module_present=MODULE.exists())
+            for name in ('shutdown_status', 'hfrp_status', 'status', 'relu_status'):
+                try:
+                    record(cached_status=name, value=(ENDPOINT/name).read_text())
+                except OSError as status_error:
+                    record(cached_status=name, error=str(status_error))
             try:
                 kernel_log('failure')
             except (OSError, subprocess.CalledProcessError) as log_error:

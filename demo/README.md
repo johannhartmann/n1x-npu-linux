@@ -47,10 +47,10 @@ the final artifact hash. It performs no NPU submission.
 After successful manual firmware startup and driver qualification:
 
 ```sh
-powerprofilesctl set performance
 ./demo-superres /absolute/path/to/input.png --output-dir results/my-superres-run
 ```
 
+The current platform power profile is recorded and left unchanged.
 The output directory must be new. Input dimensions must both be at least 64.
 The launcher uses `pkexec` because the experimental driver requires RAWIO.
 The output includes `upscaled.png`, raw DLA output planes, input and bicubic

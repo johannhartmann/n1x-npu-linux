@@ -67,6 +67,7 @@ static bool machine=true,privileged=true;
 static int dma_frees,module_refs,pm_puts,mask,gates,accesses,drains,stops;
 static int gate_fail,io_fail,drain_error,stop_error;
 static bool mask_stuck,confirm=true;
+static u32 route=0xff;
 static void mutex_lock(int *p) {assert(!*p);*p=1;}
 static void mutex_unlock(int *p) {assert(*p);*p=0;}
 static bool capable(int cap) {assert(cap==17);return privileged;}
@@ -80,10 +81,11 @@ static int n1x_boot_drain_task_idle(struct n1x_dla_job *j)
 static int n1x_boot_read(void *ctx,u32 off,u32 *out)
 {assert(boot_lock && ctx==&dla_ep && !boot_shutdown.hardware_off);accesses++;
  if(accesses==io_fail)return -EIO;assert(off==0xd2c||off==0xd28);
- *out=off==0xd2c?0xff:mask;return 0;}
+ *out=off==0xd2c?route:mask;return 0;}
 static int n1x_boot_write(void *ctx,u32 off,u32 value)
 {assert(boot_lock && ctx==&dla_ep && off==0xd24);accesses++;
- if(!mask_stuck)mask&=~value;return accesses==io_fail?-EIO:0;}
+ assert(value==((u32)mask&route));
+ if(!mask_stuck)mask&=~(value&~0x01000000U);return accesses==io_fail?-EIO:0;}
 static int n1x_boot_hfrp_read(void *ctx,u32 off,u32 *out)
 {(void)ctx;(void)off;(void)out;assert(0);return -EIO;}
 static int n1x_boot_hfrp_write(void *ctx,u32 off,u32 value)
@@ -92,7 +94,7 @@ static void n1x_boot_delay(void *ctx,u32 delay) {(void)ctx;(void)delay;assert(0)
 int n1x_hfrp_stop(const struct n1x_dla_io *io,struct n1x_hfrp_channel *ch,
  const struct n1x_hfrp_version *v,u32 polls,u32 delay,struct n1x_hfrp_stop_result *out)
 {assert(boot_lock && io->context==&dla_ep && ch==&boot_hfrp.channel && v==&boot_hfrp.version);
- assert(polls==5001 && delay==1000 && !mask && boot_stopping);stops++;
+ assert(polls==5001 && delay==1000 && boot_shutdown.irq_readback_valid && boot_stopping);stops++;
  if(stop_error)return stop_error;out->confirmed=confirm;out->state.valid=1;out->state.raw=7;return 0;}
 static void dma_free_coherent(struct device *d,size_t bytes,void *buf,dma_addr_t dma)
 {assert(boot_lock && boot_shutdown.hardware_off && !boot_hfrp.powered);
@@ -128,7 +130,7 @@ static void reset(void)
  boot_ping.buffer=boot_config.buffer=boot_region5.buffer=boot_lpwr.buffer=(void *)1;
  boot_ping.dma=boot_config.dma=boot_region5.dma=boot_lpwr.dma=1;
  boot_task.buffer=boot_relu.buffer=(void *)1;boot_task.dma=boot_relu.dma=1;
- machine=privileged=confirm=true;mask_stuck=false;mask=0xff;
+ machine=privileged=confirm=true;mask_stuck=false;mask=0xff;route=0xff;
  dma_frees=pm_puts=gates=accesses=drains=stops=0;
  gate_fail=io_fail=drain_error=stop_error=0;
 }
@@ -164,7 +166,14 @@ int main(void)
  reset();drain_error=-EBUSY;failed();assert(!accesses);
  reset();boot_hfrp.gating.request_mask=7;failed();assert(!accesses);
  reset();boot_queue.owner_job=&boot_task;failed();assert(!accesses);
- reset();mask_stuck=true;failed();assert(!stops);
+ /* Match the physical raw readback: bit 24 persists. No Linux IRQ handler
+  * is registered; this must reach the independent HFRP shutdown checks. */
+ reset();route=0x010801d0;mask=0x01001e05;
+ assert(!n1x_boot_stop_device(&device) && stops==1 && dma_frees==7);
+ assert(boot_shutdown.irq_owned==route && boot_shutdown.irq_mask_before==0x01001e05);
+ assert(boot_shutdown.irq_mask_after==0x01001e05 && boot_shutdown.irq_readback_valid);
+ reset();mask_stuck=true;stop_error=-ETIMEDOUT;failed();assert(stops==1);
+ reset();mask_stuck=true;confirm=false;failed();assert(stops==1);
  reset();stop_error=-ETIMEDOUT;failed();assert(stops==1);
  reset();confirm=false;failed();assert(stops==1);
  reset();assert(shutdown_store(&device,NULL,"stop\n",5)==5);
@@ -186,7 +195,7 @@ int main(void)
  boot_hfrp_held=boot_upload_held=false;module_refs=device.refs=sroot_device.refs=accel.bytes=0;
  assert(!n1x_boot_stop_device(&device) && !gates && !accesses && !stops && !dma_frees && !pm_puts);
  assert(boot_shutdown.released);
- puts("shutdown: healthy/unused/HFRP-only release, 28 failures, all sysfs writer gates, ownership and no double free passed; no hardware");
+ puts("shutdown: healthy/unused/HFRP-only release, raw-mask readback regression, failure cases, all sysfs writer gates, ownership and no double free passed; no hardware");
  return 0;
 }
 '''

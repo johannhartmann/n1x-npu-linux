@@ -96,8 +96,7 @@ def main():
     loaded = Path('/sys/module/n1x_npu_bootstrap')
     if loaded.exists() != args.after_hfrp:
         parser.error('fresh start requires no module; --after-hfrp requires the existing module')
-    if Path('/sys/firmware/acpi/platform_profile').read_text().strip() != 'performance':
-        parser.error('requires the user-selected performance profile')
+    profile = Path('/sys/firmware/acpi/platform_profile').read_text().strip()
     rows = [] if args.after_hfrp else plan()
     module = ROOT/'driver/n1x_npu_bootstrap.ko'
     rom = ROOT/'results/p16-bios300-physical.rom'
@@ -123,7 +122,7 @@ def main():
             os.fsync(log.fileno())
 
         record(boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
-               kernel=KERNEL, module_sha256=hashlib.sha256(module.read_bytes()).hexdigest(),
+               kernel=KERNEL, platform_profile=profile, module_sha256=hashlib.sha256(module.read_bytes()).hexdigest(),
                rom_sha256=ROM_SHA256, through=args.through, after_hfrp=args.after_hfrp, groups=rows, enable_accel=args.enable_accel)
         if args.through == 'relu_probe':
             template = (ROOT/'results/p16-relu-template.bin').read_bytes()

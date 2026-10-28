@@ -39,6 +39,15 @@ See [window receipt](superres-tile-2026-10-28.json). A prior compiler artifact
 produced incorrect numbers; correcting packed-constant replay fixed the window.
 No full image or sustained throughput is established by this result.
 
+The post-reboot test with module `0FD7E6269B085ED9DAD6DB9` also passed the
+startup ReLU probe and eight numerical cuDLA jobs under the unchanged `quiet`
+platform profile (`power-saver` in power-profiles-daemon). Its first shutdown
+failed at an overly strict host IRQ-mask readback assertion **before** HFRP
+power-off. DMA and module references remained retained; no reload was attempted.
+The assertion is corrected and offline-tested, with raw-mask diagnostics added,
+but needs another reboot for hardware qualification. See the
+[attempt receipt](reload-attempt-2026-10-28.json).
+
 ## Implemented, awaiting physical qualification
 
 - Completed-task I/O reuse with one retained allocation per loaded model.
@@ -55,7 +64,8 @@ driver or accessing a device. See [setup](setup.md) and the
 
 ## Remaining post-reboot checks
 
-1. Boot the same audited `npu2` kernel once to remove the old pinned module.
+1. Reboot the same audited `npu2` kernel to remove the instance with the failed
+   terminal stop; the corrected build is ready locally.
 2. Run [shutdown/reload qualification](shutdown-reload.md): healthy startup,
    numerical jobs, checked stop, zero retained allocations, open-client unload
    refusal, successful unload after close, fresh startup and numerical jobs.

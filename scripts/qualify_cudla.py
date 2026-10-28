@@ -74,7 +74,7 @@ def main():
         print(f'Prepared {len(jobs)} jobs; no device access; {sum(j["retained_bytes"] for j in jobs)} retained bytes required')
         return
     if os.geteuid()!=0 or platform.release()!=KERNEL:raise RuntimeError('requires root and audited npu2 kernel')
-    if Path('/sys/firmware/acpi/platform_profile').read_text().strip()!='performance':raise RuntimeError('requires performance profile')
+    profile=Path('/sys/firmware/acpi/platform_profile').read_text().strip()
     built=subprocess.check_output(['modinfo','-F','srcversion',str(ROOT/'driver/n1x_npu_bootstrap.ko')],text=True).strip()
     if Path('/sys/module/n1x_npu_bootstrap/srcversion').read_text().strip()!=built:raise RuntimeError('loaded module differs from reviewed build')
     endpoint=Path('/sys/bus/platform/devices/NVDA200A:00')
@@ -86,7 +86,7 @@ def main():
     if required>info['retain_limit']-info['retained_bytes'] or len(jobs)>info['max_jobs']-info['retained_jobs']:
         raise RuntimeError('insufficient retained allocation budget; no jobs submitted')
     record('preflight.json',boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
-           module_srcversion=built,info=info,status=status,hfrp=hfrp)
+           module_srcversion=built,platform_profile=profile,info=info,status=status,hfrp=hfrp)
     env={k:v for k,v in os.environ.items() if not k.startswith(('LD_','NVTX_','N1X_','TEST_'))}
     env.update(LD_LIBRARY_PATH=str(ROOT/'runtime/cudla'),N1X_DLA_DEVICE=args.device)
     for index,job in enumerate(jobs):

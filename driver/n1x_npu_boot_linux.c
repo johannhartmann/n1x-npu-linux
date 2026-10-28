@@ -110,6 +110,8 @@ static bool boot_attempted;
 static bool boot_stopping, boot_hfrp_held, boot_upload_held;
 static struct {
 	struct n1x_hfrp_stop_result transport;
+	u32 irq_owned, irq_mask_before, irq_mask_after;
+	bool irq_readback_valid;
 	bool attempted, hardware_off, released;
 	int error;
 } boot_shutdown;
@@ -1362,7 +1364,6 @@ static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_sho
 static int n1x_boot_stop_hardware(struct device *dev)
 {
 	struct n1x_dla_io io;
-	u32 mask, owned;
 	int err = 0;
 
 	mutex_lock(&boot_lock);
@@ -1409,21 +1410,25 @@ static int n1x_boot_stop_hardware(struct device *dev)
 		if (err)
 			goto done;
 	}
-	/* This backend never requests/enables Linux IRQ handlers: it polls masked
-	 * firmware sources. Mask only the recovered owned sources and flush the
-	 * write, BEFORE cutting DLA power. Never read its powered-off aperture.
+	/* Follow the recovered Windows mask operation and flush the write before
+	 * power-off. This polling backend never registers Linux IRQ handlers.
+	 * Do NOT require every raw route/mask intersection bit to read back zero:
+	 * the physical P16 retains bit 24 in both registers after this operation.
+	 * Its meaning is unknown; the original KMD makes no zero-mask assertion.
+	 * A readback is diagnostic, not the DMA-quiescence proof. Only the exact
+	 * HFRP immediate-off reply AND independent state query permit freeing.
 	 */
-	err = n1x_boot_read(boot_dla, 0xd2c, &owned);
+	err = n1x_boot_read(boot_dla, 0xd2c, &boot_shutdown.irq_owned);
 	if (!err)
-		err = n1x_boot_read(boot_dla, 0xd28, &mask);
+		err = n1x_boot_read(boot_dla, 0xd28, &boot_shutdown.irq_mask_before);
 	if (!err)
-		err = n1x_boot_write(boot_dla, 0xd24, mask & owned);
+		err = n1x_boot_write(boot_dla, 0xd24,
+			boot_shutdown.irq_mask_before & boot_shutdown.irq_owned);
 	if (!err)
-		err = n1x_boot_read(boot_dla, 0xd28, &mask);
-	if (!err && (mask & owned))
-		err = -EIO;
+		err = n1x_boot_read(boot_dla, 0xd28, &boot_shutdown.irq_mask_after);
 	if (err)
 		goto done;
+	boot_shutdown.irq_readback_valid = true;
 	io = (struct n1x_dla_io){boot_dla, n1x_boot_hfrp_write,
 			       n1x_boot_hfrp_read, n1x_boot_delay};
 	err = n1x_hfrp_stop(&io, &boot_hfrp.channel, &boot_hfrp.version,
@@ -1460,9 +1465,11 @@ static int n1x_boot_stop_hardware(struct device *dev)
 	}
 done:
 	boot_shutdown.error = err;
-	dev_info(dev, "shutdown error=%d power_reply=%u state_valid=%u state=%#x off=%u; %s\n",
+	dev_info(dev, "shutdown error=%d power_reply=%u state_valid=%u state=%#x off=%u irq_owned=%#x irq_before=%#x irq_after=%#x irq_readback=%u; %s\n",
 		 err, boot_shutdown.transport.accepted, boot_shutdown.transport.state.valid,
 		 boot_shutdown.transport.state.raw, boot_shutdown.hardware_off,
+		 boot_shutdown.irq_owned, boot_shutdown.irq_mask_before,
+		 boot_shutdown.irq_mask_after, boot_shutdown.irq_readback_valid,
 		 err ? "DMA/lifetime retained, no retry" : "hardware stopped");
 out:
 	mutex_unlock(&boot_lock);
@@ -1517,10 +1524,12 @@ static ssize_t shutdown_status_show(struct device *dev, struct device_attribute 
 {
 	ssize_t size;
 	mutex_lock(&boot_lock);
-	size = sysfs_emit(buf, "attempted=%u error=%d accepted=%u state_valid=%u state=%#x hardware_off=%u released=%u hfrp_held=%u upload_held=%u\n",
+	size = sysfs_emit(buf, "attempted=%u error=%d accepted=%u state_valid=%u state=%#x hardware_off=%u released=%u hfrp_held=%u upload_held=%u irq_owned=%#x irq_before=%#x irq_after=%#x irq_readback=%u\n",
 		boot_shutdown.attempted, boot_shutdown.error, boot_shutdown.transport.accepted,
 		boot_shutdown.transport.state.valid, boot_shutdown.transport.state.raw,
-		boot_shutdown.hardware_off, boot_shutdown.released, boot_hfrp_held, boot_upload_held);
+		boot_shutdown.hardware_off, boot_shutdown.released, boot_hfrp_held, boot_upload_held,
+		boot_shutdown.irq_owned, boot_shutdown.irq_mask_before,
+		boot_shutdown.irq_mask_after, boot_shutdown.irq_readback_valid);
 	mutex_unlock(&boot_lock);
 	return size;
 }

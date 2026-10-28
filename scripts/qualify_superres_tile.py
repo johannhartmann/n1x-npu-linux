@@ -26,7 +26,7 @@ def main():
     parser.add_argument('--output-dir',type=Path,required=True)
     args=parser.parse_args()
     if os.geteuid()!=0:parser.error('requires CAP_SYS_RAWIO/root')
-    if Path('/sys/firmware/acpi/platform_profile').read_text().strip()!='performance':parser.error('requires performance profile')
+    profile=Path('/sys/firmware/acpi/platform_profile').read_text().strip()
     destination=args.output_dir.resolve();destination.mkdir(exist_ok=False)
     owner=int(os.environ['PKEXEC_UID']) if 'PKEXEC_UID' in os.environ else None
     if owner is not None:os.chown(destination,owner,-1)
@@ -46,7 +46,7 @@ def main():
     save('input-nchw.fp16',data.astype('<f2').tobytes());save('reference-nchw.fp32',reference.astype('<f4').tobytes())
     record('attempt.json',dict(model_sha256=materialized.sha256,model_image_bytes=len(materialized.image),
                               input_sha256=hashlib.sha256(data.astype('<f2').tobytes()).hexdigest(),
-                              frontend='original NVIDIA cuDLA',transport_before=before,automatic_retry=False))
+                              frontend='original NVIDIA cuDLA',platform_profile=profile,transport_before=before,automatic_retry=False))
     started=time.monotonic()
     with Device() as device:
         module=device.load(path)

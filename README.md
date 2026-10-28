@@ -30,7 +30,8 @@ required; pinned Windows driver files are used for analysis and extraction.
 ## What is verified
 
 The tested kernel is `7.2.8-23-omarchy-p16-asus-npu2`, with matching headers
-and the performance profile. Board/BIOS/kernel checks are enforced in code.
+and the recorded power profile. Board/BIOS/kernel checks are enforced in code.
+Tests preserve the current power profile.
 
 | Capability | Evidence | Status |
 | --- | --- | --- |
@@ -39,7 +40,7 @@ and the performance profile. Board/BIOS/kernel checks are enforced in code.
 | Trained super-resolution graph | One physical 64x64 window, numerical comparison | Window verified; full image pending |
 | Full-image tiling and borders through 1024x1024 → 3072x3072 | Independent CPU reference | Offline verified |
 | Completed-task I/O reuse | Driver/backend tests with modeled NPU transport | Physical qualification pending |
-| Checked shutdown, DMA cleanup and module reload | Original-code replay and fault tests | Physical qualification pending |
+| Checked shutdown, DMA cleanup and module reload | First physical stop exposed a host readback assertion; correction passes offline tests | Reboot and requalification pending |
 | Recovery from uncertain DMA/firmware failure | Buffers and lifetime references remain pinned | Reboot required |
 | Automatic startup, suspend/resume, arbitrary TensorRT engines | Outside the implemented/verified contract | Unsupported |
 

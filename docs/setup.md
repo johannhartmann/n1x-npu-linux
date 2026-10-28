@@ -163,12 +163,12 @@ and board capture are installed by the startup qualifier after hash checks.
 
 ## 6. Explicit hardware qualification after reboot
 
-Replacing a module version that has no shutdown implementation requires one
-reboot of the **same audited npu2 kernel**. Keep the known-working boot entry.
-Then, when ready to run the bounded performance-profile qualification:
+Replacing an older module without shutdown support, or an instance whose stop
+has failed, requires a reboot of the **same audited npu2 kernel**. Keep the
+known-working boot entry.
+Then, when ready to run the bounded qualification (the current power profile is recorded and left unchanged):
 
 ```sh
-powerprofilesctl set performance
 pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_p16_reload.py" \
   --cycles 2 --output-dir "$PWD/results/NEW-reload"
 ```
@@ -177,8 +177,8 @@ The output directory must be new. The qualifier starts firmware when needed,
 runs numerical jobs, stops and releases DMA, tests module ownership, unloads,
 reloads and verifies inference again. Logs are durable and the first failure
 stops the sequence. [Shutdown/reload](shutdown-reload.md) gives the exact contract.
-The explicit profile selection is for this qualification; no service or timer
-is installed to enforce it during ordinary use.
+Qualifiers record the selected platform profile without changing it. No service
+or timer is installed to enforce a profile.
 
 Only after successful reload and reuse qualification, run the
 [full-image demo](../demo/README.md). Its complete physical 512x512 and

@@ -1,11 +1,17 @@
 # Controlled shutdown and module reload
 
-The bootstrap now implements an explicit terminal shutdown for a healthy
+The bootstrap implements an explicit terminal shutdown for a healthy
 firmware/device instance. **Hardware unload/reload qualification is pending.**
-Compilation and offline fault tests do not establish a working hardware cycle.
-The currently loaded older module cannot acquire the new callback in place;
-one reboot of the existing `7.2.8-23-omarchy-p16-asus-npu2` kernel is needed
-before first loading the new build. No new kernel or boot entry is required.
+The first physical test on 2026-10-28 started firmware, passed the ReLU probe
+and all eight cuDLA numerical jobs, then stopped at a host-side IRQ-mask
+readback assertion before sending the HFRP power-off command. No memory was
+freed and no unload/reload was attempted. See the
+[attempt receipt](reload-attempt-2026-10-28.json).
+
+That assertion has been corrected and the module rebuilt; the correction is
+only offline-tested so far. Reboot the **same** `7.2.8-23-omarchy-p16-asus-npu2`
+kernel before loading the new build, because the failed stop is terminal for
+the currently loaded instance. No new kernel or boot entry is required.
 
 ## Recovered contract
 
@@ -51,6 +57,9 @@ only the immediate bits, without guessed timings, voltages or reset values.
 4. Drain only the recognized firmware idle notifications; never manufacture a
    completion or acknowledge unknown errors. Mask the owned DLA interrupt
    sources and read back the mask while the aperture is still powered.
+   Preserve the raw values as diagnostics; do not require every bit of the
+   raw route/mask intersection to become zero. The P16 retains bit 24, whose
+   meaning is unknown; the original Windows KMD makes no such assertion.
    This polling backend never registers/enables Linux IRQ handlers, so there
    is no handler to synchronize or free.
 5. Send immediate clock/domain/rail OFF and validate reply plus power-state
@@ -95,12 +104,12 @@ version encodings matched; 436 protocol failure/negative cases, shutdown
 ownership/refcount/error cases and actual accel allocation cleanup passed.
 These tests use modeled hardware and cannot replace the next command.
 
-After the one initial reboot needed to remove the old pinned module:
+After rebooting to remove the instance with the failed stop (keep the current
+power profile; the qualifier only records it):
 
 ```sh
-powerprofilesctl set performance
 pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_p16_reload.py" \
-  --cycles 2 --output-dir "$PWD/results/shutdown-reload-01"
+  --cycles 2 --output-dir "$PWD/results/NEW-reload"
 ```
 
 Run from the repository root. The destination must be new. This performs a

@@ -1,0 +1,54 @@
+{
+  "date": "2026-10-28",
+  "scope": "Post-reboot startup/inference succeeded; first controlled shutdown failed before HFRP power-off",
+  "boot": {
+    "boot_id": "7fef4e46-4d5f-47a5-aed7-7812360f0ba3",
+    "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+    "platform_profile": "quiet",
+    "module_srcversion": "0FD7E6269B085ED9DAD6DB9",
+    "module_sha256": "ea1a5a2c02eceef8717936b0bc66839629a9adc138cf29b7bd3526a0595f610f",
+    "cycles": 2
+  },
+  "startup_through": "relu_probe",
+  "physical_cudla": {
+    "numerical_jobs": 8,
+    "physical_cudla_path_verified": true,
+    "scope": "three pinned graphs, changing inputs, blocking CUDA staging; no recovery/lifetime qualification"
+  },
+  "shutdown_failure": {
+    "failed": true,
+    "error": "[Errno 5] Input/output error",
+    "automatic_retry": false,
+    "module_present": true
+  },
+  "cached_status": {
+    "shutdown_status": "attempted=1 error=-5 accepted=0 state_valid=0 state=0x0 hardware_off=0 released=0 hfrp_held=1 upload_held=1\n",
+    "hfrp_status": "enabled=1 attempted=1 phase=5 error=0 state=1 pending=65535 stamp=0x20251722 version=1.5 configured=1 command=432 completed=8 setup_reply=0x91e setup_length=26 setup_payload=010000000000000000000000000000000000ffffffff00000000 final_reply=0xa06 final_length=2 final_payload=8c00 power_accepted=1 frequency_khz=430000 gating=0x777 query_attempted=0 query_error=0 query_valid=0 query_raw=0x0 query_reply=0x0 query_length=0 query_payload=\n",
+    "status": "dla_bound=1 sroot_bound=1 enabled=1 attempted=1 error=0 reply_valid=1 reply=0x18 idle_observed=1 dma_retained=1 ping_enabled=1 ping_attempted=1 ping_error=0 ping_verified=1 ping_word=0x44444444 ping_retained=1 config_enabled=1 config_attempted=1 config_error=0 config_valid=1 config_reply_valid=1 config_reply=0x1602 config_retained=1 region5_enabled=1 region5_attempted=1 region5_error=0 region5_registered=1 region5_retained=1 config_apply_enabled=1 config_apply_attempted=1 config_apply_error=0 config_apply_accepted=1 config_apply_reply_valid=1 config_apply_reply=0x1502 lpwr_enabled=1 lpwr_attempted=1 lpwr_error=0 lpwr_accepted=1 lpwr_reply_valid=1 lpwr_reply=0x1702 lpwr_retained=1 task_enabled=1 task_attempted=1 task_error=0 task_response_valid=1 task_reply=0x702 task_data=0xfffdfd0 task_accepted=1 task_signal_seen=1 task_fence=0x1 task_pending=0x1 task_verified=1 task_retained=1 task_idle_notifications=2 task_idle_blocked=0 task_fence_value=0x1 queue_poisoned=0\n",
+    "relu_status": "enabled=1 attempted=1 error=0 accepted=1 completed=1 signal_seen=1 pending=0x40 reply=0x702 data=0xfff8000 fence=0x2 numeric_verified=1 input_sha256=73cc501f702fa3fdd1a468fefc316d1b838941fdc1397d4a7ff9b30ee4a81f45 output_sha256=6e043c4c2ae0ddfcaca4341ab36f15fdebf066157af5da6483bc56cd6786404f retained=1 idle_notifications=1 idle_blocked=0 fence_value=0x2 queue_poisoned=0\n"
+  },
+  "subsequent_readonly_mmio": {
+    "physical_base": "0x19002000",
+    "access": "O_RDONLY / PROT_READ; no register writes",
+    "registers": {
+      "0x8": "0x0",
+      "0x40": "0x0",
+      "0x44": "0x0",
+      "0x328": "0x1001e05",
+      "0x32c": "0x10801d0"
+    },
+    "note": "Captured after failure; not an instrumented before/after snapshot of the original write. Common raw route/mask bit 24 remains set; its meaning is unknown."
+  },
+  "physical_reload_cycles": 0,
+  "io_reuse_verified": false,
+  "full_image_verified": false,
+  "power_profile_changed": false,
+  "corrected_source": {
+    "change": "Retain original recovered IRQ-mask operation and readback; remove unsupported all-intersection-bits-zero assertion. Record raw values. Exact HFRP stop and independent power-state confirmation still mandatory for release.",
+    "built_srcversion": "E29987A10EDFF4DACAC855B",
+    "built_sha256": "64a8dc3db26a1b1c363309b873e93d2c7385c04760b4f411116c64e0c1638317",
+    "hardware_verified": false,
+    "requires_reboot": true,
+    "next_command": "pkexec \"$PWD/venv/bin/python\" \"$PWD/scripts/qualify_p16_reload.py\" --cycles 2 --output-dir \"$PWD/results/shutdown-reload-02\""
+  }
+}
