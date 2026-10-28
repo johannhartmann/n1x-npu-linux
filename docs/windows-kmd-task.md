@@ -627,8 +627,9 @@ This is not a recovered complete physical-reset procedure.
 with the capability-bit-clear selection's constructed queue/context state.
 It uses the original entry-bank accessors `0xdd1548`, `0xdd1428`, `0xdd7708`,
 the concrete adapter predicates `0x5bf0`/`0x5be0`, and worker wrapper
-`0xdd6440`. IRQL, timestamps, logging and the final context/worker virtual
-callbacks remain modeled. The original helper requires IRQL above 2; the
+`0xdd6440`. The context callback now executes its original implementation
+`0x92c30`, resolved below. IRQL, timestamps, logging and the final worker
+callback remain modeled. The original helper requires IRQL above 2; the
 test supplies 3, rather than claiming an actual Windows scheduler context.
 
 For outstanding records with nonzero submission timestamps, job type 1 and
@@ -639,8 +640,8 @@ the tested context mode `+0x8c = 2`, the helper:
    caller's output array.
 3. Calls the first selected context's virtual slot `0x98` with argument zero,
    sets context `+0x234` bit 2 and records the selected job. Later selected
-   records go through the worker callback. Those callbacks' hardware effects
-   are not established by this test.
+   records go through the worker callback. The context callback increments
+   only context `+0x6c`; the worker's hardware effects remain unestablished.
 4. Advances software `scheduler+0x137c+4*q` and `+0x1b3c+4*q` to the submitted
    sequence, clears the outstanding counter at `+0xbb8+4*q`, clears the byte
    at `+0x3754+q`, and copies `+0x384c+4*q` to `+0x3c2c+4*q`.
@@ -665,13 +666,66 @@ venv/bin/python scripts/inspect_kmd_recovery.py > results/windows-kmd-recovery.j
 ```
 
 The result does not show that Windows frees live DMA unsafely: the caller's
-gate and synchronization, the alternative helper, modeled virtual callbacks
+gate and synchronization, the alternative helper, modeled worker callback
 and surrounding recovery still matter. It does show why copying software
 counter advancement from this path into Linux cannot establish device
 completion or authorize buffer reuse. The normal device-semaphore reader and
 this software retirement helper have different evidence boundaries. Our Linux
 fail-stop queue and retention policy remain unchanged; safe error reclamation
 requires a demonstrated stop/reset contract, not merely matching counters.
+
+## Concrete context and process accessors (2026-10-28)
+
+`scripts/inspect_kmd_context_reset.py` executes two original creation prefixes
+from the registered DDI wrappers. This establishes which concrete vtables
+belong to the tested DLA class, rather than injecting callback identities.
+
+```text
+CreateDevice: DDI +0x90 -> 0x1ab1000 -> 0x198b500
+  -> 0x19b0a10 -> class predicate 0xdca010 -> 0x19d9700
+  -> factory 0x1a40510 -> constructor 0x1a3ff08
+  -> base 0x1a24540 -> 0xdc24b8
+  -> device vtable 0xea0f08 published; stop at 0x1a3ff40
+
+CreateContext: DDI +0x1d0 -> 0x1ab0fd0 -> 0x198b190
+  -> device virtual +0x28: 0x1a40360 -> factory 0x19e0ce0
+  -> base 0x1a26038 -> 0x1a24540 -> 0xdc24b8
+  -> embedded state 0x19a9d10
+  -> context vtable 0xe9c628 published; stop at 0x19e0d84
+```
+
+The device constructor copies creation-request `+0x18` into device `+0x98`,
+and the adapter pointer into device `+0x90`. Microsoft's
+[DXGKARG_CREATEDEVICE layout](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/d3dkmddi/ns-d3dkmddi-_dxgkarg_createdevice)
+identifies the former ARM64 field as `hKmdProcess`, a KMD process-object handle.
+Device vtable slot `+0xa0` is `0x8c7e0`: precisely `ldr x0,[x0,#0x98]; ret`.
+The test executes it with three distinct handles, including null, and checks
+that the device object is unchanged. Thus the accessor used by the reset
+helper returns process state; it does not wait for hardware or stop DMA.
+
+The context factory installs type 2 at `+0x70`, device at `+0x78`, node/engine/
+mask at `+0x80/+0x84/+0x88`, and initial mode 11 at `+0x8c`. Mode 2 used by
+the recovery fixture is selected explicitly with original setter `0x1a2a470`;
+it is not asserted to be the live default. Context vtable slot `+0x98` is
+`0x92c30`, an exclusive-load/store loop incrementing the u32 at `+0x6c`,
+followed by a barrier and return. It contains no hardware call.
+
+Three node/engine combinations and four initial counter values each cover
+zero, ordinary increments, the signed boundary and u32 wrap. Whole-context
+byte comparisons and write hooks check the sole counter update. The existing
+16 recovery cases now execute this callback and verify its counter result.
+All 29 reset/reload cases use the original process accessor where applicable,
+including the null-handle rejection, instead of a synthetic virtual return.
+
+These are deliberately constructor **prefixes**, not completed Windows DDI
+creation. Pool allocation, OS primitive initialization, memset, timestamps
+and logging remain modeled at documented boundaries. No physical reset,
+live Windows process or DMA quiescence is established. The remaining unknown
+worker callback and surrounding scheduler/reset sequence must still be traced.
+
+```sh
+venv/bin/python scripts/inspect_kmd_context_reset.py > results/windows-kmd-context-reset.json
+```
 
 ## Identifying the Windows reset entry points
 
@@ -847,21 +901,22 @@ at `0xdd5654`. Static inspection shows that a selected context with `+0x70`
 equal to 2 reaches `0x19e2628(scheduler, selected_job)` after the preceding
 context callback, node unlock and `0x1a894f0` check. Its boolean failure is
 converted to `0xc0000001`. This does not establish the full reset body's
-effects or the concrete identity of the job object's virtual accessor.
+effects. The job object's accessor is now resolved by the creation-prefix
+tests above.
 
 `scripts/inspect_kmd_reset_reload.py` executes original helper `0x19e2628`
 through the following recovered route:
 
 ```text
-selected_job+8 -> object's virtual +0xa0 -> owner+0x198
+selected_job+8 -> device virtual +0xa0 (0x8c7e0) -> process+0x198
   -> 0xdd1960 -> 0xdd1c10 -> generic RM dispatch [modeled]
   -> command 0x35800005 handler 0xd44e40
   -> primary HAL+0x210 -> 0xd48b30
   -> 0xd41740 -> HFRP reset sequence -> common loader [modeled]
 ```
 
-The job owner accessor is a recording stub returning constructed owner state.
-The test also covers its null return, which makes the original helper return
+The original device accessor returns its constructed process-handle field.
+The test also covers a null handle, which makes the original helper return
 false without an RM request. It executes the full original HAL constructor
 `0x195d038` with flags 3 and selector `0x404044`, and verifies the installed
 `+0x210` target. Thus the HAL virtual callback itself is not injected.

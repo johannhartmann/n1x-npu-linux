@@ -68,6 +68,7 @@ test-vendor: test
 	venv/bin/python scripts/inspect_kmd_completion.py
 	venv/bin/python scripts/inspect_kmd_cleanup.py
 	venv/bin/python scripts/inspect_kmd_recovery.py
+	venv/bin/python scripts/inspect_kmd_context_reset.py
 	venv/bin/python scripts/inspect_kmd_reset_dispatch.py
 	venv/bin/python scripts/inspect_kmd_reset_resources.py
 	venv/bin/python scripts/inspect_kmd_reset_reload.py

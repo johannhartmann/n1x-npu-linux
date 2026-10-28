@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Join the original EngineReset RM packet to HFRP reset/reload policy.
 
-The job object's accessor, generic RM dispatch, register I/O and final common
+Generic RM dispatch, register I/O and final common
 loader are modeled. Wire cases execute HFRP transport against a synthetic peer;
 policy-only cases stub transport. No hardware is accessed.
 """
@@ -51,10 +51,11 @@ def run(pe, gate=0, enabled=True, capability=1, pending_error=None,
     m.write(OBJECT+8, 'I', 0x1234)
     m.write(OBJECT+0x10, 'Q', OWNER+0x5000)
     m.write(JOB+8, 'Q', OWNER+0x6000)
-    m.write(OWNER+0x6000, 'Q', OWNER+0x6100)
-    m.write(OWNER+0x6100+0xa0, 'Q', STUB+12)
+    m.write(OWNER+0x6000, 'Q', BASE+0xea0f08)
+    m.write(OWNER+0x6000+0x98, 'Q', 0 if missing_owner else OWNER+0x6200)
+    assert struct.unpack('<Q', pe.get_data(0xea0f08+0xa0, 8)) == (BASE+0x8c7e0,)
     m.write(OWNER+0x6200+0x198, 'Q', OBJECT)
-    events, packet, pending, register_reads = [], [], [], []
+    events, packet, pending, register_reads, process_accessors = [], [], [], [], []
     entries = []
     wire_packets, wire_accesses, transport_entries, lock_events = [], [], [], []
     wire_returns = []
@@ -89,9 +90,9 @@ def run(pe, gate=0, enabled=True, capability=1, pending_error=None,
             assert m.reg(0) == PARENT
             events.append(['pending', pending_error])
             m.ret(pending_error)
-        elif pc == STUB+12:
+        elif pc == BASE+0x8c7e0:
             assert m.reg(0) == OWNER+0x6000
-            m.ret(0 if missing_owner else OWNER+0x6200)
+            process_accessors.append(hex(pc-BASE))
         elif wire and pc == STUB+16:
             assert m.reg(0) == PROVIDER and m.reg(1)%4 == 0 and m.reg(1) < len(ram)
             offset = m.reg(1)
@@ -166,6 +167,7 @@ def run(pe, gate=0, enabled=True, capability=1, pending_error=None,
     result = (m.call(0x19e2628, 0, JOB) if via_job else
               m.call(0xdd1960, OBJECT, OWNER+0x6000))
     assert not pending
+    assert process_accessors == (['0x8c7e0'] if via_job else [])
     expected = []
     if via_job and missing_owner:
         assert not packet and result == 0
@@ -217,6 +219,7 @@ def run(pe, gate=0, enabled=True, capability=1, pending_error=None,
                        'missing_owner': missing_owner, 'wire': wire,
                        'reply_payload': reply_payload.hex(), 'ring_start': ring_start},
             'packet': packet, 'events': events, 'return': result,
+            'process_accessors': process_accessors,
             'diagnostic_reads': register_reads, 'original_entries': entries,
             'wire_packets': wire_packets, 'wire_accesses': wire_accesses,
             'transport_entries': transport_entries, 'lock_events': lock_events,
@@ -243,8 +246,8 @@ def main():
                                  reply_payload=payload))
     print(json.dumps({'passed': True, 'kmd_sha256': KMD_SHA256,
                       'cases': cases, 'case_count': len(cases),
-                      'modeled_boundaries': ['job owner accessor +0xa0',
-                          'generic RM dispatch', 'register I/O',
+                      'original_process_accessor': 'device vtable 0xea0f08 +0xa0 -> 0x8c7e0',
+                      'modeled_boundaries': ['generic RM dispatch', 'register I/O',
                           'HFRP transport in policy-only cases; peer in wire cases',
                           'common loader', 'pending callback', 'logging and timing'],
                       'physical_reset_executed': False}, indent=2))

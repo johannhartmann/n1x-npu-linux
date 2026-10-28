@@ -19,7 +19,7 @@ ARGS, REQUEST, OUTPUT, CONTEXT = (PRIMARY+i*0x1000 for i in range(1, 5))
 
 def replay(pe, previous=0, count=1, reject=False, flags=0):
     m = Machine(pe)
-    for page in (0xe18000, 0xe19000, 0xe07000, 0xc000, 0x5000,
+    for page in (0xe18000, 0xe19000, 0xe07000, 0xc000, 0x5000, 0x92000, 0xe9c000,
                  0xdf8000, 0x14be000, 0x14f8000):
         m.u.mem_map(BASE+page, 0x1000)
         m.u.mem_write(BASE+page, pe.get_data(page, 0x1000))
@@ -38,8 +38,12 @@ def replay(pe, previous=0, count=1, reject=False, flags=0):
     m.write(PARENT+0x8680, 'Q', OWNER+0x6000)
     m.write(OWNER+0x6000, 'Q', OWNER+0x7000)
     m.write(OWNER+0x7000+0x18, 'Q', STUB+16)
-    m.write(CONTEXT, 'Q', OWNER+0xa000)
-    m.write(OWNER+0xa000+0x98, 'Q', STUB+12)
+    # The original DLA context factory installs this table. Slot 0x98 is
+    # an atomic counter increment, not an engine-stop operation; its complete
+    # instructions now execute here rather than an injected callback return.
+    m.write(CONTEXT, 'Q', BASE+0xe9c628)
+    m.write(CONTEXT+0x70, 'I', 2)
+    assert m.read(BASE+0xe9c628+0x98, 'Q') == (BASE+0x92c30,)
     m.write(CONTEXT+0x8c, 'I', 0 if reject else 2)
     for address, pointer in ((OBJECT+0xed8, OWNER), (OWNER+0x18, OWNER+0x1000),
                              (OWNER+0x1000+0x4e0, OWNER+0x2000),
@@ -89,10 +93,9 @@ def replay(pe, previous=0, count=1, reject=False, flags=0):
             m.ret(PARENT)
         elif pc == STUB+8:
             m.ret(3)  # The original helper asserts IRQL > DISPATCH_LEVEL.
-        elif pc == STUB+12:
+        elif pc == BASE+0x92c30:
             assert [m.reg(i) for i in (0, 1)] == [CONTEXT, 0]
             events.append('context_slot_98')
-            m.ret(0)
         elif pc == STUB+16:
             assert m.reg(0) == OWNER+0x6000 and m.reg(1) in jobs[1:]
             events.append('worker_slot_18')
@@ -119,6 +122,7 @@ def replay(pe, previous=0, count=1, reject=False, flags=0):
     assert not bank_writes
     assert m.read(DESCRIPTOR+entry_offset, 'I') == (entry,)
     assert m.read(DESCRIPTOR+completion_offset, 'I') == (previous,)
+    assert m.read(CONTEXT+0x6c, 'I') == (int(bool(count) and not reject),)
     if reject and count:
         assert result == 0 and status == 0xc00000bb
         assert not events and not bank_reads
@@ -146,6 +150,7 @@ def replay(pe, previous=0, count=1, reject=False, flags=0):
             'return': result, 'status': hex(status),
             'software_completed': m.read(PARENT+0x137c+4*q, 'I')[0],
             'device_bank_unchanged': True, 'bank_reads': bank_reads,
+            'original_context_counter': m.read(CONTEXT+0x6c, 'I')[0],
             'events': events}
 
 
@@ -164,7 +169,7 @@ def main():
                       'kmd_sha256': KMD_SHA256, 'helper_rva': '0xe183b0',
                       'cases': cases, 'limitations': [
                           'Constructed queues, contexts and mapped semaphore banks',
-                          'Context/worker virtual callbacks, IRQL, timestamps and logging modeled',
+                          'Context slot 0x98 executes original 0x92c30; worker callback, IRQL, timestamps and logging modeled',
                           'Caller gate, OS synchronization and surrounding recovery not executed',
                           'No reset, MMIO, engine stop, firmware execution or DMA release',
                           'Software sequence advancement is not physical task-completion evidence']}, indent=2))
