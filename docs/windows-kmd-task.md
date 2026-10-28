@@ -552,6 +552,13 @@ The original context initializer writes a separate 64-byte header. Byte 0 is
 at byte 4 copies context `+0x2c8`. Otherwise the remaining bytes are zero. The
 header device address is `ring_base + 32*stride + (sequence & 31)*64`.
 
+The subsequent [original-firmware checkpoint test](contract.md#original-firmware-checkpoint-save-and-restore)
+establishes that the header's +4 pointer addresses a separate 32-byte scheduler
+checkpoint. It also exercises the restore gate: job flag bit 7 becomes task
+flag bit 1, which permits consuming a checkpoint with its saved-work indicator
+set. This is a consumer test using a constructed context object, not a trace of
+the Windows context allocator or a physical context-switch qualification.
+
 Preactions occupy descriptor offset 68 and encode the previously recovered
 prior-completion wait, entry marker and control gate. Postactions start at
 offset `0x1e5` and write the current sequence to the completion semaphore.

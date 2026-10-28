@@ -17,7 +17,8 @@ from emulate_profile1_commands import run, MMIO, ACK, PROFILE1_HASH
 
 
 def build(pe, *, sequence=1, command=0x12345678000, length=64,
-          metadata=True, job_flags=0, disable_pre=False, context=False):
+          metadata=True, job_flags=0, disable_pre=False, context=False,
+          context_address=0x3456789a000):
     m = Machine(pe)
     for page in (0xe9c000, 0xcd000, 0x14c1000):
         m.u.mem_map(BASE+page, 0x1000)
@@ -54,7 +55,7 @@ def build(pe, *, sequence=1, command=0x12345678000, length=64,
         m.write(JOB+0x10, 'Q', OWNER+0x6000)
         m.write(OWNER+0x6000+0x70, 'I', 2)
         m.write(OWNER+0x6000+0x2b0, 'B', 7)
-        m.write(OWNER+0x6000+0x2c8, 'Q', 0x3456789a000)
+        m.write(OWNER+0x6000+0x2c8, 'Q', context_address)
     visited, events = set(), []
 
     def hook(_, pc, size, user):
@@ -103,7 +104,7 @@ def build(pe, *, sequence=1, command=0x12345678000, length=64,
     expected_context[0] = 1
     if context:
         expected_context[1] = 7
-        struct.pack_into('<Q', expected_context, 4, 0x3456789a000)
+        struct.pack_into('<Q', expected_context, 4, context_address)
     assert context_header == expected_context
     assert {0xdd6638, 0xdd6540, 0xdd64d8, 0xdd6ab0, 0xdd6a08, 0xdd73f0} <= visited
     assert events == (['malformed_command_length_log'] if effective_length and not valid else [])+['zero_context_header']

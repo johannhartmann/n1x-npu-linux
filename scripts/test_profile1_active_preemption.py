@@ -21,8 +21,8 @@ from emulate_profile1_commands import run, MMIO, ACK, PROFILE1_HASH
 from emulate_firmware_commands import HOST
 
 
-def check(runtime, pe, firmware, model, engine_status=None, *,
-          method_flags=0x200, engine_irq=0x400, enabled=True):
+def start_task(runtime, pe, firmware, model, *, enabled=True, job_flags=0, save_context=False):
+    """Shared RAM fixture; stop after original firmware dispatches the engine."""
     backing, addresses, layout = build_relu(model, HOST+0x10000)
     payload = bytearray(0x10000)+backing
     b = Builder(runtime)
@@ -31,7 +31,8 @@ def check(runtime, pe, firmware, model, engine_status=None, *,
     b.fences([(4, 1, HOST+0x7000, 0x11223344)])
     assert b.build(flags=0, field=0) == 0
     payload[0x1000:0x5000] = b.u.mem_read(CPU, 0x4000)
-    descriptor, ctx, ctxdata, _ = build_task(pe, command=b.get(OUT))
+    descriptor, ctx, ctxdata, _ = build_task(pe, command=b.get(OUT), job_flags=job_flags,
+                                          context=save_context, context_address=HOST+0xc000)
     payload[:len(descriptor)] = descriptor
     payload[ctx-HOST:ctx-HOST+len(ctxdata)] = ctxdata
     for offset, value in ((0x6060, 0), (0x6440, 0xdeadbeef),
@@ -84,13 +85,33 @@ def check(runtime, pe, firmware, model, engine_status=None, *,
         assert (0x25060+8*index, 4, address >> 32) in result['scheduler_mmio_writes']
     internal = word(u, word(u, 0x1862bc)+40)
     assert word(u, internal+40) == 1
-    events, accesses, post_status, fence_writes = [], [], [], []
+    return {'u': u, 'result': result, 'layout': layout, 'input': input_data,
+            'notifications': notifications, 'word': lambda address: word(u, address),
+            'payload': payload, 'header': header, 'fence': fence, 'internal': internal,
+            'context_header': ctx, 'context_buffer': HOST+0xc000}
+
+
+def check(runtime, pe, firmware, model, engine_status=None, *,
+          method_flags=0x200, engine_irq=0x400, enabled=True):
+    fixture = start_task(runtime, pe, firmware, model, enabled=enabled)
+    u, result = fixture['u'], fixture['result']
+    layout, input_data = fixture['layout'], fixture['input']
+    notifications, payload = fixture['notifications'], fixture['payload']
+    header, fence, internal = fixture['header'], fixture['fence'], fixture['internal']
+
+    def word(u, address):
+        return int.from_bytes(u.mem_read(address, 4), 'little')
+
+    events, accesses, post_status, fence_writes, execution_status = [], [], [], [], []
 
     def code(_, pc, size, user):
         if pc in (0x105b90, 0x105f70, 0x105cd8, 0x105d2e, 0x102d7a):
             events.append([hex(pc), u.reg_read(rv.UC_RISCV_REG_A0), u.reg_read(rv.UC_RISCV_REG_A1)])
         if pc == 0x105d2e:
             post_status.append(u.reg_read(rv.UC_RISCV_REG_A0))
+        if pc == 0x101990:  # original arithmetic executor returns to the UMD consumer
+            value = u.reg_read(rv.UC_RISCV_REG_A0)
+            execution_status.append(value if value < 1 << 31 else value-(1 << 32))
 
     def access(_, kind, address, size, value, user):
         if MMIO <= address < MMIO+0x40000:
@@ -149,9 +170,9 @@ def check(runtime, pe, firmware, model, engine_status=None, *,
         u.mem_write(MMIO+0x3054, struct.pack('<I', engine_status))
         interrupt(engine_irq)
     completed = engine_status is not None and engine_status & 3 == 1
-    preempted = engine_status is not None and bool(engine_status & 4) and not completed
-    notified = completed or preempted
-    final_state = 0 if completed else 3 if preempted else 2 if enabled else 1
+    save_failed = engine_status is not None and bool(engine_status & 4) and not completed
+    notified = completed or save_failed
+    final_state = 0 if completed else 3 if save_failed else 2 if enabled else 1
     expected_host = bytearray(host_before)
     if notified:
         struct.pack_into('<I', expected_host, fence, 8)
@@ -165,6 +186,7 @@ def check(runtime, pe, firmware, model, engine_status=None, *,
     assert fence_writes == expected_writes
     assert [n['mailbox'] for n in notifications] == expected_mailboxes
     assert post_status == ([0] if notified else [])
+    assert execution_status == ([-16] if save_failed else [0] if completed else [])
     assert not result['task_interrupts']
     assert not any(a[0] == UC_MEM_WRITE and a[1] == 0 and a[3] & 64 for a in accesses)
     if notified:
@@ -181,7 +203,8 @@ def check(runtime, pe, firmware, model, engine_status=None, *,
     return {'pc': hex(u.reg_read(rv.UC_RISCV_REG_PC)), 'events': events,
             'after_request': requested, 'engine_status': engine_status,
             'engine_irq': hex(engine_irq), 'method': hex(method_flags | 18),
-            'enabled': enabled, 'completed': completed, 'preempted': preempted,
+            'enabled': enabled, 'completed': completed, 'context_save_failed': save_failed,
+            'execution_status': execution_status,
             'postaction_status': post_status, 'request_engine_writes': request_engine_writes,
             'fence_writes': fence_writes,
             'task_interrupt_count': len(result['task_interrupts']),
@@ -215,7 +238,8 @@ def main():
                       'hardware_access': False,
                       'limitations': ['Synthetic allocations, MMIO, engine IRQ/status and DMA',
                                       'No arithmetic execution, physical DMA quiescence or memory reclamation',
-                                      'Task uses the Windows no-save-context header; no restore/resume tested']}, indent=2))
+                                      'Zero checkpoint pointer; save predicate fails before checkpoint write',
+                                      'No restore/resume tested by this script']}, indent=2))
 
 
 if __name__ == '__main__':

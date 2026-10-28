@@ -1169,11 +1169,18 @@ enters original ISR **0x1025e6**. It reads the compiler-provided status pairs
 `{0x3054,4}` and `{0x3054,3}` and executes the network's +0x34 instruction
 record. The low two bits are compared to **1**, not merely tested for bit 0:
 
-| Modeled engine status | Final state | Queue count | Task completion word | Preemption fence / notification |
-| --- | ---: | ---: | ---: | --- |
-| No engine IRQ, or 0 / 2 / 3 | 2 | 1 | Unchanged (0) | Unchanged; no `0x120b` |
-| 1 / 5 | 0 | 0 | Written to 1 | Sequence 8; `0x120b`, data 0 |
-| 4 / 6 / 7 | 3 | 0 | Unchanged (0) | Sequence 8; `0x120b`, data 0 |
+| Modeled engine status | Executor return | Final state | Queue count | Task completion word | Preemption fence / notification |
+| --- | --- | ---: | ---: | ---: | --- |
+| No engine IRQ, or 0 / 2 / 3 | Still waiting | 2 | 1 | Unchanged (0) | Unchanged; no `0x120b` |
+| 1 / 5 | 0 | 0 | 0 | Written to 1 | Sequence 8; `0x120b`, data 0 |
+| 4 / 6 / 7 | **-16: context-save predicate failed** | 3 | 0 | Unchanged (0) | Sequence 8; `0x120b`, data 0 |
+
+**Correction to the initial interpretation:** the 4/6/7 cases do not establish
+successful context saving. The original executor returns -16 at `0x101990`,
+because the first save sequence requires `(MMIO[0x25044] & 15) > 0`, while this
+fixture leaves that modeled register zero. Tests now assert the executor return
+separately from the successful preemption postaction result. The same fence
+and notification occur despite this engine-sequence error.
 
 The 4/6/7 branch retains one remaining control record in its firmware backing;
 the 1/5 branch decrements it to zero. Both terminal branches run the original
@@ -1190,14 +1197,87 @@ status value 0..7, both IRQ sources, both reporting flags, absent engine IRQ,
 and two disabled-preemption cases. Disabling through command 28/data 0 causes
 the active request to return `0xc1201`, without request DMA or engine writes.
 
-The fixture uses the KMD's no-save-context header. It does not establish a
-restorable context, resume correctness, physical engine stop, coherency or
-safe memory reclamation. The software state 3 is not evidence of whole-device
-DMA quiescence. Next work is the Windows context-save/restore contract and
-physical verification; Linux retention and recovery policy remain unchanged.
+The fixture's context header has a zero context-storage address. This does
+not disable the save path: with the predicate satisfied and sufficient save
+events, firmware would attempt to write its checkpoint to address zero. The
+following test provides mapped checkpoint storage. Neither state 3 nor the
+notification establishes whole-device DMA quiescence; Linux retention and
+recovery policy remain unchanged.
 
 ```sh
 venv/bin/python scripts/test_profile1_active_preemption.py > results/active-preemption.json
+```
+
+### Original firmware checkpoint save and restore
+
+`test_profile1_context_save.py` reuses the active task fixture but supplies a
+constructed Windows context of type 2 to the **original KMD builder**. The
+builder's `context+0x2c8` becomes the device address at offset 4 of its 64-byte
+context header. This points to a separately allocated, initially zero **32-byte
+scheduler checkpoint**, not to the header itself. The test uses a synthetic
+context tag 7 copied from `context+0x2b0`; it does not assign a meaning to that
+tag or execute the Windows allocation/mapping lifecycle.
+
+Three distinct storage objects must not be confused:
+
+1. The KMD's per-slot 64-byte header, referenced by task descriptor +0x33.
+2. The 32-byte checkpoint, addressed by that header's +4 field.
+3. The compiler loadable's `task-0-preempt_ctx` allocation (2,738,944 bytes in
+   this ReLU fixture), used by engine-side instruction sequences. The test
+   does not simulate the engine's transfers into or out of that allocation.
+
+The compiler's instruction `01040000445002000f00000000000000` is interpreted
+by the original comparison helper `0x102800`: mask register 0x25044 by 15 and
+require its value to exceed zero. Values 0 and 16 fail with -16; values 1, 15
+and 17 pass. These are explicitly modeled status values, not host register
+settings recommended for physical hardware.
+
+With that predicate satisfied, the observed sequence is:
+
+| Input event | State | Remaining save records | Queue count | Host checkpoint |
+| --- | ---: | ---: | ---: | --- |
+| Preemption method 18 | 2 | 2 | 1 | Zero |
+| Engine IRQ, status 4 | 3 | 2 | 1 | Zero |
+| Engine IRQ, status 0 | 3 | 1 | 1 | Zero |
+| Engine IRQ, status 0 | 0 | 0 | 0 | Written before preemption fence/notification |
+
+The two save records execute through `0x105a08`, with interpreter returns zero
+at `0x105a42`. Original helper `0x1059ce` then writes 32 checkpoint bytes as
+eight four-byte DMA transfers. In this one-command fixture with a zero modeled
+timer, its four little-endian 64-bit words are **0, 0, 1800, 1**. The last word
+is the saved-work indicator; the 1800 budget is the existing KMD literal, not a
+calibrated time unit. The task's completion word remains zero and no SWGEN0 is
+emitted. Preemption postactions write 5 then 8 and issue `0x120b` only after the
+checkpoint write. Failed-predicate cases still send that same notification,
+but do not write a checkpoint.
+
+For resubmission, the original KMD copies **job flag bit 7** into **descriptor
+flag bit 1** at offset 0x29. With that bit set, helper `0x1059d8` reads the
+checkpoint, firmware clears its saved-work indicator in memory, enters state
+4 and runs two restore records through `0x105a6a`. Two modeled engine events
+with status 0 advance restore count 2 -> 1 -> 0 and return to arithmetic state
+1. A subsequent status-1 event completes the task, writes its normal completion
+word and emits SWGEN0. The original executor returns zero at both interruption
+and resumed completion. Without the flag, resubmission starts the normal
+arithmetic path, skips both restore records and leaves the saved-work indicator
+set. Merely resubmitting a descriptor is therefore not a proven resume operation.
+
+The **20 save/restore cases** check both local IRQ sources, both descriptor-flag
+settings and five predicate values. They verify exact host-memory changes, checkpoint
+write order, intermediate states/counts, executor errors, notifications and
+unchanged firmware/input/poisoned output. These are original-code control-flow
+tests with synthetic MMIO/IRQ/DMA. They do not prove engine context integrity,
+numerical results after resume, physical stop or safe buffer release. Native
+integration still needs checkpoint ownership, complete model-context backing,
+error handling and physical qualification before enabling cancellation/resume.
+Two further negative cases omit the checkpoint pointer: the original firmware
+reaches its checkpoint DMA write with destination zero, where the RAM-DMA
+harness rejects the unmapped address. This is a harness boundary, not firmware
+validation, and neither case issues a preemption notification before rejection.
+The test suite therefore contains **22 cases** in total.
+
+```sh
+venv/bin/python scripts/test_profile1_context_save.py > results/context-save.json
 ```
 
 ## HAL-1 firmware rearms each mailbox response
