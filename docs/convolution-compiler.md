@@ -140,6 +140,82 @@ HAL-1 firmware reset/trap/scheduler. All nine task addresses are serialized
 correctly and the eight expected engine address pairs are programmed. Firmware
 waits for the engine; no convolution arithmetic or output accuracy is modeled.
 
+## Independent numerical reference and hardware acceptance
+
+`runtime/run_conv.py` verifies all 1,024 kernel values and all 32 bias words
+against the source graph before accepting the pinned loadable. The kernel is
+row-major FP16 for this fixture. Each bias occupies a u32 whose low 19 bits
+contain sign/exponent/fraction; shifting the word left by 13 produces the
+source FP32 bit pattern. For example, `0x5f800 << 13` is FP32 `-0.5`.
+Every fixture bias is exactly representable. Physical interpretation and
+arithmetic-engine rounding/exception behavior still require hardware tests.
+
+The named native functions `nvdla::priv::fp19_to_fp32` at ELF offset `0x4e1d20`
+and `fp32_to_fp19` at `0x4e1d80` provided the disassembly reference for finding
+the Windows counterparts at RVAs `0x3d93b8` and `0x3d9420` in the pinned 11.4
+compiler. `scripts/inspect_fp19_conversion.py` executes both implementations'
+unmodified leaf instructions in Unicorn with no helper models. All 1,056
+encoding and 1,040 decoding cases agree with an independent integer reference,
+including signed zeros, subnormals, rounding ties, exponent carry, maximum
+finite values, infinities and NaNs. All 32 actual bias words also encode and
+decode exactly through both original binaries.
+
+For normal finite inputs the software encoder rounds to nearest with ties to
+even. It flushes FP32 subnormals to signed zero and clamps overflow and infinity
+to signed maximum finite FP19 (`0x3fbff` plus sign). NaNs encode as `0x3ffff`.
+The decoder preserves encoded infinity and maps NaNs to FP32 bits `0x7f8003ff`;
+for other low-19-bit words, the result is a left shift by 13. Consequently,
+the shift shortcut is valid for the finite fixture biases but not every special
+value, and encode/decode is not universally a lossless round trip. These are
+software-function observations, not a claim about engine arithmetic or a trace
+of the complete constant-producing call chain.
+
+`scripts/create_conv_probe.py` produces an independent ONNX Conv graph and
+three changing input patterns in `results/conv-probe/`. ONNX ReferenceEvaluator
+executes the full 32-channel convolution, while the acceptance CLI computes
+the source graph using exact integer arithmetic. Packing is checked separately
+with vectorized NCHW/CHW16 transforms. All 1,568 outputs of each case agree
+byte-for-byte; all three expected outputs differ.
+
+Inputs are odd multiples of 1/16 between -31/16 and 31/16. For channel `c`,
+with input numerators `n`, the exact output in units of 1/128 is
+`2*(c%3+1)*n[c] - n[(c+1)%32] + 4*c - 64`. These outputs and intermediates
+are exactly representable, finite and normal; outputs cannot be zero. This
+tests bias, channel mixing, the channel-31 wrap and spatial/tensor placement
+without hiding mismatches behind a tolerance. It is not general convolution
+accuracy or performance qualification.
+
+After the separate [native accel startup and ReLU qualification](native-runtime.md#first-hardware-qualification-not-yet-performed),
+use the actual `n1x-dla` node (the example assumes `accel0`):
+
+```sh
+venv/bin/python scripts/create_conv_probe.py
+make runtime
+pkexec /usr/bin/python3 "$PWD/runtime/run_conv.py" \
+  --model "$PWD/results/native-compile-t254-conv1x1/conv1x1.nvda" \
+  --device /dev/accel/accel0 \
+  --input "$PWD/results/conv-probe/channels-input.fp16" \
+          "$PWD/results/conv-probe/spatial-input.fp16" \
+          "$PWD/results/conv-probe/negative_channels-input.fp16" \
+  --output-dir "$PWD/results/NEW-accel-conv"
+```
+
+The runner validates every input before opening the device and checks the
+retained-job budget before submission. Each output starts as a qNaN pattern.
+Only `Device.read` supplies the actual output; CPU values are comparison data.
+Acceptance requires an exact output match, unchanged input and unchanged full
+constant allocation. Attempt/job/error records and raw outputs are flushed
+to disk. Any failed comparison or I/O error stops the sequence without retry.
+This retains the existing kernel memory-lifetime restrictions.
+
+`scripts/test_conv_acceptance.py` checks nine modeled-device scenarios:
+three successful changing inputs, untouched poison, incorrect output, a stale
+second result, changed input, changed constants, submit timeout, read failure
+and insufficient retained budget. Seven invalid-input cases and a later
+invalid input verify rejection before device opening. These are CLI acceptance
+tests with modeled reads, not physical convolution results. The hardware run
+above remains pending; the current boot still has the old module without accel.
+
 ## Reproduce
 
 With the ignored vendor binaries and existing ReLU capture prerequisites:

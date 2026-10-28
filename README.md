@@ -140,6 +140,8 @@ This is one successful execution, not a throughput or sustained-stability benchm
 - [Task/command contracts](docs/contract.md), [region-5](docs/region5.md).
 - [Windows KMD task submission and completion semaphore construction](docs/windows-kmd-task.md).
 - [Model/compiler probe](docs/model-probe.md), [boot logging](docs/boot-logging.md).
+- [Convolution compiler, constant loading and numerical acceptance](docs/convolution-compiler.md)
+  (compiler/runtime checks pass offline; physical convolution execution is pending).
 
 Detailed research documents retain earlier unsuccessful experiments and their
 limitations. The physical result above supersedes their earlier boot-status

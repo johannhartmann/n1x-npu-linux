@@ -34,6 +34,9 @@ test-conv:
 	venv/bin/python scripts/verify_conv_loadable.py
 	venv/bin/python scripts/inspect_conv_memory_allocation.py
 	venv/bin/python scripts/test_linux_accel.py --conv
+	venv/bin/python scripts/create_conv_probe.py
+	venv/bin/python scripts/test_conv_acceptance.py
+	venv/bin/python scripts/inspect_fp19_conversion.py
 
 generate-probe:
 	venv/bin/python scripts/create_relu_probe.py

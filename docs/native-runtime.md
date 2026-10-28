@@ -317,3 +317,10 @@ logical address lengths come from the verified loadable.
 No hardware execution, module replacement or reboot was performed while adding
 this interface. A passing build or emulated scheduler acceptance is not evidence
 that `/dev/accel` numerical inference already works on the P16.
+
+Once this changing-input ReLU qualification passes, the separate
+[convolution acceptance procedure](convolution-compiler.md#independent-numerical-reference-and-hardware-acceptance)
+tests a second compiled graph through the native loadable path. It includes
+three independently CPU-checked input/output pairs, exact output comparison,
+input/constant integrity checks and stop-on-error behavior. That hardware
+qualification is also pending; its modeled-device tests do not qualify the NPU.
