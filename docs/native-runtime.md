@@ -73,6 +73,27 @@ Safe reclamation, reset/recovery, asynchronous scheduling and suspend/resume
 remain open requirements. The existing driver still rejects suspend after
 startup. No service or autostart is installed by this change.
 
+The shared internal job executor now has separate `n1x_dla_job_start()` and
+`n1x_dla_job_poll()` operations. Start publishes and submits once, then reserves
+the queue for the exact job object. Poll consumes at most one mailbox response
+without sleeping and returns `-EINPROGRESS` until a terminal result; the cumulative
+5001-poll budget cannot restart on each call. Another job cannot submit, poll or
+terminate the owned queue. A caller of the split interface must also enforce a
+wall-clock deadline; polling count alone does not schedule future calls.
+`n1x_dla_job_fail()` quarantines an abandoned/expired job's queue in software,
+without claiming hardware cancellation or freeing DMA. Terminal errors retain
+the existing poisoned-queue policy. Pre-submission publication failures release
+ownership without poisoning; no method was attempted in that case.
+
+The synchronous `n1x_dla_job_execute()` used by sysfs and accel EXEC now wraps
+those operations with the same 1-ms polling delays. The public accel ABI and
+memory retention policy are unchanged. This split provides an ownership boundary
+for later checkpoint/preemption integration; it does not yet suspend or resume
+a job. The mock lifecycle suite covers 81 cases. The original-firmware harness
+also drives start and poll as separate native calls for 32 successive jobs on
+one firmware instance, and verifies a postaction-error case. Those tests use
+modeled MMIO, DMA and interrupt delivery, not the physical P16.
+
 The [active firmware preemption tests](contract.md#preemption-after-the-original-scheduler-starts-an-arithmetic-task)
 now distinguish a completed task from a failed context-save attempt under
 modeled engine IRQs. Both can report the same preemption message, and neither

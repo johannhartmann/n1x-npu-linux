@@ -129,7 +129,7 @@ static void check(int expected,int allocs,int free_count,bool attempted,bool ver
  assert(!!boot_task.buffer==attempted);
  if(attempted){assert(n1x_boot_bypass_task_once()==-EALREADY);assert(allocations==1);}cases++;}
 /* Exercise the shared executor's callback boundary, independently of sysfs. */
-static int publish_error,fence_error_at,fence_reads;
+static int publish_error,fence_error_at,fence_reads,fence_error_code;
 static bool presignal;
 static int checked_publish(void *ctx,u32 value)
 {if(publish_error)return publish_error;
@@ -137,10 +137,10 @@ static int checked_publish(void *ctx,u32 value)
  if(presignal)*(u32 *)(allocation+768)=value;
  return err;}
 static int checked_fence(void *ctx,u32 *value)
-{if(fence_reads++==fence_error_at)return -EIO;
+{if(fence_reads++==fence_error_at)return fence_error_code;
  return n1x_boot_read_job_fence(ctx,value);}
 static void prepare_direct(void)
-{reset();publish_error=0;fence_error_at=-1;fence_reads=0;presignal=false;
+{reset();publish_error=0;fence_error_at=-1;fence_reads=0;fence_error_code=-EIO;presignal=false;
  boot_task.buffer=allocation;boot_task.dma=allocation_address;memset(allocation,0,sizeof(allocation));
  struct n1x_dla_task_args args={.address_list=allocation_address+256,.num_addresses=1};
  u64 network=allocation_address+512;
@@ -226,7 +226,60 @@ int main(void)
   else assert(sent&&boot_task.accepted);
   cases++;
  }
- printf("%d native bypass-task lifecycle cases; %d I/O fault positions; acceptance/fence/SWGEN0/error separation passed; no hardware access\n",cases,baseline);
+ /* Split start/poll owns exactly one job across calls; wrong-owner and invalid
+  * API calls must not read/ACK its mailbox, republish, or release its queue. */
+ prepare_direct();
+ assert(!n1x_dla_job_start(&boot_queue,&io,&checked,&boot_task));
+ assert(boot_queue.active&&boot_queue.owner_job==&boot_task&&boot_task.error==-EINPROGRESS);
+ assert(boot_task.attempted&&!boot_task.accepted&&!boot_task.polls&&barriers==1);
+ another=(struct n1x_dla_job){.dma=allocation_address};before_io=io_calls;
+ assert(n1x_dla_job_start(&boot_queue,&io,&ops,&another)==-EBUSY);
+ assert(n1x_dla_job_poll(&boot_queue,&io,&ops,&another)==-ENOENT);
+ assert(n1x_dla_job_fail(&boot_queue,&another,-ECANCELED)==-ENOENT);
+ assert(n1x_dla_job_poll(&boot_queue,NULL,&checked,&boot_task)==-EINVAL);
+ assert(n1x_dla_job_poll(&boot_queue,&io,NULL,&boot_task)==-EINVAL);
+ assert(n1x_dla_job_fail(&boot_queue,&boot_task,0)==-EINVAL);
+ assert(n1x_dla_job_fail(&boot_queue,&boot_task,-EINPROGRESS)==-EINVAL);
+ assert(io_calls==before_io&&boot_queue.owner_job==&boot_task&&barriers==1);
+ assert(n1x_dla_job_poll(&boot_queue,&io,&checked,&boot_task)==-EINPROGRESS);
+ assert(boot_task.accepted&&!boot_task.verified&&boot_task.polls==1&&!delays);
+ assert(!n1x_dla_job_poll(&boot_queue,&io,&checked,&boot_task));
+ assert(boot_task.verified&&boot_task.polls==2&&!boot_queue.active&&!boot_queue.owner_job);
+ assert(!boot_queue.poisoned&&!delays&&barriers==1&&boot_task.error==0);
+ before_io=io_calls;
+ assert(n1x_dla_job_poll(&boot_queue,&io,&checked,&boot_task)==-ENOENT);
+ assert(n1x_dla_job_start(&boot_queue,&io,&checked,&boot_task)==-EALREADY);
+ assert(io_calls==before_io);cases++;
+ for(int accepted=0;accepted<2;accepted++){
+  prepare_direct();assert(!n1x_dla_job_start(&boot_queue,&io,&checked,&boot_task));
+  if(accepted)assert(n1x_dla_job_poll(&boot_queue,&io,&checked,&boot_task)==-EINPROGRESS);
+  before_io=io_calls;
+  assert(n1x_dla_job_fail(&boot_queue,&boot_task,-ECANCELED)==-ECANCELED);
+  assert(io_calls==before_io&&boot_queue.poisoned&&!boot_queue.active&&!boot_queue.owner_job);
+  assert(boot_task.error==-ECANCELED&&!boot_task.verified&&boot_task.buffer==allocation);
+  assert(n1x_dla_job_poll(&boot_queue,&io,&checked,&boot_task)==-ENOTRECOVERABLE);
+  assert(n1x_dla_job_start(&boot_queue,&io,&checked,&boot_task)==-ENOTRECOVERABLE);
+  assert(io_calls==before_io);cases++;
+ }
+ prepare_direct();behavior=NO_REPLY;
+ assert(!n1x_dla_job_start(&boot_queue,&io,&checked,&boot_task));
+ for(int poll=0;poll<5000;poll++)
+  assert(n1x_dla_job_poll(&boot_queue,&io,&checked,&boot_task)==-EINPROGRESS);
+ assert(n1x_dla_job_poll(&boot_queue,&io,&checked,&boot_task)==-ETIMEDOUT);
+ assert(boot_task.polls==5001&&!delays&&boot_queue.poisoned&&!boot_queue.owner_job);cases++;
+ prepare_direct();behavior=COALESCED;
+ assert(!n1x_dla_job_start(&boot_queue,&io,&checked,&boot_task));
+ boot_task.polls=5000;
+ assert(!n1x_dla_job_poll(&boot_queue,&io,&checked,&boot_task));
+ assert(boot_task.polls==5001&&boot_task.verified);cases++;
+ prepare_direct();fence_error_at=1;fence_error_code=-EINPROGRESS;
+ assert(!n1x_dla_job_start(&boot_queue,&io,&checked,&boot_task));
+ assert(n1x_dla_job_poll(&boot_queue,&io,&checked,&boot_task)==-EIO);
+ assert(boot_queue.poisoned&&!boot_queue.owner_job);cases++;
+ prepare_direct();boot_task.polls=1;
+ assert(n1x_dla_job_start(&boot_queue,&io,&checked,&boot_task)==-EALREADY);
+ assert(!io_calls&&!boot_queue.owner_job);cases++;
+ printf("%d native bypass-task lifecycle cases; %d I/O fault positions; split ownership/timeout and acceptance/fence/SWGEN0/error separation passed; no hardware access\n",cases,baseline);
  return 0;}
 '''
     with tempfile.TemporaryDirectory(prefix='n1x-linux-bypass-') as tmp:

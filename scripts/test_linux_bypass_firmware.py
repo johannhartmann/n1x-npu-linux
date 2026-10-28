@@ -48,6 +48,7 @@ static struct {bool registered;} boot_region5={true};
 static struct {bool accepted;} boot_config_apply={true},boot_lpwr={true};
 static struct n1x_dla_job boot_task;
 static struct n1x_dla_job_queue boot_queue;
+static bool split_mode;
 static bool enable_bypass_task=true;
 static unsigned char allocation[4096] __attribute__((aligned(256)));
 static struct n1x_dla_io transport;static void (*synchronize)(void);
@@ -67,9 +68,20 @@ static void n1x_boot_delay(void *ctx,u32 delay)
 {(void)ctx;transport.delay_us(transport.context,delay);}
 static void dma_wmb(void) {}
 static void dma_rmb(void) {synchronize();}
+static int native_dispatch(struct n1x_dla_job_queue *queue,const struct n1x_dla_io *io,
+                           const struct n1x_dla_job_ops *ops,struct n1x_dla_job *job)
+{return split_mode?n1x_dla_job_start(queue,io,ops,job):n1x_dla_job_execute(queue,io,ops,job);}
 '''
+    assert phase.count('n1x_dla_job_execute(') == 1
+    phase = phase.replace('n1x_dla_job_execute(', 'native_dispatch(')
     shim = '#define HOST_ADDRESS '+hex(HOST)+'ULL\n'+shim+phase+r'''
 void native_queue_reset(void) {memset(&boot_queue,0,sizeof(boot_queue));}
+void native_split(int enabled) {split_mode=enabled;}
+int native_owned(void) {return boot_queue.active&&boot_queue.owner_job==&boot_task;}
+int native_poll(void) {
+ struct n1x_dla_io io={boot_dla,n1x_boot_write,n1x_boot_read,n1x_boot_delay};
+ struct n1x_dla_job_ops ops={&boot_task,n1x_boot_publish_job,n1x_boot_read_job_fence};
+ return n1x_dla_job_poll(&boot_queue,&io,&ops,&boot_task);}
 void native_setup(const struct n1x_dla_io *io,void (*sync)(void))
 {transport=*io;synchronize=sync;memset(&boot_task,0,sizeof(boot_task));memset(allocation,0,sizeof(allocation));}
 void *native_buffer(void) {return allocation;}
@@ -94,8 +106,10 @@ u32 native_result(unsigned field)
     return lib
 
 
-def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1, revoke_after_acceptance=False):
+def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1,
+            revoke_after_acceptance=False, split=False):
     lib.native_queue_reset()
+    lib.native_split(int(split))
     state = {'active': False, 'sent': False, 'paused': False, 'trap_finished': False,
              'scheduler_finished': False, 'device_backing_revoked': False}
     live, frames, errors, trace = [], [], [], []
@@ -265,6 +279,15 @@ def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1, revo
             initial_dma = len(initial['dma_commands'])
         lib.native_setup(ctypes.byref(io), sync)
         status = lib.native_run()
+        if split:
+            assert status == 0 and lib.native_owned() and not frames
+            assert not lib.native_result(1) and not lib.native_result(3)
+            for poll in range(5001):
+                status = lib.native_poll()
+                if status != -errno.EINPROGRESS:
+                    break
+                assert lib.native_owned()
+            assert not lib.native_owned()
         if not revoke_after_acceptance:
             assert not errors, errors
         fields = [lib.native_result(i) for i in range(9)]
@@ -324,7 +347,7 @@ def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1, revo
                 'backing_revoked_during_firmware_tail': completion_boundary,
                 'trap_finished': state['trap_finished'], 'scheduler_finished': state['scheduler_finished']}
         runs.append(record)
-    return {'repeat_count': repeat_count, 'firmware_reset_count': 1, 'runs': runs}
+    return {'repeat_count': repeat_count, 'firmware_reset_count': 1, 'split_host_calls': split, 'runs': runs}
 
 
 
@@ -336,6 +359,8 @@ def main():
         rows = [execute(lib, blob, fault) for fault in (None, 'version', 'execution', 'postaction')]
         rows.append(execute(lib, blob, None, completion_boundary=True, repeat_count=32))
         rows.append(execute(lib, blob, None, revoke_after_acceptance=True))
+        rows.append(execute(lib, blob, None, split=True, repeat_count=32))
+        rows.append(execute(lib, blob, 'postaction', split=True))
     print(json.dumps({'passed': True, 'hardware_access': False, 'cases': rows,
                       'limitations': ['Kernel machine/DMA/allocation/prior-phase gates are synthetic',
                                       'Original firmware reset/trap/scheduler/DMA code runs; no firmware function stubs',
