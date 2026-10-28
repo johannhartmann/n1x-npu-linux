@@ -22,9 +22,10 @@ reboot and qualification required to replace the old pinned module.
 
 Use the audited P16/BIOS/npu2 kernel and acquire the pinned vendor libraries,
 firmware and compiler inputs described in the repository documentation.
+Follow the [setup guide](../docs/setup.md) to acquire pinned inputs and run
+`venv/bin/python scripts/build_models.py --superres` in a fresh workspace.
 Generated artifacts and vendor binaries remain in ignored `sources/` and
-`results/`; they are not distributed in Git. Model acquisition and compilation
-still use the research workflow and are not automated by this launcher.
+`results/`; they are not distributed in Git.
 
 From the repository root, create the image-processing environment:
 
@@ -39,8 +40,9 @@ SHA-256 `85f36ff88cc504a24af5e0602148bc56a8aa09a58eca8c0da2756f3e8186035e`.
 The compiled artifact is `results/native-compile-t254-superres/superres.nvda`,
 SHA-256 `c1ffde5d1eb9c7486a08ecc1470a1b633a11c7a71411f8fb36064d16dbcfc1c0`.
 See the [model research](../docs/github-demo-research.md) for the model source
-and license. The compiler helpers are `scripts/superres_graph.py` and
-`scripts/compile_superres_backend.py`, integrated with `probe_native_graph.py`.
+and license. The offline builder orchestrates `scripts/superres_graph.py`,
+`scripts/compile_superres_backend.py` and `probe_native_graph.py` and checks
+the final artifact hash. It performs no NPU submission.
 
 After successful manual firmware startup and driver qualification:
 

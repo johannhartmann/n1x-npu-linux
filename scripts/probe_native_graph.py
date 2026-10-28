@@ -40,11 +40,19 @@ def main():
     suffix='' if args.model=='relu' else '-'+args.model
     outdir=ROOT/'results'/('native-compile-'+args.target+suffix) if args.target else None
     if os.environ.get('N1X_COMPILER_SANDBOX')!='1':
+        # uv may point the venv executable at a version-alias directory while
+        # sys.base_prefix already contains its resolved version. Both paths
+        # must exist inside the sandbox for the symlink and stdlib to resolve.
+        bases={Path(sys.base_prefix),Path(sys.base_prefix).resolve()}
+        executable=ROOT/'venv/bin/python'
+        if executable.is_symlink():
+            target=executable.readlink()
+            if not target.is_absolute():target=executable.parent/target
+            bases.add(target.parent.parent.absolute())
         command=['bwrap','--unshare-all','--die-with-parent','--clearenv',
                  '--ro-bind','/usr','/usr','--symlink','usr/lib','/lib',
                  '--symlink','usr/lib','/lib64','--proc','/proc','--dev','/dev',
-                 '--ro-bind',sys.base_prefix,sys.base_prefix,
-                 '--ro-bind',str(Path(sys.base_prefix).resolve()),str(Path(sys.base_prefix).resolve()),
+                 *[arg for base in sorted(bases) for arg in ('--ro-bind',str(base),str(base))],
                  '--tmpfs','/tmp','--ro-bind',str(ROOT),str(ROOT),'--chdir',str(ROOT),
                  '--setenv','N1X_COMPILER_SANDBOX','1',
                  '--setenv','N1X_COMPILER_MODEL',args.model]

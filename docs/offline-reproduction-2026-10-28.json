@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-28",
+  "host_architecture": "aarch64",
+  "python": "Python 3.12.15",
+  "scope": "Clean source export; pinned vendor inputs, no pre-existing generated captures or models",
+  "hardware_access": false,
+  "power_profile_changed": false,
+  "models": [
+    {
+      "model": "relu",
+      "sha256": "561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942",
+      "artifact": "results/native-compile-t254/relu.nvda",
+      "hardware_access": false
+    },
+    {
+      "model": "conv1x1",
+      "sha256": "717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b",
+      "artifact": "results/native-compile-t254-conv1x1/conv1x1.nvda",
+      "hardware_access": false
+    },
+    {
+      "model": "conv1x1_relu",
+      "sha256": "fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536",
+      "artifact": "results/native-compile-t254-conv1x1_relu/conv1x1_relu.nvda",
+      "hardware_access": false
+    },
+    {
+      "model": "superres",
+      "sha256": "c1ffde5d1eb9c7486a08ecc1470a1b633a11c7a71411f8fb36064d16dbcfc1c0",
+      "artifact": "results/native-compile-t254-superres/superres.nvda",
+      "hardware_access": false
+    }
+  ],
+  "portable_tests_without_sources_or_results": true,
+  "runtime_and_cudla_build": true,
+  "offline_stop_suite": true,
+  "existing_outputs_preserved": true,
+  "local_logs": [
+    "announcement-portable.log",
+    "announcement-no-inputs.log",
+    "announcement-backend-stop.log"
+  ],
+  "limitations": [
+    "Not a hardware qualification",
+    "Audited kernel and board-specific ROM are separate platform prerequisites",
+    "Windows driver files were supplied and hash-verified locally"
+  ]
+}

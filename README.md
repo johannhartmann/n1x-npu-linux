@@ -1,167 +1,118 @@
-# NVIDIA N1X NPU bring-up on Linux — ASUS ProArt P16
+# NVIDIA N1X NPU on Linux — ASUS ProArt P16 / RTX Spark
 
-Experimental Linux support for the NVIDIA NPU in the ASUS ProArt P16 H7607BA
-(RTX Spark / N1X, BIOS H7607BA.300). The driver and protocol serializers are
-reconstructed from the pinned NVIDIA 617.42 Windows ARM64 driver, checked
-against original-code emulation and NVIDIA's public Jetson sources.
+Experimental Linux support for the dedicated NVIDIA NPU/DLA in the **ASUS
+ProArt P16 H7607BA (RTX Spark / N1X, BIOS H7607BA.300)**. Reconstructed from
+NVIDIA’s Windows ARM64 driver, checked against original-code emulation and
+public Jetson sources, and tested on the physical P16 entirely under Linux.
 
-**The physical P16 executes ReLU, convolution and Conv -> ReLU through NVIDIA's
-original Linux cuDLA library, our backend, the Linux driver and the extracted
-firmware. Eight changing-input jobs matched independent references.**
-This is a manual research driver, not a production replacement for a vendor SDK.
+**Real inference works through NVIDIA’s original Linux cuDLA library → our
+backend → Linux driver → extracted DLA firmware.** Eight changing-input ReLU,
+convolution and Conv → ReLU jobs matched independent references exactly.
 
-## What this project does
+This is a manually operated research driver for one audited board/BIOS/kernel
+combination. General model compilation, automatic suspend/resume and production
+deployment remain outside the verified scope. A Windows installation is not
+required; pinned Windows driver files are used for analysis and extraction.
 
-The goal is to make the N1X's dedicated neural-network accelerator usable from
-Linux. This work targets NPU/DLA execution, with CUDA buffer and stream
-integration for cuDLA applications. It is separate from the broader
-[P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux)
-and the [spark_hwmon telemetry driver](https://github.com/johannhartmann/spark_hwmon).
+## Start here
 
-The implementation reconstructs the startup and task protocols from NVIDIA's
-Windows ARM64 binaries. Original driver and RISC-V firmware code is executed
-in offline emulators to compare its behavior with the Linux implementation;
-public Jetson sources provide additional protocol references. The hardware
-test itself runs entirely on Linux and does not require a Windows installation.
-The repository contains the Linux module, protocol serializers, analysis tools,
-regression tests and the evidence behind the reconstructed interfaces.
+- **[Setup and reproduction](docs/setup.md):** fresh checkout, dependencies,
+  pinned inputs, model compilation and explicit hardware commands.
+- **[Current status](docs/status.md):** physical measurements, offline evidence
+  and remaining hardware qualification.
+- **[Super-resolution demo](demo/README.md):** full-image 3x pipeline;
+  end-to-end physical image runs are still pending.
+- **[cuDLA backend](docs/cudla-backend.md):** API contract, staging and limits.
+- **[Shutdown and reload](docs/shutdown-reload.md):** cleanup protocol and
+  post-reboot qualification.
+- **[Research documentation](docs/README.md)** and **[tool index](scripts/README.md)**.
 
-The [cuDLA integration research](docs/cudla-call-path.md) identifies a reusable
-NVIDIA Linux frontend and its 18-function `libnvcudla.so` backend boundary.
-An [experimental N1X backend](docs/cudla-backend.md) now loads supported models
-and stages real CUDA buffers through the Linux transport. Physical qualification
-covers eight numerical jobs. Additional tests use a modeled NPU boundary for
-error injection. Submission currently blocks and attempted kernel DMA backing
-remains retained until reboot.
+## What is verified
 
-A [controlled shutdown and reload path](docs/shutdown-reload.md) is now
-implemented and fault-tested offline. Its first physical unload/reload cycle
-is pending; the older loaded module still requires one reboot. The new path
-releases DMA and module/power references only after checked shutdown of a
-healthy device, and keeps uncertain failures pinned.
+The tested kernel is `7.2.8-23-omarchy-p16-asus-npu2`, with matching headers
+and the performance profile. Board/BIOS/kernel checks are enforced in code.
 
-On the tested P16, the Linux module reads the verified board policy, performs
-the power/configuration handshake, uploads the extracted firmware, establishes
-DMA communication and submits a compiler-produced task. The numerical test
-runs ReLU, `output = max(input, 0)`, on 1,568 FP16 values. The device-written
-output matches the complete CPU-reference hash. This demonstrates arithmetic
-execution beyond device enumeration, a firmware response or a bypass task.
+| Capability | Evidence | Status |
+| --- | --- | --- |
+| Board policy, HFRP, firmware upload and DMA/config setup | Original-code comparison and physical startup | Verified on P16 |
+| cuDLA ReLU, 1x1 Conv, Conv → ReLU | Eight changing-input jobs, exact reference matches | Verified on P16 |
+| Trained super-resolution graph | One physical 64x64 window, numerical comparison | Window verified; full image pending |
+| Full-image tiling and borders through 1024x1024 → 3072x3072 | Independent CPU reference | Offline verified |
+| Completed-task I/O reuse | Driver/backend tests with modeled NPU transport | Physical qualification pending |
+| Checked shutdown, DMA cleanup and module reload | Original-code replay and fault tests | Physical qualification pending |
+| Recovery from uncertain DMA/firmware failure | Buffers and lifetime references remain pinned | Reboot required |
+| Automatic startup, suspend/resume, arbitrary TensorRT engines | Outside the implemented/verified contract | Unsupported |
 
-The current scope is one board/BIOS/kernel combination and three checked graphs.
-An optional RAWIO-only `/dev/accel` interface and C/Python runtime can submit
-prepared images with changing tensors; see [native runtime](docs/native-runtime.md)
-for its offline evidence and current limits. The [native loadable loader](docs/loadable-runtime.md)
-reads a checked NVDA 0.9.0 subset directly. Broader model compilation/loading
-and framework integration remain unfinished. Sustained execution,
-interrupt-driven operation, safe resource release, recovery and suspend/resume still need implementation or qualification.
-The hardware path is deliberately manual and guarded for the tested machine;
-it is not an installer for arbitrary N1X systems. Vendor binaries, firmware,
-board ROM captures and generated model artifacts are not included. Reproduction
-requires obtaining the pinned inputs described in the linked documentation.
+The [cuDLA receipt](docs/cudla-hardware-2026-10-28.json) identifies exact software,
+firmware, model and output hashes for the eight-job physical test. The newer
+[super-resolution window receipt](docs/superres-tile-2026-10-28.json) covers one
+window only. [Status](docs/status.md) separates these measurements from pending work.
 
-## Verified hardware behavior
+## How it works
 
-On `7.2.8-23-omarchy-p16-asus-npu2`:
+```text
+cuDLA application + CUDA buffers
+             │
+NVIDIA’s original libcudla.so.1
+             │
+this repository’s libnvcudla.so
+             │ blocking CUDA staging
+RAWIO-only Linux accel transport
+             │
+Linux driver → extracted firmware → physical N1X DLA
+```
 
-| Stage | Observed result |
+Learned inference runs on DLA. CPU code handles staging, image preparation and
+independent validation. Models must be trusted: bounds-checked metadata is not
+an instruction sandbox, and the transport requires `CAP_SYS_RAWIO`.
+
+The kernel retains submitted DMA after client close or model unregister.
+The new code can reuse successful-task I/O and release backing after checked
+explicit shutdown; both paths await physical qualification. Uncertain execution
+or shutdown errors keep DMA, power and module references pinned until reboot.
+There are no automatic retries or forced-unload recovery.
+
+## Offline checks
+
+A C compiler suffices for the smallest check; it needs no vendor files, GPU,
+root or kernel headers:
+
+```sh
+make test
+```
+
+After installing the analysis requirements from [setup](docs/setup.md), run
+fixture-free protocol/lifetime checks with:
+
+```sh
+make test-portable
+```
+
+Additional test targets and their inputs are listed in the [tool index](scripts/README.md).
+`make module` only builds; firmware startup and hardware qualification are
+separate, explicit operations.
+
+## Source layout
+
+| Path | Purpose |
 | --- | --- |
-| Board policy | Real BIOS-300 ROM; native parser/initializer match original Windows code |
-| HFRP | Handshake, protocol 1.5, eight setup commands and power request accepted |
-| SROOT variant 0 | Upload reply `0x18`, status/detail zero; DLA idle observed |
-| DMA ping | Host word changes from `0x11111111` to `0x44444444` |
-| Region/configuration | Region-5 registered; commands 22, 21 and 23 acknowledged |
-| Bypass task | Submission accepted, SWGEN0 observed, fence `0x12345678` written |
-| Idle notifications | One regular notification handled in each task path |
-| FP16 ReLU | `[1,32,7,7]`; complete 3136-byte output hash matches CPU reference |
+| `driver/`, `include/`, `patches/` | Linux implementation, protocols and scoped kernel patches |
+| `runtime/` | cuDLA backend, loadable materializers and application bindings |
+| `demo/` | Experimental full-image super-resolution application |
+| `scripts/`, `tests/` | Reproduction, original-code emulation and regression tests |
+| `docs/` | Current guides, qualification receipts and historical research |
+| `sources/`, `results/`, `venv/` | Ignored local inputs, outputs and environments |
 
-The complete sequence passed on 2026-10-27 with the captured board provider
-value 1, idle handling enabled and the performance profile. The ReLU test
-requires command acceptance, SWGEN0, fence, unchanged input and the expected
-output digest. This validates one fixed graph, not arbitrary models or safe
-resource teardown. See [the physical record and exact limits](docs/p16-board-start.md).
+Vendor binaries, firmware, board ROM captures and generated loadables are not
+distributed in Git. [Setup](docs/setup.md) explains acquisition and generation.
+Historical research retains its unsuccessful experiments and dated limitations;
+[status](docs/status.md) is the current summary.
 
-## Reproduce the manual test
+Related projects: [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux)
+and [spark_hwmon telemetry](https://github.com/johannhartmann/spark_hwmon).
 
-Use the audited `npu2` kernel and its matching headers. Preserve the working
-Omarchy boot entry. Vendor binaries, board ROM and generated model artifacts
-remain local in ignored `sources/` and `results/`; they are not redistributed.
+## Licensing
 
-1. Acquire the pinned Windows inputs and extract SROOT variant 0 as described
-   in [the transport contract](docs/sroot-transport.md). The upload file is
-   `/usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin`, 67,508 bytes, SHA256
-   `0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4`.
-2. Acquire/verify the board ROM using [the bounded read-only procedure](docs/p16-board-start.md).
-3. Build the module and run the offline checks:
-
-```sh
-make test-p16-start
-make -C /lib/modules/7.2.8-23-omarchy-p16-asus-npu2/build \
-  M="$PWD/driver" n1x_npu_bootstrap.ko
-```
-
-From a fresh boot, with both endpoints unbound and no bootstrap loaded:
-
-```sh
-powerprofilesctl set performance
-pkexec /usr/bin/python3 "$PWD/scripts/qualify_p16_start.py" \
-  --through bypass_task --log "$PWD/results/NEW-startup.jsonl"
-```
-
-The script verifies the machine, module and ROM, selects only the dedicated
-DLA/SROOT DMA domains, and runs each explicitly requested startup phase once.
-It saves state before and after each operation and stops on the first error.
-The kernel pins runtime/module/DMA lifetime after publication, including on
-failure. Buffers are not freed or reused, and reset/retry/suspend are not
-implemented. **A new attempt requires reboot.** Nothing is enabled at boot,
-and the working kernel, UKI and bootloader default are not changed.
-
-For a shorter first prefix use `--through prepare_hfrp`. A successful HFRP-only
-run can continue with `--after-hfrp --through bypass_task`; this requires no
-previous upload attempt and the same loaded module source version.
-
-## Numerical ReLU probe
-
-The optional probe uses one pinned FP16 ReLU graph of shape `[1,32,7,7]` with
-CHW16 input/output. Its backend bytes come from the original Windows compiler;
-its CPU reference was independently cross-checked with NumPy and ONNX.
-See [compiler reproduction](docs/model-probe.md) for the required local artifacts.
-
-```sh
-venv/bin/python scripts/prepare_p16_relu.py
-venv/bin/python scripts/test_linux_relu.py
-# Fresh boot only; includes all earlier startup phases and the bypass check:
-pkexec /usr/bin/python3 "$PWD/scripts/qualify_p16_start.py" \
-  --through relu_probe --log "$PWD/results/NEW-relu.jsonl"
-```
-
-The module checks the complete template hash, creates its own DMA addresses,
-and requires task acceptance, completion signal, fence, unchanged input and
-the expected output digest. A fence alone cannot pass the numerical test.
-**Physical ReLU execution passed on 2026-10-27.** Output SHA256:
-`6e043c4c2ae0ddfcaca4341ab36f15fdebf066157af5da6483bc56cd6786404f`.
-This is one successful execution, not a throughput or sustained-stability benchmark.
-
-## Source and evidence
-
-- [Driver and serializer code](driver/), [interfaces](include/), [tests/tools](scripts/).
-- [Current board startup and recovery constraints](docs/p16-board-start.md).
-- [Native NVDA loadable ingestion and metadata reverse engineering](docs/loadable-runtime.md).
-- [Experimental native accel interface and C/Python runtime](docs/native-runtime.md).
-- [DLA integration analysis and recommended Linux API architecture](docs/dla-integration-design.md).
-- [ACPI power/resource audit](docs/acpi-audit.md), [Linux/DMA backend](docs/linux-backend.md).
-- [HFRP protocol](docs/hfrp-irq.md), [VBIOS reverse engineering](docs/hfrp-vbios.md).
-- [SROOT transport](docs/sroot-transport.md), [vendor envelopes](docs/sroot-envelope.md).
-- [Task/command contracts](docs/contract.md), [region-5](docs/region5.md).
-- [Windows KMD task submission and completion semaphore construction](docs/windows-kmd-task.md).
-- [Model/compiler probe](docs/model-probe.md), [boot logging](docs/boot-logging.md).
-- [Convolution and Conv → ReLU compiler/runtime support](docs/convolution-compiler.md)
-  (constant and intermediate-memory loading and numerical execution of both graphs are physically verified through cuDLA).
-
-Detailed research documents retain earlier unsuccessful experiments and their
-limitations. The physical result above supersedes their earlier boot-status
-statements. HAL-2/T35x studies are reference material; the P16 uses HAL 1.
-
-`make test` runs the native parser checks. `make test-vendor` additionally needs
-the pinned local vendor inputs, analysis venv and ACPICA `iasl`. `make test-relu`
-requires the compiled fixture. These offline commands do not access NPU
-hardware or load modules. `make kernel-check` builds callback components only.
+Kernel components use GPL-2.0-only; userspace and analysis components use MIT
+as mapped in [LICENSING.md](LICENSING.md). File-level SPDX notices take precedence.
+See [NOTICE](NOTICE) for external inputs and attribution.

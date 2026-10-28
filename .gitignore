@@ -13,3 +13,7 @@ modules.order
 
 /runtime/libn1x_dla.so
 /runtime/cudla/
+
+# Local process crash dumps
+/core
+/core.*

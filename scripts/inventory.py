@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-import json,re,struct,hashlib
+import argparse,json,re,struct,hashlib
 from pathlib import Path
-root=Path(__file__).resolve().parents[1];dsdt=Path('/home/johann/Projects/p16-hardware-fixes/dsdt.dsl');s=dsdt.read_text();block=s[s.index('        Device (DLA0)'):s.index('        Device (SVP0)')]
+parser=argparse.ArgumentParser(description='Inspect DLA resources from a supplied DSDT disassembly and live ACPI metadata.');parser.add_argument('--dsdt',type=Path,required=True);args=parser.parse_args();dsdt=args.dsdt;s=dsdt.read_text();block=s[s.index('        Device (DLA0)'):s.index('        Device (SVP0)')]
 a=block.index('Name (_CRS');z=block.index('Method (_STA');raw=bytes(int(v,16) for v in re.findall(r'0x([0-9A-Fa-f]{2})(?=[, ])',re.sub(r'/\*.*?\*/|//[^\n]*','',block[a:z])))
 # Remove the Buffer length, which is before the opening brace.
 text=re.sub(r'/\*.*?\*/|//[^\n]*','',block[a:z]);text=text[text.index('{')+1:text.rindex('}')];raw=bytes(int(v,16) for v in re.findall(r'0x([0-9A-Fa-f]{2})',text))

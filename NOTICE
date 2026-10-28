@@ -1,0 +1,33 @@
+N1X NPU Linux research project
+Copyright (c) 2026 Johann Hartmann and contributors
+
+Project source licensing is mapped in LICENSING.md. Existing file-level notices
+are preserved. This project is an independent implementation; it is not an
+NVIDIA or ASUS release.
+
+External inputs are acquired locally and are not included in Git:
+- NVIDIA Windows ARM64 driver 617.42 and extracted firmware/runtime libraries.
+- NVIDIA TensorRT 11.4 DLA compilers and Linux cuDLA 13.4.92 frontend.
+- Board-specific ASUS/NVIDIA BIOS ROM captures.
+Their original distribution terms and notices remain with those inputs.
+
+Protocol research uses NVIDIA-authored Jetson linux-nv-oot sources and the open
+NVDLA project as references. Exact revisions and URLs are recorded in docs/.
+The linux-nv-oot implementation is GPL-2.0-only; existing GPL declarations in
+this repository are retained. Generated vendor disassembly/decompiler exports
+stay in ignored results/ and are not distributed here.
+
+Super-resolution source model:
+  ONNX Model Zoo, sub_pixel_cnn_2016 / super-resolution-10.onnx
+  https://github.com/onnx/models/tree/main/validated/vision/super_resolution/sub_pixel_cnn_2016
+  The model’s source README identifies Apache-2.0. The model is downloaded
+  separately, hash-checked and kept in ignored sources/.
+
+Optional sample photograph:
+  NASA photograph of astronaut Eileen Collins, distributed by scikit-image
+  as data.astronaut (documented there as public domain).
+  https://scikit-image.org/docs/stable/api/skimage.data.html#skimage.data.astronaut
+  https://github.com/scikit-image/scikit-image/blob/v0.19.3/skimage/data/astronaut.png
+
+NVIDIA, CUDA, cuDLA, TensorRT, ASUS and other product names identify the
+respective vendors’ products and do not imply endorsement.

@@ -2,8 +2,10 @@ CC ?= cc
 CFLAGS ?= -O2 -g -Wall -Wextra -Werror
 # Explicit installed-kernel target; builds only, never installs/loads modules.
 KERNEL_RELEASE ?= $(shell uname -r)
+PYTHON ?= venv/bin/python
 .PHONY: test test-vendor test-relu test-conv test-conv-relu test-p16-start kernel-check module clean generate-probe
 .PHONY: test-p16-stop
+.PHONY: test-portable
 # Requires the exact ignored physical BIOS-300 capture and pinned vendor KMD.
 # Offline: no root, module load, hardware access or firmware installation.
 test-p16-start:
@@ -34,6 +36,14 @@ test-p16-stop:
 	venv/bin/python scripts/test_linux_accel.py
 	venv/bin/python scripts/test_linux_accel_backend.py
 	venv/bin/python scripts/test_p16_reload.py
+test-portable: test
+	$(PYTHON) scripts/test_prepare_inputs.py
+	$(PYTHON) scripts/test_hfrp_channel.py
+	$(PYTHON) scripts/test_linux_shutdown.py
+	$(PYTHON) scripts/test_linux_accel_backend.py
+	$(PYTHON) scripts/test_p16_reload.py
+	$(PYTHON) scripts/test_npu_trigger.py
+	$(PYTHON) scripts/test_qualify_p16_start.py
 # Device-free convolution compiler bridge; preserves the pinned ReLU directory.
 test-conv:
 	venv/bin/python scripts/probe_native_graph.py --model conv1x1

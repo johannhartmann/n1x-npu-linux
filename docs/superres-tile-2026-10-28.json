@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-28",
+  "scope": "One physical 64x64 learned-graph window; not a complete image demo",
+  "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+  "module_srcversion": "A867C2D035B190C79E9E143",
+  "boot_id": "81aeb5b0-5475-4a34-99db-a12c0195ba54",
+  "attempt": {
+    "model_sha256": "c1ffde5d1eb9c7486a08ecc1470a1b633a11c7a71411f8fb36064d16dbcfc1c0",
+    "model_image_bytes": 4542464,
+    "input_sha256": "c7b26da2d16151af6e113a822be76774070b050f98df6d12d327afeedbf20347",
+    "frontend": "original NVIDIA cuDLA",
+    "transport_before": {
+      "abi_version": 1,
+      "capabilities": 3,
+      "max_image_bytes": 33554432,
+      "max_addresses": 512,
+      "retained_bytes": 27504640,
+      "retain_limit": 67108864,
+      "retained_jobs": 9,
+      "max_jobs": 128,
+      "reserved": 0
+    },
+    "automatic_retry": false
+  },
+  "result": {
+    "shape": [
+      1,
+      9,
+      64,
+      64
+    ],
+    "seconds": 0.33799999300026684,
+    "maximum_absolute_error": 0.0009882450103759766,
+    "rmse": 6.074351160671567e-05,
+    "reference_min": -0.019754081964492798,
+    "reference_max": 1.0059717893600464,
+    "output_min": -0.0196990966796875,
+    "output_max": 1.005859375,
+    "finite": true,
+    "transport_after": {
+      "abi_version": 1,
+      "capabilities": 3,
+      "max_image_bytes": 33554432,
+      "max_addresses": 512,
+      "retained_bytes": 32055296,
+      "retain_limit": 67108864,
+      "retained_jobs": 10,
+      "max_jobs": 128,
+      "reserved": 0
+    },
+    "physical_execution": true
+  },
+  "full_image_verified": false,
+  "io_reuse_verified": false,
+  "shutdown_reload_verified": false
+}

@@ -1,5 +1,10 @@
 # Linux platform backend
 
+> Research record. See [current status](status.md), [setup](setup.md) and
+> [shutdown/reload](shutdown-reload.md) for the current implementation and
+> pending hardware qualification. Earlier results and limitations below retain
+> their original experimental context.
+
 Current integration: [P16 board policy and HFRP startup](p16-board-start.md)
 adds the missing pre-upload power/configuration stage on `npu2`. The variant
 results below refer to earlier `npu1` boots, before that stage existed.

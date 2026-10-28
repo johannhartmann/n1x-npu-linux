@@ -1,5 +1,10 @@
 # Experimental native DLA runtime
 
+> Research record. See [current status](status.md), [setup](setup.md) and
+> [shutdown/reload](shutdown-reload.md) for the current implementation and
+> pending hardware qualification. Earlier results and limitations below retain
+> their original experimental context.
+
 The module now contains an optional Linux DRM accel interface, a small native
 C client and a Python binding. **The accel interface now executes physical
 ReLU, convolution and Conv -> ReLU through the cuDLA backend.** Eight jobs

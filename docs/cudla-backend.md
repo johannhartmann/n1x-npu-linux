@@ -59,12 +59,15 @@ and ABI through the existing C transport.
   or zero-copy. Calls from CUDA host callbacks are not supported.
 - Execution failures are sticky per device; a later submit returns the error
   without retry. Cleanup can release host-side registrations/modules while
-  the kernel independently retains attempted DMA backing until reboot.
+  the kernel retains attempted DMA backing until checked explicit device stop.
+  Uncertain execution/stop failures remain pinned until reboot.
 - If CUDA synchronization fails, potentially referenced pinned host storage is
   retained until process exit. Such quarantine is capped at 64 MiB/128 entries
   globally. Completed transfers release their staging normally.
-- The kernel's existing 64-MiB/128-job retention limit remains. This is not a
-  long-running inference service. Reset/recovery, DMA reclamation, asynchronous
+- The kernel’s 64-MiB/128-job retention limit remains. The new backend reuses a
+  successful model’s allocation for subsequent I/O when the kernel advertises
+  that capability. Reuse and checked shutdown/reclamation are implemented and
+  offline-tested; physical qualification is pending. Reset/recovery, asynchronous
   scheduling, CUDA Graphs, NvSci and private export-table interoperability are
   not implemented. The backend exports all required names and declines
   unsupported features; it does not create fake NvSci objects.
@@ -85,7 +88,7 @@ covering all three graph fixtures and their constant/intermediate storage.
 `scripts/test_cudla_cuda_transport.py` uses the real NVIDIA frontend, our built
 backend and the real installed CUDA driver. Its NPU transport is a temporary
 mock that records submitted bytes and returns a fixed pattern, not an inference
-implementation. Thirty-one scenarios pass, including all three graph serializers,
+implementation. Thirty-two scenarios pass, including all three graph serializers,
 transport errors, wrong-reference rejection, ownership, capture rejection,
 freed memory, sticky execution errors and injected CUDA copy/synchronization
 failures. Injected synchronization failures drain the real CUDA operation before
