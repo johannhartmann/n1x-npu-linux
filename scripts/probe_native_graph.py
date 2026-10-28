@@ -25,7 +25,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target',choices=('t234','t254','t256'),help='Attempt an offline compile for this explicit candidate target')
-    parser.add_argument('--model',choices=('relu','conv1x1'),default='relu',help='Graph fixture to construct')
+    parser.add_argument('--model',choices=('relu','conv1x1','conv1x1_relu'),default='relu',help='Graph fixture to construct')
     parser.add_argument('--capture-mtl',action='store_true',help='Stop under GDB and save intermediate MTL buffers without translation')
     parser.add_argument('--capture-translation-input',action='store_true',
                         help='Replay verified Windows pretranslation outputs and capture the next frontend handoff')
@@ -113,16 +113,28 @@ def main():
                 assert struct.unpack('<%df'%got.count,C.string_at(got.values,got.count*4))==tuple(values)
         assert layer.value
         invoke('NvDlaLayerGetOutput',[H,C.c_int32,PH],layer,0,C.byref(output));assert output.value
+        intermediate=None
+        if args.model=='conv1x1_relu':
+            intermediate=H(output.value)
+            invoke('NvDlaNetworkAddActivation',[H,H,C.c_uint8,PH],network,intermediate,0,C.byref(layer))
+            invoke('NvDlaLayerGetOutput',[H,C.c_int32,PH],layer,0,C.byref(output));assert output.value
+            assert output.value!=intermediate.value
+            linked=H()
+            invoke('NvDlaLayerGetInput',[H,C.c_int32,PH],layer,0,C.byref(linked))
+            assert linked.value==intermediate.value
+        layer_count=C.c_uint32()
+        invoke('NvDlaNetworkGetNumLayers',[H,C.POINTER(C.c_uint32)],network,C.byref(layer_count))
+        assert layer_count.value==(2 if args.model=='conv1x1_relu' else 1)
         invoke('NvDlaNetworkMarkOutput',[H,H],network,output)
         invoke('NvDlaTensorSetName',[H,C.c_char_p],output,b'output')
         # Numeric definitions from the public NvDlaType.h counterpart:
         # ACTIVATION_TYPE_RELU=0, DATA_TYPE_HALF=2. Native getters must agree
         # with the values supplied; this is still not executed inference.
-        if args.model=='relu':
+        if args.model in ('relu','conv1x1_relu'):
             activation=C.c_uint8(255)
             invoke('NvDlaActivationLayerGetActivationType',[H,C.POINTER(C.c_uint8)],layer,C.byref(activation))
             assert activation.value==0
-        for item in (tensor,output):
+        for item in (tensor,output)+((intermediate,) if intermediate else ()):
             invoke('NvDlaTensorSetDataType',[H,C.c_uint8],item,2)
             invoke('NvDlaTensorSetDataFormat',[H,C.c_uint8],item,3)
             dtype=C.c_uint8(255)
@@ -166,7 +178,7 @@ def main():
             (outdir/'manifest.json').write_text(json.dumps(compiled,indent=2)+'\n')
         print(json.dumps(dict(passed=True,hardware_access=False,sandbox='private /dev, absent /sys, isolated namespaces',
                              native_library_loaded=True,graph_constructed=True,dimension_fields=[dims.a,dims.b,dims.c,dims.d],
-                             model=args.model,activation_code=0 if args.model=='relu' else None,
+                             model=args.model,activation_code=0 if args.model in ('relu','conv1x1_relu') else None,
                              data_type_code=2,calls=calls,compiled=compiled,
                              limitations=['Enum names use public reference definitions; no numerical execution validates them here',
                                           'A named compiler target is not proof of physical N1X or firmware compatibility',

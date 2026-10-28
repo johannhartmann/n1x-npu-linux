@@ -191,8 +191,8 @@ class Model:
                         'unknown or malformed memory-pool property')
                 pool_size = struct.unpack('<Q', payload)[0]
                 require(pool_size <= MAX_IMAGE, 'memory-pool property exceeds image limit')
-                require(name == 'property_global_dram_pool_size' or pool_size == 0,
-                        'nonzero local memory pool is not implemented')
+                require(name != 'property_local_cvsram_pool_size' or pool_size == 0,
+                        'nonzero local SRAM pool is not implemented')
                 self.memory_pools[name] = pool_size
             catalog[name] = payload
             self.blob_versions[name] = dict(interface=interface, sub_interface=blob.value(3, '<I'),
@@ -203,6 +203,7 @@ class Model:
         dense(addresses)
         layout, initializers, cursor = [], [], 0
         constant_memories = []
+        scratch_memories = set()
         for memory in memories:
             size, alignment, flags = memory.value(3, '<Q'), memory.value(4, '<I'), memory.value(2, '<H')
             require(memory.value(1, '<B') == 0 and flags & 1 and not flags & ~15, 'unsupported memory domain/flags')
@@ -217,6 +218,8 @@ class Model:
                                bind_id=memory.value(7, '<H'), tensor_id=memory.value(8, '<H')))
             names, offsets = memory.names(5), memory.numbers(6, '<Q')
             require(len(names) == len(offsets), 'content name/offset length mismatch')
+            if flags == 1 and not names:
+                scratch_memories.add(len(layout)-1)
             if flags & 2:
                 raw_constants = []
                 for name, content_offset in zip(names, offsets):
@@ -239,6 +242,18 @@ class Model:
         task_ids = task.numbers(3, '<H')
         require(0 < len(task_ids) <= 512 and all(i < len(resolved) for i in task_ids), 'invalid task-local address IDs')
         self.ranges = tuple(resolved[i] for i in task_ids)
+        local_pool = self.memory_pools.get('property_local_dram_pool_size', 0)
+        if local_pool:
+            # The observed Conv->ReLU intermediate is already a DRAM memory
+            # descriptor and task address. Allocate that descriptor once,
+            # without inventing a second buffer from the pool-size property.
+            # Only a pool covered from offset zero by one uninitialized,
+            # non-I/O task range is supported. Instructions remain trusted;
+            # this capacity check does not identify their indirect references.
+            require(any(addresses[i].value(1, '<H') in scratch_memories and
+                        addresses[i].value(2, '<Q') == 0 and
+                        resolved[i][1] >= local_pool for i in task_ids),
+                    'local DRAM pool is not covered by an uninitialized task range')
         global_pool = self.memory_pools.get('property_global_dram_pool_size', 0)
         if global_pool:
             # The original 0x1ec70 -> 0x20d00 path allocates from the memory

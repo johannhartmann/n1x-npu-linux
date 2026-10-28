@@ -59,9 +59,10 @@ The loader currently accepts:
   relocations, and one terminal event `{id=0,type=0,target=0,value=1,op=SIGNAL}`.
   The kernel's unique fence implements that single terminal completion.
 - DRAM allocations, ordered dense memory/address IDs, allocation/content/input/
-  output flags and power-of-two alignment up to 4096. Local pool properties
-  must be zero. A nonzero global DRAM property is supported for the checked
-  single initialized raw-constant allocation described below.
+  output flags and power-of-two alignment up to 4096. Local SRAM pools must
+  be zero. A local DRAM pool must fit an uninitialized non-I/O task range
+  starting at its memory's offset zero. A nonzero global DRAM property is
+  supported for the checked single initialized raw-constant allocation below.
 - Static batch-1 tensor descriptions with raw format codes, shape, strides,
   logical byte counts and checked memory/binding references.
 
@@ -154,7 +155,7 @@ both constants at their listed offsets; the property needs no second backing.
 The loader accepts this layout when one initialized non-I/O allocation contains
 only raw constants, their highest end equals the property, and a task address
 covers that extent. This is our qualified layout restriction, not a universal
-Windows validation rule. The remaining local pools must be zero.
+Windows validation rule. Local SRAM remains unsupported.
 
 The resulting 2,850,816-byte image matches every original content copy.
 `verify_conv_loadable.py` checks changed inputs/constants and ten invalid pool
@@ -162,3 +163,15 @@ variants; `inspect_conv_memory_allocation.py` exercises eighteen original
 allocation/content cases with explicit provider models. The extended
 `test_linux_accel.py --conv` verifies serialization and original-firmware
 scheduling. No physical convolution result is claimed.
+
+The additional `Conv -> ReLU` artifact uses a 3,136-byte local DRAM property
+and an explicit 4,096-byte uninitialized memory descriptor. Original Windows
+allocation/content execution confirms all eleven descriptors and matches native
+materialization; the per-memory allocator does not call the pool getters or
+allocate an extra property-sized buffer. Compiler debug output connects the
+convolution output to the activation input through task address slot 3.
+The native loader now preserves this allocation and accepts local DRAM when
+one uninitialized task range covers the property from offset zero. Every
+memory descriptor is still allocated independently. The capacity check cannot
+identify arbitrary instruction references or certify scratch aliasing; model
+instructions remain trusted. See [the combined graph evidence](convolution-compiler.md#convolution-followed-by-relu).

@@ -10,14 +10,20 @@ from inspect_dla_compiler import ROOT, NATIVE_HASH
 from inspect_windows_mtl_collector import main as collector
 
 
-def probe(u, pe, base, invoke, allocate, *, translate=False):
-    captured=ROOT/'results/native-compile-t254-conv1x1'
+def probe(u, pe, base, invoke, allocate, *, translate=False, model='conv1x1'):
+    captured=ROOT/('results/native-compile-t254-'+model)
     manifest=json.loads((captured/'mtl-capture.json').read_text())
     expected={0:(44,'d65cf14ab07da860b3442706eb7968455cb2ca4740d8013adf7f89957a4fe96b'),
               1:(8752,'dfe06982a52556a2f02f998c8a652d2ba334899d81936ad5599fce8bbb440651'),
               2:(472,'1bfa42a3534d084fa0e5fea002683cdca70d404499093d4caf83ef2a8d1b2a0f'),
               3:(69632,'74f321f8af67f2c7a6c7ea61f3d26d59a3e2521461ae54818f6566006ff75263'),
               4:(1368,'66690b98205b2d305a0e94b4932f7dbc4894be86e6046489c5e9435eb56ba7e2')}
+    if model=='conv1x1_relu':
+        expected.update({
+            1:(13128,'dae463fe726dfbfcbd0ff4f74f3d61cd5650525a2b0cc1e2ff5f19945801139f'),
+            2:(708,'4408e15d100555d00ad0a9a456fece0d8fe0c11ef36d3c200ebca682d35e37f6'),
+            3:(104448,'d1210be6193c597de5e79e1f8f7be301f94f790f26ad56ce843ed1ec79090e20')})
+    operation_count=3 if model=='conv1x1_relu' else 2
     buffers,pointers={},{}
     assert len(manifest['entries'])==5
     for entry in manifest['entries']:
@@ -39,16 +45,16 @@ def probe(u, pe, base, invoke, allocate, *, translate=False):
         u.mem_write(pointers[3]+entry['offset'],struct.pack('<Q',address))
     common,mtl=allocate(64),allocate(512)
     descriptor=bytearray(64)
-    struct.pack_into('<QI',descriptor,0,pointers[0],2)
+    struct.pack_into('<QI',descriptor,0,pointers[0],operation_count)
     struct.pack_into('<3Q',descriptor,16,pointers[2],pointers[3],pointers[1])
     struct.pack_into('<Q',descriptor,48,pointers[4])
     u.mem_write(common,bytes(descriptor))
     assert invoke(0x617a70,mtl)==mtl
-    status=invoke(0x624630,mtl,common,instruction_limit=10000000)
+    status=invoke(0x624630,mtl,common,instruction_limit=30000000)
     assert status==0,hex(status)
     assert bytes(u.mem_read(common,64))==bytes(descriptor)
     outputs=[];pre_payloads={}
-    outputdir=ROOT/'results/windows-conv1x1-pretranslation'
+    outputdir=ROOT/('results/windows-'+model+'-pretranslation')
     outputdir.mkdir(exist_ok=True)
     for kind,original in buffers.items():
         data=bytearray(u.mem_read(pointers[kind],len(original)))
@@ -61,7 +67,7 @@ def probe(u, pe, base, invoke, allocate, *, translate=False):
                         'changed_bytes':sum(a!=b for a,b in zip(original,data))})
     result={'passed':True,'hardware_access':False,'native_sha256':NATIVE_HASH,
             'windows_sha256':hashlib.sha256((ROOT/'sources/tensorrt-11.4/nvdla_compiler.dll').read_bytes()).hexdigest(),
-            'return_value':status,'descriptor_unchanged':True,'operation_count':2,'outputs':outputs,
+            'return_value':status,'descriptor_unchanged':True,'operation_count':operation_count,'outputs':outputs,
             'constants':constants,'relocation_offsets':{'3':[0x258,0x8960]},
             'limitations':['Original Windows pretranslation only, modeled single-thread Windows/CRT',
                            'Harness runs its existing ReLU collector/dispatch checks before shared original CRT initialization',
@@ -84,6 +90,9 @@ def probe(u, pe, base, invoke, allocate, *, translate=False):
                 for offset in (0x258,0x8960,0x2e0,0x89e8):struct.pack_into('<Q',data,offset,0)
                 for offset,value in ((0xe8,1),(0x1e4,5),(0x2d8,2),(0x88ec,5),(0x89d8,4096),(0x89e0,2),(0x8bd0,3)):
                     struct.pack_into('<I',expected_data,offset,value)
+                if model=='conv1x1_relu':
+                    for offset,value in ((0x110e8,3),(0x113d0,4)):
+                        struct.pack_into('<I',expected_data,offset,value)
             assert data==expected_data,kind
             input_hashes[kind]=hashlib.sha256(data).hexdigest()
             if kind==3:
@@ -93,7 +102,9 @@ def probe(u, pe, base, invoke, allocate, *, translate=False):
                     struct.pack_into('<Q',data,offset,address)
             u.mem_write(pointers[kind],bytes(data))
         network=(cap/'network.bin').read_bytes()
-        assert len(network)==44 and hashlib.sha256(network).hexdigest()=='51bc13fa4d5b094618f2de1fff00e776fade8d79ccbf547d0ca69aeadbe88bcf'
+        network_hash=('72ce45488942e15f7f0d9e14c0f2135ac0f6a9e5ca7e1784066e510087d46b40' if model=='conv1x1_relu' else
+                      '51bc13fa4d5b094618f2de1fff00e776fade8d79ccbf547d0ca69aeadbe88bcf')
+        assert len(network)==44 and hashlib.sha256(network).hexdigest()==network_hash
         address=allocate(44);u.mem_write(address,network)
         u.mem_write(common,struct.pack('<Q',address)+bytes(56))
         retained={kind:bytes(u.mem_read(pointers[kind],len(data))) for kind,data in buffers.items()}
@@ -109,7 +120,14 @@ def probe(u, pe, base, invoke, allocate, *, translate=False):
                 5:(28736,'46986c9b500f0d60ee8b2342ea64064d5d56493cb15f978b4a8cec36cb33b320'),
                 6:(0,'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
                 7:(19034,'daa29756f00ee352a2a05aec509fee0ae7cfd7de83807e9e6610a1eb25c0f1c8')}
-        outdir=ROOT/'results/windows-conv1x1-backend';outdir.mkdir(exist_ok=True)
+        if model=='conv1x1_relu':
+            pinned.update({
+                0:(52992,'a503e26bee341f302996c48e8f9bc8f35413995d967a6eae95d64eada59f7c51'),
+                1:(320,'0973bc2eee97a6cdc506d63fc4fd5b7e8bf32c9ba7e70bf761bcbf2ab1576f95'),
+                3:(256,'f7da0b597b61769a646c4643b06d5ba99d9191090b930c19eaae7ed271235eb6'),
+                5:(57408,'8b80c1ba876374ac39ffa13ce9198bb4c0ab1eeaf5635f9daf18447c97b1f977'),
+                7:(41864,'69096704df9ea6ffe8c4d0970c6b665def8d9a1228691c6e1e175ba2fc811dca')})
+        outdir=ROOT/('results/windows-'+model+'-backend');outdir.mkdir(exist_ok=True)
         for offset in range(begin,end,24):
             raw=bytes(u.mem_read(offset,24))
             pointer=struct.unpack_from('<Q',raw)[0];kind=raw[12]
@@ -141,5 +159,6 @@ def probe(u, pe, base, invoke, allocate, *, translate=False):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--translate',action='store_true')
+    parser.add_argument('--model',choices=('conv1x1','conv1x1_relu'),default='conv1x1')
     args=parser.parse_args()
-    print(json.dumps(collector([],initialized_probe=partial(probe,translate=args.translate)),indent=2))
+    print(json.dumps(collector([],initialized_probe=partial(probe,translate=args.translate,model=args.model)),indent=2))

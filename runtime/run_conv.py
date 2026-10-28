@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Numerically qualify the pinned FP16 1x1 convolution through native accel.
+"""Qualify pinned FP16 1x1 convolution or Conv->ReLU through native accel.
 
 CPU calculations produce comparison data only; results come from Device.read.
 Inputs are odd multiples of 1/16 in [-31/16, 31/16], giving exact, nonzero
-normal FP16 outputs for this graph. General arithmetic/rounding is not tested.
+normal convolution outputs before optional ReLU. General rounding is not tested.
 """
 import argparse
 import hashlib
@@ -17,6 +17,7 @@ from n1x_dla import Device
 from run_loadable import record
 
 LOADABLE_HASH = '717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b'
+CONV_RELU_HASH = 'fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536'
 SHAPE = (1, 32, 7, 7)
 BYTES = 3136
 
@@ -42,7 +43,7 @@ def inputs():
     return cases
 
 
-def expected_output(data):
+def expected_output(data, relu=False):
     require(len(data) == BYTES, 'input must contain 1568 packed FP16 values')
     values = struct.unpack('<1568e', data)
     # Set membership rejects NaN, infinity, zero, subnormals and arbitrary
@@ -59,7 +60,7 @@ def expected_output(data):
                 # graph (diagonal + adjacent channel + bias), not backend code.
                 n = 2*(c%3+1)*numerators[at]-numerators[index((c+1)%32, h, w)]+4*c-64
                 assert n != 0
-                result[at] = n/128
+                result[at] = max(0,n)/128 if relu else n/128
     encoded = struct.pack('<1568e', *result)
     assert tuple(result) == struct.unpack('<1568e', encoded)
     return encoded
@@ -67,7 +68,7 @@ def expected_output(data):
 
 def load_model(path):
     model = Model.from_file(path)
-    require(model.sha256 == LOADABLE_HASH, 'model differs from qualified convolution artifact')
+    require(model.sha256 in (LOADABLE_HASH,CONV_RELU_HASH), 'model differs from checked convolution artifacts')
     require(len(model.inputs) == len(model.outputs) == 1, 'unexpected I/O count')
     for tensor in (*model.inputs, *model.outputs):
         require(tensor.shape == SHAPE and tensor.bytes == BYTES and
@@ -87,10 +88,10 @@ def load_model(path):
 
 
 def prepare(model, data):
-    expected = expected_output(data)
+    expected = expected_output(data, relu=model.sha256==CONV_RELU_HASH)
     image, ranges = model.prepare({model.inputs[0].name: data})
     tensor = model.outputs[0]
-    # qNaN poison can never equal this fixture's finite, nonzero reference.
+    # qNaN poison can never equal either fixture's finite reference.
     image[tensor.offset:tensor.offset+BYTES] = struct.pack('<H', 0x7e55)*1568
     return image, ranges, expected
 

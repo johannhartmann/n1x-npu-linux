@@ -37,7 +37,7 @@ for kind,ptr in maps['pointer'].items():
 (out/'mtl-common.bin').write_bytes(read(common,96))
 (out/'mtl-capture.json').write_text(json.dumps(dict(maps=maps,entries=entries,common_pointer=common,hardware_access=False,stage='before native MTL pre-translation',limitations=['Intermediate buffers only; no firmware loadable or inference', 'Pointers are process-local; not reusable across executions']),indent=2)+'\n')
 print('CAPTURED',json.dumps(maps),entries)
-if os.environ.get('N1X_COMPILER_MODEL')=='conv1x1':
+if os.environ.get('N1X_COMPILER_MODEL') in ('conv1x1','conv1x1_relu'):
     constants=[]
     for offset,size in ((0x258,2048),(0x8960,128)):
         pointer=q(maps['pointer'][3]+offset)

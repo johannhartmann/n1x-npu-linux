@@ -9,6 +9,8 @@ import hashlib
 import json
 import struct
 import sys
+import argparse
+from functools import partial
 
 import pefile
 from unicorn import UC_HOOK_CODE
@@ -18,10 +20,10 @@ from inspect_full_deserialization import execute
 from inspect_runtime_selector import ROOT, BASE, RUNTIME_HASH
 from inspect_content_materialization import CTX, MODEL
 from inspect_loadable import Buffer, inspect
-from verify_conv_loadable import LOADABLE_HASH
+from verify_conv_loadable import LOADABLE_HASH, CONV_RELU_HASH
 
 
-def probe(u, call, allocate, scalar, vector, data):
+def probe(u, call, allocate, scalar, vector, data, *, model='conv1x1'):
     sys.path.insert(0, str(ROOT/'runtime'))
     from loadable import Model
     native = Model(data)
@@ -89,7 +91,7 @@ def probe(u, call, allocate, scalar, vector, data):
         assert call(entry, [CTX, output]) == 0
         properties[name] = scalar(output)
         assert bytes(u.mem_read(output+8, 8)) == b'\xa5'*8
-    assert properties == dict(local_cvsram=0, local_dram=0, global_dram=4224)
+    assert properties == dict(local_cvsram=0, local_dram=3136 if model=='conv1x1_relu' else 0, global_dram=4224)
     property_calls_before_allocation = len(pool_calls)
 
     projected, view = inspect(data), Buffer(data)
@@ -184,15 +186,22 @@ def probe(u, call, allocate, scalar, vector, data):
 
 
 def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--model',choices=('conv1x1','conv1x1_relu'),default='conv1x1')
+    args=parser.parse_args()
+    digest=CONV_RELU_HASH if args.model=='conv1x1_relu' else LOADABLE_HASH
     path = ROOT/'sources/nvidia/Display.Driver/nvdla_runtime.dll'
-    data = (ROOT/'results/native-compile-t254-conv1x1/conv1x1.nvda').read_bytes()
+    data = (ROOT/f'results/native-compile-t254-{args.model}/{args.model}.nvda').read_bytes()
     assert hashlib.sha256(path.read_bytes()).hexdigest() == RUNTIME_HASH
-    assert hashlib.sha256(data).hexdigest() == LOADABLE_HASH
-    report = execute(pefile.PE(str(path)), data, 0xa5, after_deserialize=probe,
+    assert hashlib.sha256(data).hexdigest() == digest
+    names=([f'{prefix}_cpipe_tile_{i}_ts_hwl_cpipe_{i}' for i in range(4)
+            for prefix in ('layer-anon-0+layer-anon-0','layer-anon-1')]
+           if args.model=='conv1x1_relu' else None)
+    report = execute(pefile.PE(str(path)), data, 0xa5, after_deserialize=partial(probe,model=args.model),
                      expected_content_count=10,
-                     statistics_layer_prefix='layer-anon-0+layer-anon-0')
+                     statistics_layer_prefix='layer-anon-0+layer-anon-0', statistics_names=names)
     print(json.dumps(dict(passed=True, runtime_sha256=RUNTIME_HASH,
-                         loadable_sha256=LOADABLE_HASH, **report['loader']), indent=2))
+                         loadable_sha256=digest, **report['loader']), indent=2))
 
 
 if __name__ == '__main__':

@@ -275,6 +275,12 @@ and the actual ioctl serializer plus original firmware scheduler accept the
 prepared task offline. Physical convolution arithmetic, broader graph support
 and safe memory reclamation remain open; see [the evidence](convolution-compiler.md).
 
+The `Conv -> ReLU` fixture now exercises two source layers and an intermediate
+DRAM tensor in one task. Original compiler output, original Windows allocation
+decisions, native loading and Linux serialization reach the firmware's engine
+wait offline. Independent ONNX and integer references agree on all three test
+inputs; physical numerical execution of this combined graph is still pending.
+
 1. **Reusable device lifecycle:** extend the proven startup path to repeated
    jobs, distinct completion IDs, bounded failures and demonstrably safe buffer
    release. Verify idle handling between tasks and client exit during a task.

@@ -2,7 +2,7 @@
 # This supplies actual Windows translation results to the original serializer.
 source scripts/capture_native_translate.gdb
 python
-final=pathlib.Path('results/windows-conv1x1-backend' if conv else 'results/windows-final-backend-output')
+final=pathlib.Path('results/windows-'+model+'-backend' if conv else 'results/windows-final-backend-output')
 fm=json.loads((final/'manifest.json').read_text())
 assert fm['passed'] and (fm['translation']['return_value'] if conv else fm['translation_return'])==0 and fm['windows_sha256']==windows_sha
 assert fm['hardware_access'] is False and fm['handoff']['inputs_unchanged_after_translation']

@@ -1,7 +1,8 @@
 # N1X convolution compiler bridge
 
-The offline bridge now produces a second complete NVDA artifact: an FP16
-1x1 convolution with per-channel bias. It uses original native frontend graph
+The offline bridge produces complete NVDA artifacts for an FP16 1x1 convolution
+with per-channel bias and for that convolution followed by ReLU. It uses
+original native frontend graph
 construction, original Windows pretranslation/translation and original native
 serialization. It is not a general ONNX compiler or a physical inference
 result. The native loader now materializes its global DRAM constants, checked
@@ -215,6 +216,92 @@ and insufficient retained budget. Seven invalid-input cases and a later
 invalid input verify rejection before device opening. These are CLI acceptance
 tests with modeled reads, not physical convolution results. The hardware run
 above remains pending; the current boot still has the old module without accel.
+
+## Convolution followed by ReLU
+
+The bridge also compiles the two-source-layer graph `input -> Conv -> ReLU ->
+output`. Original native getters verify two layers and that ReLU's input is
+the convolution's output tensor. Kernel, bias and tensor shapes match the
+convolution fixture above. The frontend emits three internal operations
+(convolution, bias and activation); original Windows pretranslation requires
+a larger bounded instruction budget than the single-convolution fixture.
+
+Both original backend passes run on this graph's own captured inputs. No
+instruction blob is borrowed from the separate convolution or ReLU artifact.
+All five normalized input buffers, the four constant relocation sites, the
+frontend's additional intermediate/output address edits and all seven backend
+outputs are pinned and checked. Native packaging replays those checked outputs
+into the existing serializer adapter.
+
+| Artifact | Value |
+| --- | --- |
+| Loadable bytes | 2,854,236 |
+| Loadable SHA-256 | `fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536` |
+| Native image bytes | 2,891,776 |
+| Native image SHA-256 | `1c8d68f28046d715bf43ee1640135f1af7c15b33e56cfb39365e2c063ceb37a0` |
+| Instruction / control / network bytes | 52,992 / 320 / 256 |
+| Preemption context / statistics bytes | 2,738,944 / 57,408 |
+| Task-local address IDs | `[5,3,1,2,4,6,7,8,9,10]` |
+| Local DRAM property / allocation | 3,136 / 4,096 bytes |
+
+Compiler debug output describes four convolution tiles alternating with four
+activation tiles. Each convolution output and matching ReLU input share task
+address slot 3 and identical storage geometry; the last tile's highest tensor
+byte is 3,136. Slot 4 is the final output. The intermediate is memory ID 2,
+DRAM, flags 1, 4,096-byte allocation and alignment, with no initial contents.
+
+`inspect_conv_memory_allocation.py --model conv1x1_relu` executes the original
+constructor, deserializer, property getters and per-memory allocator/content
+path. Its nineteen cases cover all eleven memory records and the existing
+constant/provider failures. The intermediate causes a 4,096-byte provider
+allocation with no content copies. Native initialization matches all original
+content copies; unused native bytes are zero, while Windows-model gaps remain
+poisoned. The tested allocator never calls a pool getter or requests a separate
+3,136-byte allocation. Provider calls remain modeled and full runtime model-load
+orchestration is not executed.
+
+The native loader now allows a nonzero local DRAM property when it fits from
+offset zero in an uninitialized, non-I/O task range. It continues allocating
+every memory descriptor separately. This is a capacity restriction, not a
+general proof of which indirect engine accesses use the range. Local SRAM,
+multi-task execution and unrepresented pool layouts remain unsupported.
+The combined verifier checks twelve invalid variants, including insufficient
+scratch ranges and ranges incorrectly marked initialized.
+
+`test_linux_accel.py --conv-relu` passes the prepared image through the actual
+Linux ioctl serializer and original firmware reset/trap/scheduler. All ten
+addresses survive serialization and the nine engine address pairs match. The
+firmware reaches its engine wait; this does not emulate arithmetic or completion.
+
+`create_conv_probe.py --relu` constructs an independent ONNX Conv/Relu graph.
+All 1,568 outputs of each of three changing inputs match the integer reference
+with an additional clamp to zero. Outputs include both zero and positive
+values, and each input produces a distinct output. `run_conv.py` selects this
+reference only for the checked combined loadable hash. Its existing poison,
+input/constant integrity, retained-budget, durable-error and no-retry checks
+apply to both graphs. `test_conv_acceptance.py --relu` tests those paths with
+explicit modeled reads, not a physical NPU result.
+
+Reproduce all combined-graph checks without device access:
+
+```sh
+make test-conv-relu
+```
+
+After the separate native accel startup qualification, the hardware acceptance
+command is:
+
+```sh
+pkexec /usr/bin/python3 "$PWD/runtime/run_conv.py" \
+  --model "$PWD/results/native-compile-t254-conv1x1_relu/conv1x1_relu.nvda" \
+  --device /dev/accel/accel0 \
+  --input "$PWD/results/conv-relu-probe/channels-input.fp16" \
+          "$PWD/results/conv-relu-probe/spatial-input.fp16" \
+          "$PWD/results/conv-relu-probe/negative_channels-input.fp16" \
+  --output-dir "$PWD/results/NEW-accel-conv-relu"
+```
+
+Physical numerical execution and safe memory reclamation remain pending.
 
 ## Reproduce
 

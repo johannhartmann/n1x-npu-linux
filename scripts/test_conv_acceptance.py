@@ -12,6 +12,7 @@ from pathlib import Path
 import struct
 import sys
 import tempfile
+import argparse
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,12 +22,17 @@ from loadable import LoadableError
 
 
 def main():
-    model_path = ROOT/'results/native-compile-t254-conv1x1/conv1x1.nvda'
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--relu',action='store_true')
+    args=parser.parse_args()
+    name='conv1x1_relu' if args.relu else 'conv1x1'
+    fixture_dir=ROOT/('results/conv-relu-probe' if args.relu else 'results/conv-probe')
+    model_path = ROOT/f'results/native-compile-t254-{name}/{name}.nvda'
     model = run_conv.load_model(model_path)
     source, target = model.inputs[0], model.outputs[0]
     constants, constant_size = model.ranges[2]
     fixtures = run_conv.inputs()
-    independent = [(ROOT/f'results/conv-probe/{name}-expected.fp16').read_bytes() for name in fixtures]
+    independent = [(fixture_dir/f'{name}-expected.fp16').read_bytes() for name in fixtures]
     for data, expected in zip(fixtures.values(), independent):
         image, ranges, reference = run_conv.prepare(model, data)
         assert reference == expected and ranges == model.ranges

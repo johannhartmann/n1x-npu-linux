@@ -2,7 +2,7 @@ CC ?= cc
 CFLAGS ?= -O2 -g -Wall -Wextra -Werror
 # Explicit installed-kernel target; builds only, never installs/loads modules.
 KERNEL_RELEASE ?= $(shell uname -r)
-.PHONY: test test-vendor test-relu test-conv test-p16-start kernel-check module clean generate-probe
+.PHONY: test test-vendor test-relu test-conv test-conv-relu test-p16-start kernel-check module clean generate-probe
 # Requires the exact ignored physical BIOS-300 capture and pinned vendor KMD.
 # Offline: no root, module load, hardware access or firmware installation.
 test-p16-start:
@@ -39,6 +39,20 @@ test-conv:
 	venv/bin/python scripts/create_conv_probe.py
 	venv/bin/python scripts/test_conv_acceptance.py
 	venv/bin/python scripts/inspect_fp19_conversion.py
+
+# Two source layers, including their local DRAM intermediate; offline only.
+test-conv-relu:
+	venv/bin/python scripts/probe_native_graph.py --model conv1x1_relu
+	venv/bin/python scripts/probe_native_graph.py --model conv1x1_relu --target t254 --capture-mtl
+	venv/bin/python scripts/inspect_conv_pretranslation.py --model conv1x1_relu
+	venv/bin/python scripts/probe_native_graph.py --model conv1x1_relu --target t254 --capture-translation-input
+	venv/bin/python scripts/inspect_conv_pretranslation.py --model conv1x1_relu --translate
+	venv/bin/python scripts/probe_native_graph.py --model conv1x1_relu --target t254 --package-windows-output
+	venv/bin/python scripts/verify_conv_loadable.py --model conv1x1_relu
+	venv/bin/python scripts/inspect_conv_memory_allocation.py --model conv1x1_relu
+	venv/bin/python scripts/test_linux_accel.py --conv-relu
+	venv/bin/python scripts/create_conv_probe.py --relu
+	venv/bin/python scripts/test_conv_acceptance.py --relu
 
 generate-probe:
 	venv/bin/python scripts/create_relu_probe.py

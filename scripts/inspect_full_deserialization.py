@@ -27,7 +27,7 @@ CRT_INITIALIZERS = (0x5f5a0, 0x5f650, 0x56aa0, 0x585f0, 0x4df38)
 
 def execute(pe, data, poison, initialize_regex=True, after_deserialize=None,
             expected_context_version=(3, 0, 0), expected_content_count=8,
-            statistics_layer_prefix='layer-anon-0'):
+            statistics_layer_prefix='layer-anon-0', statistics_names=None):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     u.mem_map(BASE, (pe.OPTIONAL_HEADER.SizeOfImage + 4095) & ~4095)
     u.mem_write(BASE, pe.get_memory_mapped_image())
@@ -289,14 +289,17 @@ def execute(pe, data, poison, initialize_regex=True, after_deserialize=None,
     extent = view.vector(stats_table, 5, 1)
     stats = data[extent.start:extent.stop]
     assert stats[:4] == b'\0\3\0\0' and stats[4] in (1, 2)
-    assert len(stats) == 28736
+    if statistics_names is None:
+        statistics_names=[f'{statistics_layer_prefix}_cpipe_tile_{i}_ts_hwl_cpipe_{i}' for i in range(4)]
+    count=len(statistics_names)
+    counter_start=(28+6144*count+63)&~63
+    assert len(stats) == counter_start+1024*count
     header = {hex(offset): struct.unpack_from('<I', stats, offset)[0]
               for offset in (8, 12, 16, 20, 24)}
-    assert header == {'0x8': 4, '0xc': 6144, '0x10': 28, '0x14': 1024, '0x18': 24640}
-    name_offsets = [28+6144*i for i in range(4)]
-    for i, offset in enumerate(name_offsets):
-        assert stats[offset:offset+6144].split(b'\0')[0] == (
-            f'{statistics_layer_prefix}_cpipe_tile_{i}_ts_hwl_cpipe_{i}'.encode())
+    assert header == {'0x8': count, '0xc': 6144, '0x10': 28, '0x14': 1024, '0x18': counter_start}
+    name_offsets = [28+6144*i for i in range(count)]
+    for name, offset in zip(statistics_names,name_offsets):
+        assert stats[offset:offset+6144].split(b'\0')[0] == name.encode()
     report['statistics_header_words'] = header
     report['statistics_layer_name_offsets'] = name_offsets
     report['actual_statistics_bytes'] = len(stats)
@@ -314,7 +317,7 @@ def execute(pe, data, poison, initialize_regex=True, after_deserialize=None,
             assert scalar(node+32, '<H') == 0
             count = struct.unpack_from('<I', stats, 8)[0]
             old_extent = (count*0x340+0x4b)&~0x3f
-            assert scalar(node+112) == old_extent == 3392
+            assert scalar(node+112) == old_extent
             assert bytes(u.mem_read(scalar(node+120), len(stats))) == stats
             report['old_statistics_extent'] = old_extent
             report['actual_statistics_bytes'] = len(stats)

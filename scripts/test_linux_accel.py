@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--conv', action='store_true', help='also qualify convolution task serialization/scheduling')
+    parser.add_argument('--conv-relu', action='store_true', help='also qualify Conv->ReLU task serialization/scheduling')
     args = parser.parse_args()
     source = (ROOT / 'driver/n1x_dla_accel.c').read_text()
     body = source[source.index('#define N1X_JOB_PREFIX'):source.index('/* No GEM mmap:')]
@@ -234,6 +235,12 @@ int main(int argc,char **argv)
             assert conv.sha256 == CONV_HASH
             conv_image, conv_ranges = conv.prepare({conv.inputs[0].name: input_bytes})
             fixtures.append(('conv_loadable', conv_image, conv_ranges, conv.inputs[0].offset))
+        if args.conv_relu:
+            from verify_conv_loadable import CONV_RELU_HASH
+            combined=Model.from_file(ROOT/'results/native-compile-t254-conv1x1_relu/conv1x1_relu.nvda')
+            assert combined.sha256==CONV_RELU_HASH
+            combined_image,combined_ranges=combined.prepare({combined.inputs[0].name:input_bytes})
+            fixtures.append(('conv_relu_loadable',combined_image,combined_ranges,combined.inputs[0].offset))
         cases = []
         for label, source_image, source_ranges, input_offset in fixtures:
             payload_path, captured = Path(directory)/'image.bin', Path(directory)/'prepared.bin'

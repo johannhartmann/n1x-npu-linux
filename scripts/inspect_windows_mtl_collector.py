@@ -282,7 +282,7 @@ def main(argv=None, observer=None, initialized_probe=None):
                               r.UC_ARM64_REG_X4,r.UC_ARM64_REG_X5,r.UC_ARM64_REG_X6),args):u.reg_write(reg,value)
         u.reg_write(r.UC_ARM64_REG_SP,stack+0x40000);u.reg_write(r.UC_ARM64_REG_LR,stop)
         u.emu_start(base+address,until,count=instruction_limit)
-        assert u.reg_read(r.UC_ARM64_REG_PC)==until
+        assert u.reg_read(r.UC_ARM64_REG_PC)==until, (hex(address),hex(u.reg_read(r.UC_ARM64_REG_PC)),instruction_limit)
         return u.reg_read(r.UC_ARM64_REG_X0)
     # Required original CRT setup precedes the complete C++ initializer array.
     assert invoke(0xf267d0)==1
