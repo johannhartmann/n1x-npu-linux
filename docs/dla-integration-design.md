@@ -1,6 +1,6 @@
 # How to expose N1X DLA to Linux applications
 
-Research date: 2026-10-27. This records the architectural recommendation; the experimental native
+Research date: 2026-10-28. This records the architectural recommendation; the experimental native
 implementation is tracked in [native-runtime.md](native-runtime.md). It does
 not claim NVIDIA library compatibility. No hardware state
 was changed during this investigation.
@@ -156,7 +156,7 @@ Shared DRAM alone does not make CUDA pointers valid DLA addresses.
 
 ### Integration choices for this machine
 
-The source checkout was rechecked against upstream HEAD on 2026-10-27; both
+The source checkout was rechecked against upstream HEAD on 2026-10-28; both
 still resolve to `25a39b076c6b9143a25adbce8cb468b3bee821ee`.
 
 | Approach | What would have to work | Recommendation |
@@ -209,7 +209,7 @@ would be our integration work, not existing automatic N1X GPU fallback.
 
 ### Source-to-implementation review
 
-The upstream checkout and remote HEAD were checked again on 2026-10-27 at
+The upstream checkout and remote HEAD were checked again on 2026-10-28 at
 `25a39b076c6b9143a25adbce8cb468b3bee821ee`. Reading the actual sample call paths,
 rather than just their READMEs, yields the following implementation checklist:
 
@@ -282,6 +282,22 @@ features and arbitrary-model compilation remain open.
    unsupported versions, shapes and operations.
 4. **Interop and applications:** qualify shared GPU/DLA buffers and fences,
    then add cuDLA-facing adapters or framework integration where useful.
+
+The native preemption/context serializers now have original-firmware control
+flow coverage, but this does not move the physical lifetime gate. Our tests
+show that preemption message `0x120b` and the preemption fence can occur even
+when context saving fails. A future cancellation path must reconcile execution
+errors, checkpoint state and task completion; neither that message nor a saved
+checkpoint proves the engine has stopped accessing memory. See
+[native runtime lifetime](native-runtime.md#lifetime-and-failures).
+
+Full preemption, concurrent scheduling and CUDA integration are not prerequisites
+for the first usable standalone release. Keep one serialized queue and bounded
+synchronous execution initially. Qualify safe reuse after successful completion
+and a bounded failure path that retains uncertain allocations and refuses new
+work when necessary. Automatic recovery can follow once reset and DMA quiescence
+are demonstrated. This keeps the implementation small without disguising the
+current retained-memory experiment as a long-running inference runtime.
 
 Layerwise statistics are valuable later, but the sample converts cycles using
 a user-supplied MHz value. Its Orin BPMP path and example frequency are not N1X
