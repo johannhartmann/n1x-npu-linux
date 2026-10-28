@@ -798,6 +798,84 @@ Do not add a native cancel ioctl or release DMA based on this callback alone.
 venv/bin/python scripts/inspect_kmd_recovery_descriptor.py > results/windows-kmd-recovery-descriptor.json
 ```
 
+## Outer reset ordering and software-produced completion
+
+`scripts/inspect_kmd_reset_order.py` executes the complete outer body
+`0xdd52f0`, including its original capability check `0x1a89a68`, control-gate
+writer `0xe18220`, recovery helper `0xe183b0`, concrete context/descriptor
+callbacks, process getters, bookkeeping and deferred-record producer `0xe17420`.
+The constructed adapter has capability bit 28 set, capability bit 13 clear,
+node 2/engine 1, and no optional history object at scheduler `+0x8678`.
+The original history helper `0x1a894f0` therefore returns true immediately;
+it is not a hardware-idle wait on this path.
+
+OS spinlocks, IRQL, events and clock calls are modeled using checked PE import
+identities. The `0xdca2b0` synchronization boundary calls the original recovery
+helper under modeled IRQL 3 and propagates its boolean result, then reports
+successful OS synchronization. The reset/reload helper `0x19e2628` is a
+recording success/failure boundary here; its real RM/HFRP chain is tested
+separately below. Thus this test closes outer ordering, not physical reset.
+
+For three outstanding jobs, the successful outer path does the following:
+
+1. Writes `0xf00d` into the firmware-visible control semaphore and signals
+   the queue's two OS events.
+2. Executes recovery under OS synchronization: advances software counters,
+   updates the selected context and rewrites later task descriptors.
+3. Releases the node lock, checks the optional history policy, and invokes
+   reset/reload for the selected type-2 context.
+4. Queues three 56-byte deferred records at scheduler `+0x7f08`. Each contains
+   the completion-word pointer, a prior sequence (`0`, `1`, `2`), the entry-word
+   pointer, and zero mode/auxiliary fields.
+5. Writes latest sequence `3` into the entry semaphore, records timing,
+   writes `0xfeed` into the control semaphore, signals both events again,
+   and returns success. The completion semaphore remains zero at this point.
+
+On a modeled reset/reload failure, step 2 has already advanced software
+counters. The caller skips deferred-record creation and the final entry write,
+reopens the control gate, signals the events, and returns `0xc0000001`.
+A rejected context mode returns `0xc00000bb` after closing/reopening the gate;
+a missing capability rejects before touching the gate. The empty-queue path
+can return success without calling reset/reload. These return values and
+software writes are not interchangeable with engine quiescence.
+
+### The deferred consumer writes completion itself
+
+The same test passes the **actual records produced above**, with their original
+semaphore pointers, into one iteration of original consumer `0xe16cf0`.
+The queue's adapter pointer and OS wakeup are modeled; the iteration stops at
+`0xe17194`, after releasing its lock and before the subsequent synchronized
+notification. Thread creation and that notification are not executed.
+The original consumer uses the same queue stride, count and event offsets
+as the producer/gate helpers. Its type-0 record behavior is:
+
+- A completion value behind the expected prior sequence, using signed u32
+  subtraction, leaves that record pending.
+- An equal completion value causes a host write of `expected + 1` to the entry
+  word at `0xe16e44`, then to the completion word at `0xe16ed0`.
+- A value ahead of the expected sequence retires the record without either
+  write. The test's memmove/memset boundaries only compact/clear record storage.
+
+Four cases start with completion `0`, `1`, `3` or `0xffffffff`. The first two
+advance completion to 3 through original **CPU stores**, the third retires all
+records without semaphore writes, and the last leaves all three pending with
+completion unchanged. No firmware or arithmetic-engine execution is involved.
+The first case therefore demonstrates that recovery can synthesize all three
+completion advances without a new hardware completion.
+
+The suite has twelve cases: six empty/nonempty reset outcomes, capability and
+context rejection, and four deferred-consumer inputs. Memory-write hooks assert
+exact gate/entry/completion addresses, values and originating instruction RVAs.
+The Linux normal-completion contract must remain distinct from this Windows
+error-recovery bookkeeping. A matching semaphore after reset cannot justify
+DMA release without an independently established reset/drain guarantee.
+The next hardware-contract investigation remains the reset/reload boundary,
+including HFRP/controller semantics and the loader's idle/reinitialization path.
+
+```sh
+venv/bin/python scripts/inspect_kmd_reset_order.py > results/windows-kmd-reset-order.json
+```
+
 ## Identifying the Windows reset entry points
 
 Research date: 2026-10-28. `scripts/inspect_kmd_reset_dispatch.py` executes

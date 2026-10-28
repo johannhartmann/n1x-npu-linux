@@ -19,7 +19,8 @@ ARGS, REQUEST, OUTPUT, CONTEXT = (PRIMARY+i*0x1000 for i in range(1, 5))
 TASK_RING = 0x35000000
 
 
-def replay(pe, previous=0, count=1, reject=False, flags=0):
+def replay(pe, previous=0, count=1, reject=False, flags=0, executor=None):
+    """Build the queue fixture; optionally hand it to an enclosing-path test."""
     m = Machine(pe)
     m.u.mem_map(TASK_RING, 0x10000)
     for page in (0xe18000, 0xe19000, 0xe07000, 0xc000, 0x5000, 0x92000, 0xe9c000,
@@ -139,6 +140,8 @@ def replay(pe, previous=0, count=1, reject=False, flags=0):
     m.u.hook_add(UC_HOOK_CODE, hook)
     m.u.hook_add(UC_HOOK_MEM_READ, read, begin=DESCRIPTOR, end=DESCRIPTOR+0xfff)
     m.u.hook_add(UC_HOOK_MEM_WRITE, write, begin=DESCRIPTOR, end=DESCRIPTOR+0xfff)
+    if executor is not None:
+        return executor(m, REQUEST, jobs)
     result = m.call(0xe183b0, ARGS)
     status, = m.read(ARGS+0x30, 'I')
     assert not bank_writes

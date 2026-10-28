@@ -70,6 +70,7 @@ test-vendor: test
 	venv/bin/python scripts/inspect_kmd_recovery.py
 	venv/bin/python scripts/inspect_kmd_context_reset.py
 	venv/bin/python scripts/inspect_kmd_recovery_descriptor.py
+	venv/bin/python scripts/inspect_kmd_reset_order.py
 	venv/bin/python scripts/inspect_kmd_reset_dispatch.py
 	venv/bin/python scripts/inspect_kmd_reset_resources.py
 	venv/bin/python scripts/inspect_kmd_reset_reload.py
