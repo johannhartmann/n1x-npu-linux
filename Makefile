@@ -83,6 +83,7 @@ test-vendor: test
 	venv/bin/python scripts/test_profile1_context_save.py
 	venv/bin/python scripts/inspect_engine_context.py
 	venv/bin/python scripts/inspect_compiler_context.py
+	venv/bin/python scripts/inspect_engine_register_context.py
 	venv/bin/python scripts/test_native_context.py
 	venv/bin/python scripts/test_native_preempt.py
 	venv/bin/python scripts/test_job_preemption.py

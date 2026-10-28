@@ -116,6 +116,12 @@ guessing extra allocation space. Actual engine transfer behavior and context
 preservation still require physical qualification. Public EXEC does not enable
 preemption.
 
+The [engine register-context map](contract.md#engine-register-context-commands-and-bank-accounting)
+now accounts for the first `0x1cb00` context bytes: 137 range commands across
+67 bank visits have matching save/restore layouts in the original compiler.
+This narrows the remaining analysis to the separate `0x280000`-byte component
+and actual engine transfer behavior; it does not establish safe reclamation.
+
 The [native v2 context transport](contract.md#native-version-2-context-transport)
 now has C serializers and original-firmware save/restore control-flow coverage.
 It requires descriptor bit 2 to load a separate context header, bit 1 to permit

@@ -1402,6 +1402,83 @@ or public preemption API is introduced from this analysis.
 venv/bin/python scripts/inspect_compiler_context.py > results/compiler-context-contract.json
 ```
 
+### Engine register-context commands and bank accounting
+
+`inspect_engine_register_context.py` observes the original Windows compiler's
+register-range generator at RVA `0xcb99f8`, its range encoder `0xcb0860`,
+and the actual emitted vectors and accumulated context sizes. Observation is
+read-only; the existing full translation and pinned output checks still run.
+Vector storage is resolved again after each call because the original C++
+implementation can grow and relocate it.
+
+For the pinned ReLU artifact, each direction generates **67 register groups
+across 34 compiler engine IDs**. Thirty-three IDs use banks 0 and 1; ID 52
+has no selector register and is visited once. The compiler chooses the bank
+count from original selector lookup `0xcb1490`: a nonzero selector results in
+two visits. These are opaque compiler IDs, not asserted physical engine names.
+Each selected group begins with a register write choosing the bank, followed
+by one or more range commands. There are **137 range commands per direction**.
+
+The original range encoder takes a register offset, a nonnegative u32 word
+count, and a Boolean mode (`1` in save generation, `0` in restore). In the
+observed domain its 64-bit word is:
+
+```text
+register_offset << 2 | (1 - save) << 25 | word_count << 26 | 2
+```
+
+The test compares this formula with the original leaf for **48 cases**,
+including counts 0, 1, 63, 64, 65, 593 and `0x7fffffff`, both directions and
+three register offsets. It also checks all 274 actual generated save/restore
+range words. This describes the compiler's packed command format; register
+reads/writes by the physical engine are not emulated by the encoder test.
+
+Original generator `0xcb9bf0..0xcb9c54` derives the count from its range as
+`(end - start) / 4`, then accumulates this storage amount per range:
+
+```text
+align_up(end, 64) - align_down(start, 64)
+```
+
+The sum is exactly **`0x1cb00` (117,504 bytes)**, matching the first context
+component. The 137 encoded counts sum to 28,611 words (114,444 bytes); the
+difference comes from the compiler's per-range alignment accounting. Do not
+replace this rule with `count + 1` or infer the contents of padding bytes.
+The trace records every group's before/after accumulator and each range's
+offset within that accounting, and verifies identical layouts for restore.
+
+Examples of the recovered groups:
+
+| Compiler ID / bank | Selector register | Register ranges, end exclusive | Accounted context interval |
+| --- | --- | --- | --- |
+| 42 / 0 | `0x23004` | `[0x23008,0x23080)`, `[0x23084,0x239c8)` | `[0,0xa00)` |
+| 42 / 1 | `0x23004` | Same ranges | `[0xa00,0x1400)` |
+| 0 / 0 | `0x7004` | `[0x7008,0x7040)`, `[0x7044,0x7884)` | `[0x2800,0x30c0)` |
+| 52 / 0 | None | `[0x4000,0x4640)`, `[0x4690,0x4bb8)`, `[0x4be0,0x4c94)` | `[0x1be80,0x1cb00)` |
+
+The complete map is emitted into the result JSON rather than duplicated in
+this document. These offsets describe compiler allocation/order; actual
+device placement, byte order and preservation of register values still need
+hardware evidence.
+
+The save engine program at instruction-blob offset `0xe00` consists of 205
+eight-byte commands: 137 range commands and 68 ordinary writes. The restore
+program at `0x4300` reproduces the same order and all ordinary writes; each
+range command differs only by bit 25. It then appends one ordinary write of
+1 to offset `0x31000`, giving 206 commands. The script compares **every word**
+against the final compiler output. This is the first save program paired with
+the last restore program; it does not change the previously recovered ordering
+of the two save/restore stages.
+
+This resolves the compiler's register-context allocation and bank sequencing.
+The separate **`0x280000`-byte component** and engine-side memory-copy behavior
+remain open, as do physical context integrity and DMA quiescence. These compiler
+commands are not a host MMIO recipe and are not enabled through public EXEC.
+
+```sh
+venv/bin/python scripts/inspect_engine_register_context.py > results/engine-register-context.json
+```
+
 ### Native version-2 context transport
 
 `test_native_context.py` replaces the Windows UMD/v3 task path with the compiled
