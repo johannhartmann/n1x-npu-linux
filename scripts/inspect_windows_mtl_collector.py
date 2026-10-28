@@ -12,7 +12,7 @@ from unicorn import arm64_const as r
 from inspect_dla_compiler import ROOT,NATIVE_HASH
 
 
-def main(argv=None, observer=None):
+def main(argv=None, observer=None, initialized_probe=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--translation-input',action='store_true',
                         help='Use the captured second frontend handoff after real pretranslation output replay')
@@ -124,7 +124,8 @@ def main(argv=None, observer=None):
             n=struct.unpack('<I',uc.mem_read(context+0x34,4))[0]
             pointer=struct.unpack('<Q',uc.mem_read(context+0x38,8))[0]
             header=list(struct.unpack('<7I',uc.mem_read(pointer,28)))
-            assert n==28736 and header==[0x300,2,4,6144,28,1024,24640]
+            if initialized_probe is None:
+                assert n==28736 and header==[0x300,2,4,6144,28,1024,24640]
             statistics_builder[-1].update(status=0,bytes=n,header_words=header)
         if address==base+0xf19384:initializer_calls.append(uc.reg_read(r.UC_ARM64_REG_X15)-base)
         if address==base+0xc6ddd8 and uc.reg_read(r.UC_ARM64_REG_X0):
@@ -231,7 +232,8 @@ def main(argv=None, observer=None):
             uc.reg_write(r.UC_ARM64_REG_X0,0)
         elif address==base+0xf0c6b8:
             key=cstring(uc.reg_read(r.UC_ARM64_REG_X0))
-            assert key in ('URID_RANDOM','RANDOMIZE_UNUSED_REGISTER','RANDOM_SEED','VALIDATION_SYNC_STEP'),key
+            assert key in ('URID_RANDOM','RANDOMIZE_UNUSED_REGISTER','RANDOM_SEED','VALIDATION_SYNC_STEP',
+                          'HBC_CRP_MODE','FLUSH_ATTENTION','DLA_DISABLE_FCDMA_PORT1'),key
             shims[f'getenv {key} unset']+=1
             uc.reg_write(r.UC_ARM64_REG_X0,0)
         elif address in (base+0xf028b0,base+0xf02908):
@@ -295,6 +297,10 @@ def main(argv=None, observer=None):
     assert len(expected_initializers)==1767
     invoke(0xf19358,base+0x10523b0,base+0x1055af0,instruction_limit=100000000)
     assert initializer_calls==expected_initializers
+    if initialized_probe is not None:
+        # Reuse the checked OS/CRT model and original initializer sequence for
+        # other graph fixtures; the normal ReLU oracle remains unchanged.
+        return initialized_probe(u, pe, base, invoke, allocate)
     assert invoke(0x6e34e8,heap+0x50000)==heap+0x50000
     assert struct.unpack('<Q',u.mem_read(heap+0x50000,8))[0]==base+0x11664d8
     invoke(0x614da8,ir_object+8)

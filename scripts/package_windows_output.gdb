@@ -1,16 +1,20 @@
-# Exact-result adapter for one ReLU fixture; runs only in the native sandbox.
+# Exact-result adapter for checked graph fixtures; runs only in the native sandbox.
 # This supplies actual Windows translation results to the original serializer.
 source scripts/capture_native_translate.gdb
 python
-final=pathlib.Path('results/windows-final-backend-output')
+final=pathlib.Path('results/windows-conv1x1-backend' if conv else 'results/windows-final-backend-output')
 fm=json.loads((final/'manifest.json').read_text())
-assert fm['passed'] and fm['translation_return']==0 and fm['windows_sha256']==windows_sha
+assert fm['passed'] and (fm['translation']['return_value'] if conv else fm['translation_return'])==0 and fm['windows_sha256']==windows_sha
 assert fm['hardware_access'] is False and fm['handoff']['inputs_unchanged_after_translation']
 assert fm['handoff']['network_sha256']==hashlib.sha256(network).hexdigest()
-assert fm['handoff']['stage']=='captured frontend translation descriptor'
-for e in entries:assert fm['handoff']['input_sha256'][str(e['kind'])]==e['sha256']
+if not conv:assert fm['handoff']['stage']=='captured frontend translation descriptor'
+for e in entries:
+    data=bytearray(read(maps['pointer'][e['kind']],e['bytes']))
+    for offset in fm['handoff'].get('pointer_offsets',{}).get(str(e['kind']),[]):
+        data[offset:offset+8]=bytes(8)
+    assert fm['handoff']['input_sha256'][str(e['kind'])]==hashlib.sha256(data).hexdigest()
 payloads={}
-for e in fm['outputs']:
+for e in (fm['translation']['outputs'] if conv else fm['outputs']):
     data=(final/e['file']).read_bytes()
     assert len(data)==e['bytes'] and hashlib.sha256(data).hexdigest()==e['sha256']
     assert e['kind'] not in payloads

@@ -16,6 +16,7 @@ import sys
 import argparse
 import signal
 import faulthandler
+import struct
 from inspect_dla_compiler import NATIVE_HASH
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -24,6 +25,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target',choices=('t234','t254','t256'),help='Attempt an offline compile for this explicit candidate target')
+    parser.add_argument('--model',choices=('relu','conv1x1'),default='relu',help='Graph fixture to construct')
     parser.add_argument('--capture-mtl',action='store_true',help='Stop under GDB and save intermediate MTL buffers without translation')
     parser.add_argument('--capture-translation-input',action='store_true',
                         help='Replay verified Windows pretranslation outputs and capture the next frontend handoff')
@@ -35,7 +37,8 @@ def main():
         parser.error('--capture-translation-input requires --target t254 and excludes --capture-mtl')
     if args.package_windows_output and (args.target!='t254' or args.capture_mtl or args.capture_translation_input):
         parser.error('--package-windows-output requires --target t254 and excludes capture modes')
-    outdir=ROOT/'results'/('native-compile-'+args.target) if args.target else None
+    suffix='' if args.model=='relu' else '-'+args.model
+    outdir=ROOT/'results'/('native-compile-'+args.target+suffix) if args.target else None
     if os.environ.get('N1X_COMPILER_SANDBOX')!='1':
         command=['bwrap','--unshare-all','--die-with-parent','--clearenv',
                  '--ro-bind','/usr','/usr','--symlink','usr/lib','/lib',
@@ -43,7 +46,8 @@ def main():
                  '--ro-bind',sys.base_prefix,sys.base_prefix,
                  '--ro-bind',str(Path(sys.base_prefix).resolve()),str(Path(sys.base_prefix).resolve()),
                  '--tmpfs','/tmp','--ro-bind',str(ROOT),str(ROOT),'--chdir',str(ROOT),
-                 '--setenv','N1X_COMPILER_SANDBOX','1']
+                 '--setenv','N1X_COMPILER_SANDBOX','1',
+                 '--setenv','N1X_COMPILER_MODEL',args.model]
         if outdir:
             outdir.mkdir(parents=True,exist_ok=True)
             command+=['--bind',str(outdir),str(outdir)]
@@ -65,6 +69,8 @@ def main():
     H=C.c_void_p
     PH=C.POINTER(H)
     class Dims(C.Structure):_fields_=[('a',C.c_int32),('b',C.c_int32),('c',C.c_int32),('d',C.c_int32)]
+    class Dims2(C.Structure):_fields_=[('h',C.c_int32),('w',C.c_int32)]
+    class Weights(C.Structure):_fields_=[('dtype',C.c_uint8),('values',H),('count',C.c_int64)]
     def bind(name,args):
         f=getattr(lib,name);f.argtypes=args;f.restype=C.c_uint32;return f
     calls=[]
@@ -81,16 +87,41 @@ def main():
         observed=Dims()
         invoke('NvDlaTensorGetDimensions',[H,C.POINTER(Dims)],tensor,C.byref(observed))
         assert bytes(observed)==bytes(dims)
-        invoke('NvDlaNetworkAddActivation',[H,H,C.c_uint8,PH],network,tensor,0,C.byref(layer));assert layer.value
+        if args.model=='relu':
+            invoke('NvDlaNetworkAddActivation',[H,H,C.c_uint8,PH],network,tensor,0,C.byref(layer))
+        else:
+            # C wrapper 0x633434: five Dims2 values, two indirect 24-byte
+            # weight structs, bias-mode byte, group count, and output handle.
+            assert C.sizeof(Weights)==24 and Weights.values.offset==8 and Weights.count.offset==16
+            kernel_values=[(i%3+1)/4 if j==i else -0.125 if j==(i+1)%32 else 0
+                           for i in range(32) for j in range(32)]
+            bias_values=[i/32-0.5 for i in range(32)]
+            kernel_data=C.create_string_buffer(b''.join(struct.pack('<e',v) for v in kernel_values))
+            bias_data=C.create_string_buffer(b''.join(struct.pack('<e',v) for v in bias_values))
+            kernel=Weights(2,C.cast(kernel_data,H),1024)
+            bias=Weights(2,C.cast(bias_data,H),32)
+            invoke('NvDlaNetworkAddConvolution',
+                   [H,H,C.c_int32,C.c_int32,Dims2,Dims2,Dims2,Dims2,Dims2,Weights,Weights,C.c_uint8,C.c_int32,PH],
+                   network,tensor,32,0,Dims2(1,1),Dims2(0,0),Dims2(0,0),Dims2(1,1),Dims2(1,1),
+                   kernel,bias,2,1,C.byref(layer))
+            for name,expected,values in (('NvDlaLayerGetKernelWeights',kernel,kernel_values),
+                                         ('NvDlaLayerGetBiasWeights',bias,bias_values)):
+                got=Weights()
+                invoke(name,[H,C.POINTER(Weights)],layer,C.byref(got))
+                # The original constructor converts FP16 constants to FP32.
+                assert got.dtype==1 and got.count==expected.count,(name,got.dtype,got.count)
+                assert struct.unpack('<%df'%got.count,C.string_at(got.values,got.count*4))==tuple(values)
+        assert layer.value
         invoke('NvDlaLayerGetOutput',[H,C.c_int32,PH],layer,0,C.byref(output));assert output.value
         invoke('NvDlaNetworkMarkOutput',[H,H],network,output)
         invoke('NvDlaTensorSetName',[H,C.c_char_p],output,b'output')
         # Numeric definitions from the public NvDlaType.h counterpart:
         # ACTIVATION_TYPE_RELU=0, DATA_TYPE_HALF=2. Native getters must agree
         # with the values supplied; this is still not executed inference.
-        activation=C.c_uint8(255)
-        invoke('NvDlaActivationLayerGetActivationType',[H,C.POINTER(C.c_uint8)],layer,C.byref(activation))
-        assert activation.value==0
+        if args.model=='relu':
+            activation=C.c_uint8(255)
+            invoke('NvDlaActivationLayerGetActivationType',[H,C.POINTER(C.c_uint8)],layer,C.byref(activation))
+            assert activation.value==0
         for item in (tensor,output):
             invoke('NvDlaTensorSetDataType',[H,C.c_uint8],item,2)
             invoke('NvDlaTensorSetDataFormat',[H,C.c_uint8],item,3)
@@ -128,14 +159,15 @@ def main():
             image=C.create_string_buffer(length.value)
             invoke('NvDlaCompilerGetLoadableImage',[H,C.c_char_p,H],compiler,b'probe',image)
             data=image.raw
-            (outdir/'relu.nvda').write_bytes(data)
+            (outdir/(args.model+'.nvda')).write_bytes(data)
             compiled=dict(target=args.target,bytes=len(data),sha256=hashlib.sha256(data).hexdigest(),
                           backend='verified Windows result replay' if args.package_windows_output else 'native',
                           hardware_access=False,inference_verified=False)
             (outdir/'manifest.json').write_text(json.dumps(compiled,indent=2)+'\n')
         print(json.dumps(dict(passed=True,hardware_access=False,sandbox='private /dev, absent /sys, isolated namespaces',
                              native_library_loaded=True,graph_constructed=True,dimension_fields=[dims.a,dims.b,dims.c,dims.d],
-                             activation_code=0,data_type_code=2,calls=calls,compiled=compiled,
+                             model=args.model,activation_code=0 if args.model=='relu' else None,
+                             data_type_code=2,calls=calls,compiled=compiled,
                              limitations=['Enum names use public reference definitions; no numerical execution validates them here',
                                           'A named compiler target is not proof of physical N1X or firmware compatibility',
                                           'No numerical inference or device submission']),indent=2))

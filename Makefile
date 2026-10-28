@@ -2,7 +2,7 @@ CC ?= cc
 CFLAGS ?= -O2 -g -Wall -Wextra -Werror
 # Explicit installed-kernel target; builds only, never installs/loads modules.
 KERNEL_RELEASE ?= $(shell uname -r)
-.PHONY: test test-vendor test-relu test-p16-start kernel-check module clean generate-probe
+.PHONY: test test-vendor test-relu test-conv test-p16-start kernel-check module clean generate-probe
 # Requires the exact ignored physical BIOS-300 capture and pinned vendor KMD.
 # Offline: no root, module load, hardware access or firmware installation.
 test-p16-start:
@@ -23,6 +23,16 @@ test-p16-start:
 	venv/bin/python scripts/test_response.py
 	venv/bin/python scripts/test_response_decode.py
 	venv/bin/python scripts/test_profile1_lpwr_consumer.py
+# Device-free convolution compiler bridge; preserves the pinned ReLU directory.
+test-conv:
+	venv/bin/python scripts/probe_native_graph.py --model conv1x1
+	venv/bin/python scripts/probe_native_graph.py --model conv1x1 --target t254 --capture-mtl
+	venv/bin/python scripts/inspect_conv_pretranslation.py
+	venv/bin/python scripts/probe_native_graph.py --model conv1x1 --target t254 --capture-translation-input
+	venv/bin/python scripts/inspect_conv_pretranslation.py --translate
+	venv/bin/python scripts/probe_native_graph.py --model conv1x1 --target t254 --package-windows-output
+	venv/bin/python scripts/verify_conv_loadable.py
+
 generate-probe:
 	venv/bin/python scripts/create_relu_probe.py
 # Requires the generated ReLU source, checked Windows outputs and serialized

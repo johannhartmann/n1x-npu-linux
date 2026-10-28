@@ -144,3 +144,10 @@ venv/bin/python scripts/test_linux_accel.py
 No new physical inference result is claimed. The remaining hardware test must
 compare actual NPU-written outputs with an independent reference, including
 multiple jobs and the new loadable-generated layout.
+
+The separate [convolution compiler fixture](convolution-compiler.md) now
+produces a complete loadable with two constants in an 8-KiB allocation and a
+4,224-byte global DRAM pool property. The current loader deliberately rejects
+that nonzero property. Its original-runtime pool contract must be established
+before claiming convolution runtime support; compiler success alone does not
+extend this loader's supported subset.

@@ -1,5 +1,11 @@
 # A numerical probe for the Windows ARM DLA compiler
 
+The [convolution compiler bridge](convolution-compiler.md) now produces a
+separate FP16 1x1 convolution artifact through the same original frontend and
+Windows backend. Its constant-pointer relocation is verified, but its nonzero
+global DRAM pool remains unsupported by the native loader and it has not run
+on physical hardware.
+
 This includes a reproducible source model, CPU oracle and an offline compiler
 investigation. The workflow below now produces a serialized NVDA ReLU fixture
 using the original Windows backend and native frontend, joined by checked
