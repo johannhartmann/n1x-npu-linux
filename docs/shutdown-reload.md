@@ -1,17 +1,20 @@
 # Controlled shutdown and module reload
 
-The bootstrap implements an explicit terminal shutdown for a healthy
-firmware/device instance. **Hardware unload/reload qualification is pending.**
-The first physical test on 2026-10-28 started firmware, passed the ReLU probe
-and all eight cuDLA numerical jobs, then stopped at a host-side IRQ-mask
-readback assertion before sending the HFRP power-off command. No memory was
-freed and no unload/reload was attempted. See the
-[attempt receipt](reload-attempt-2026-10-28.json).
+The controlled healthy shutdown passed **two physical unload/reload cycles**
+on the audited P16 using module `1ED6855E6645BEEF8DA3534` and kernel
+`7.2.8-23-omarchy-p16-asus-npu2`. Each startup passed the firmware/ReLU probes,
+eight baseline cuDLA jobs and eight changing-input reuse jobs. Both stops
+confirmed power-off, released all retained allocations and balanced lifetime
+references. Open clients blocked unload; closing them allowed ordinary removal,
+then fresh firmware startup and correct inference without rebooting.
+See the [hardware receipt](npu-hardware-2026-10-28.json).
 
-That assertion has been corrected and the module rebuilt; the correction is
-only offline-tested so far. Reboot the **same** `7.2.8-23-omarchy-p16-asus-npu2`
-kernel before loading the new build, because the failed stop is terminal for
-the currently loaded instance. No new kernel or boot entry is required.
+Earlier builds without stop support, or any instance with a failed/uncertain
+stop, still need a reboot before replacement. The
+[first failed attempt](reload-attempt-2026-10-28.json) and
+[lifecycle review](lifecycle-review-2026-10-28.json) document the corrected
+host-side assumptions. Healthy reload qualification is not failed-channel
+recovery or suspend/resume support. No new kernel or boot entry is required.
 
 ## Recovered contract
 
@@ -109,8 +112,8 @@ allocation cleanup passed. The joined tests model DMA/PM edges but execute the
 real Linux shutdown handler and HFRP protocol code together.
 These tests use modeled hardware and cannot replace the next command.
 
-After rebooting to remove the instance with the failed stop (keep the current
-power profile; the qualifier only records it):
+From a fresh audited boot, or a healthy running instance of the matching build
+with sufficient retention budget (keep the current profile; it is only recorded):
 
 ```sh
 pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_p16_reload.py" \

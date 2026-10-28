@@ -8,6 +8,8 @@ public Jetson sources, and tested on the physical P16 entirely under Linux.
 **Real inference works through NVIDIA’s original Linux cuDLA library → our
 backend → Linux driver → extracted DLA firmware.** Eight changing-input ReLU,
 convolution and Conv → ReLU jobs matched independent references exactly.
+The current build also passed two physical unload/reload cycles and complete
+512→1536 and 1024→3072 super-resolution image runs.
 
 This is a manually operated research driver for one audited board/BIOS/kernel
 combination. General model compilation, automatic suspend/resume and production
@@ -19,9 +21,9 @@ required; pinned Windows driver files are used for analysis and extraction.
 - **[Setup and reproduction](docs/setup.md):** fresh checkout, dependencies,
   pinned inputs, model compilation and explicit hardware commands.
 - **[Current status](docs/status.md):** physical measurements, offline evidence
-  and remaining hardware qualification.
+  and remaining limits.
 - **[Super-resolution demo](demo/README.md):** full-image 3x pipeline;
-  end-to-end physical image runs are still pending.
+  complete 512→1536 and 1024→3072 image runs verified on the P16.
 - **[cuDLA backend](docs/cudla-backend.md):** API contract, staging and limits.
 - **[Shutdown and reload](docs/shutdown-reload.md):** cleanup protocol and
   post-reboot qualification.
@@ -37,17 +39,18 @@ Tests preserve the current power profile.
 | --- | --- | --- |
 | Board policy, HFRP, firmware upload and DMA/config setup | Original-code comparison and physical startup | Verified on P16 |
 | cuDLA ReLU, 1x1 Conv, Conv → ReLU | Eight changing-input jobs, exact reference matches | Verified on P16 |
-| Trained super-resolution graph | One physical 64x64 window, numerical comparison | Window verified; full image pending |
-| Full-image tiling and borders through 1024x1024 → 3072x3072 | Independent CPU reference | Offline verified |
-| Completed-task I/O reuse | Driver/backend tests with modeled NPU transport | Physical qualification pending |
-| Checked shutdown, DMA cleanup and module reload | First physical stop exposed a host readback assertion; correction passes offline tests | Reboot and requalification pending |
+| Trained super-resolution graph | Complete 512x512 and 1024x1024 DLA runs; independent ONNX reference | Verified on P16 |
+| Full-image tiling and borders through 1024x1024 → 3072x3072 | 461 physical DLA windows plus whole-image CPU reference | Verified on P16 |
+| Completed-task I/O reuse | Changing-input cuDLA fixtures and one allocation per complete image | Verified on P16 |
+| Checked shutdown, DMA cleanup and module reload | Two physical cycles: zero retained backing, ordinary unload, restart and numerical checks | Verified on P16 |
 | Recovery from uncertain DMA/firmware failure | Buffers and lifetime references remain pinned | Reboot required |
 | Automatic startup, suspend/resume, arbitrary TensorRT engines | Outside the implemented/verified contract | Unsupported |
 
 The [cuDLA receipt](docs/cudla-hardware-2026-10-28.json) identifies exact software,
-firmware, model and output hashes for the eight-job physical test. The newer
-[super-resolution window receipt](docs/superres-tile-2026-10-28.json) covers one
-window only. [Status](docs/status.md) separates these measurements from pending work.
+firmware, model and output hashes for the eight-job physical test. The
+[current hardware receipt](docs/npu-hardware-2026-10-28.json) records 48 fixture
+jobs, two reload cycles and both full-image runs.
+[Status](docs/status.md) gives the remaining limits.
 
 ## How it works
 
@@ -69,8 +72,8 @@ an instruction sandbox, and the transport requires `CAP_SYS_RAWIO`.
 
 The kernel retains submitted DMA after client close or model unregister.
 The new code can reuse successful-task I/O and release backing after checked
-explicit shutdown; both paths await physical qualification. Uncertain execution
-or shutdown errors keep DMA, power and module references pinned until reboot.
+explicit shutdown; both paths have passed the bounded P16 qualification.
+Uncertain execution or shutdown errors keep DMA, power and module references pinned until reboot.
 There are no automatic retries or forced-unload recovery.
 
 ## Offline checks

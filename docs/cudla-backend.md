@@ -67,7 +67,8 @@ and ABI through the existing C transport.
 - The kernel’s 64-MiB/128-job retention limit remains. The new backend reuses a
   successful model’s allocation for subsequent I/O when the kernel advertises
   that capability. Reuse and checked shutdown/reclamation are implemented and
-  offline-tested; physical qualification is pending. Reset/recovery, asynchronous
+  offline-tested and physically qualified in two healthy P16 reload cycles
+  plus changing-input and complete-image runs. Reset/recovery, asynchronous
   scheduling, CUDA Graphs, NvSci and private export-table interoperability are
   not implemented. The backend exports all required names and declines
   unsupported features; it does not create fake NvSci objects.
@@ -181,7 +182,8 @@ pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_cudla.py" \
 
 This requires a healthy initialized NPU with the reuse capability. The complete
 reload qualifier now runs both baseline and reuse checks before the first stop
-and after every restart. These physical reuse/reload checks remain pending.
+and after every restart. These checks passed in two physical P16 reload
+cycles; see the [hardware receipt](npu-hardware-2026-10-28.json).
 The production application's multi-input path has passed real-CUDA tests with
 a modeled NPU peer, including changing-input snapshots and stopping on a wrong
 reference without executing subsequent jobs. Those tests do not establish

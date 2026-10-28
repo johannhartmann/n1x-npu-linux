@@ -1,0 +1,384 @@
+{
+  "date": "2026-10-28",
+  "scope": "Physical P16 NPU startup, three fixture graphs, completed-task reuse, two healthy stop/unload/reload cycles and full-image super-resolution",
+  "software_commit": "606c5daeb7ee9d4cae89c3b5f6762584ca9093b4",
+  "board": "ASUS ProArt P16 H7607BA",
+  "bios": "H7607BA.300",
+  "npu": {
+    "acpi_hid": "NVDA200A",
+    "cid": "NVDA2042",
+    "revision": "0x34",
+    "hal": 1
+  },
+  "sroot": {
+    "acpi_hid": "NVDA8600",
+    "revision": 1
+  },
+  "environment": {
+    "boot_id": "dfa2cb44-dcfd-424a-a884-71a107503e69",
+    "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+    "platform_profile": "performance",
+    "module_srcversion": "1ED6855E6645BEEF8DA3534",
+    "module_sha256": "57bae30b452e3e420c4d0d6868604ba691d4df8757dce6978e9f99f538d030fa",
+    "cycles": 2
+  },
+  "reload_result": {
+    "complete": true,
+    "physical_reload_cycles": 2,
+    "numerical_jobs": 48,
+    "reuse_submissions": 15,
+    "final_device_running": true
+  },
+  "stop_evidence": [
+    {
+      "action": "stopped",
+      "shutdown": {
+        "attempted": "1",
+        "stage": "released",
+        "error": "0",
+        "accepted": "1",
+        "state_valid": "1",
+        "state": "0x7",
+        "hardware_off": "1",
+        "released": "1",
+        "hfrp_held": "0",
+        "upload_held": "0",
+        "irq_owned": "0x10801d0",
+        "irq_before": "0x1001e45",
+        "irq_after": "0x1001e05",
+        "irq_readback": "1",
+        "power_attempted": "1",
+        "power_head_attempted": "1",
+        "power_reply_valid": "1",
+        "power_reply": "0xb06",
+        "power_length": "2",
+        "power_payload": "4300",
+        "query_head_attempted": "1",
+        "query_reply_valid": "1",
+        "query_reply": "0xc05",
+        "query_length": "1",
+        "query_payload": "07",
+        "channel": "1",
+        "pending": "65535"
+      },
+      "info": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 0,
+        "retain_limit": 67108864,
+        "retained_jobs": 0,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "exec_after_stop": "ENODEV",
+      "open_client_prevents_unload": true
+    },
+    {
+      "action": "stopped",
+      "shutdown": {
+        "attempted": "1",
+        "stage": "released",
+        "error": "0",
+        "accepted": "1",
+        "state_valid": "1",
+        "state": "0x7",
+        "hardware_off": "1",
+        "released": "1",
+        "hfrp_held": "0",
+        "upload_held": "0",
+        "irq_owned": "0x10801d0",
+        "irq_before": "0x1001e45",
+        "irq_after": "0x1001e05",
+        "irq_readback": "1",
+        "power_attempted": "1",
+        "power_head_attempted": "1",
+        "power_reply_valid": "1",
+        "power_reply": "0xb06",
+        "power_length": "2",
+        "power_payload": "4300",
+        "query_head_attempted": "1",
+        "query_reply_valid": "1",
+        "query_reply": "0xc05",
+        "query_length": "1",
+        "query_payload": "07",
+        "channel": "1",
+        "pending": "65535"
+      },
+      "info": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 0,
+        "retain_limit": 67108864,
+        "retained_jobs": 0,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "exec_after_stop": "ENODEV",
+      "open_client_prevents_unload": true
+    }
+  ],
+  "numerical_checks": [
+    {
+      "stage": "initial",
+      "mode": "cudla",
+      "numerical_jobs": 8,
+      "physical_cudla_path_verified": true,
+      "io_reuse_verified": false,
+      "reuse_submissions": 0,
+      "scope": "three pinned graphs, changing inputs, blocking CUDA staging; no recovery/lifetime qualification",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "application_sha256": "f691b431531cfe9bd1a2ca2efdb5e02e63c47f14970a79fa3d77c32712740e9c",
+      "models": {
+        "relu.nvda": "561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942",
+        "conv1x1.nvda": "717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b",
+        "conv1x1_relu.nvda": "fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536"
+      },
+      "plan_sha256": "2f10c4b283cb0a1caa46c945df7399847ae52d6470e600e5935ad82d1a697890"
+    },
+    {
+      "stage": "initial",
+      "mode": "reuse",
+      "numerical_jobs": 8,
+      "physical_cudla_path_verified": true,
+      "io_reuse_verified": true,
+      "reuse_submissions": 5,
+      "scope": "three pinned graphs, changing inputs, blocking CUDA staging; no recovery/lifetime qualification",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "application_sha256": "f691b431531cfe9bd1a2ca2efdb5e02e63c47f14970a79fa3d77c32712740e9c",
+      "models": {
+        "relu.nvda": "561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942",
+        "conv1x1.nvda": "717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b",
+        "conv1x1_relu.nvda": "fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536"
+      },
+      "plan_sha256": "dfef79d888cb671d7e399eb99ec62ce7058e38347379de020e1606e4e9858f94"
+    },
+    {
+      "stage": "reload-01",
+      "mode": "cudla",
+      "numerical_jobs": 8,
+      "physical_cudla_path_verified": true,
+      "io_reuse_verified": false,
+      "reuse_submissions": 0,
+      "scope": "three pinned graphs, changing inputs, blocking CUDA staging; no recovery/lifetime qualification",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "application_sha256": "f691b431531cfe9bd1a2ca2efdb5e02e63c47f14970a79fa3d77c32712740e9c",
+      "models": {
+        "relu.nvda": "561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942",
+        "conv1x1.nvda": "717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b",
+        "conv1x1_relu.nvda": "fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536"
+      },
+      "plan_sha256": "2244f12eb4d0b9e06fde511944bdba5e6c2a21606b2298a597c0f32b8afa3f7e"
+    },
+    {
+      "stage": "reload-01",
+      "mode": "reuse",
+      "numerical_jobs": 8,
+      "physical_cudla_path_verified": true,
+      "io_reuse_verified": true,
+      "reuse_submissions": 5,
+      "scope": "three pinned graphs, changing inputs, blocking CUDA staging; no recovery/lifetime qualification",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "application_sha256": "f691b431531cfe9bd1a2ca2efdb5e02e63c47f14970a79fa3d77c32712740e9c",
+      "models": {
+        "relu.nvda": "561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942",
+        "conv1x1.nvda": "717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b",
+        "conv1x1_relu.nvda": "fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536"
+      },
+      "plan_sha256": "8ead0e5b6eaaf780bf291ee9f2cec818e1c573204310c52baae23b76dea4df55"
+    },
+    {
+      "stage": "reload-02",
+      "mode": "cudla",
+      "numerical_jobs": 8,
+      "physical_cudla_path_verified": true,
+      "io_reuse_verified": false,
+      "reuse_submissions": 0,
+      "scope": "three pinned graphs, changing inputs, blocking CUDA staging; no recovery/lifetime qualification",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "application_sha256": "f691b431531cfe9bd1a2ca2efdb5e02e63c47f14970a79fa3d77c32712740e9c",
+      "models": {
+        "relu.nvda": "561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942",
+        "conv1x1.nvda": "717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b",
+        "conv1x1_relu.nvda": "fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536"
+      },
+      "plan_sha256": "702589b3acf79b69aa17d60bef512171a2c047c6b8d1fe33941012f4b2084f08"
+    },
+    {
+      "stage": "reload-02",
+      "mode": "reuse",
+      "numerical_jobs": 8,
+      "physical_cudla_path_verified": true,
+      "io_reuse_verified": true,
+      "reuse_submissions": 5,
+      "scope": "three pinned graphs, changing inputs, blocking CUDA staging; no recovery/lifetime qualification",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "application_sha256": "f691b431531cfe9bd1a2ca2efdb5e02e63c47f14970a79fa3d77c32712740e9c",
+      "models": {
+        "relu.nvda": "561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942",
+        "conv1x1.nvda": "717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b",
+        "conv1x1_relu.nvda": "fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536"
+      },
+      "plan_sha256": "98016321ca8e0cbed604c5c476d0c02e9a398550b69ebc690dd12b049f2e549c"
+    }
+  ],
+  "full_image_runs": [
+    {
+      "input": "/home/johann/n1x-lab/npu/sources/demo-research/astronaut.png",
+      "input_shape": [
+        512,
+        512
+      ],
+      "output_shape": [
+        1536,
+        1536
+      ],
+      "tiles": 100,
+      "tile_shape": [
+        64,
+        64
+      ],
+      "halo": 5,
+      "model_sha256": "c1ffde5d1eb9c7486a08ecc1470a1b633a11c7a71411f8fb36064d16dbcfc1c0",
+      "onnx_sha256": "85f36ff88cc504a24af5e0602148bc56a8aa09a58eca8c0da2756f3e8186035e",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+      "platform_profile": "performance",
+      "boot_id": "dfa2cb44-dcfd-424a-a884-71a107503e69",
+      "module_srcversion": "1ED6855E6645BEEF8DA3534",
+      "transport_before": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 31551488,
+        "retain_limit": 67108864,
+        "retained_jobs": 11,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "automatic_retry": false,
+      "learned_inference": "physical N1X DLA via original NVIDIA cuDLA",
+      "dla_pipeline_seconds": 0.856031259999952,
+      "reference_seconds": 0.25085866800003487,
+      "maximum_absolute_error": 0.0015840530395507812,
+      "rmse": 0.00016206489187057968,
+      "reference_passed": true,
+      "acceptance": {
+        "max_abs": 0.01,
+        "rmse": 0.001
+      },
+      "transport_after": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 36102144,
+        "retain_limit": 67108864,
+        "retained_jobs": 12,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "output_sha256": "7613dd25e1f01e1d495f256f32a48537465471c3a7a3fe5d38bb69843ab44ab5",
+      "input_sha256": "88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5",
+      "input_preparation": "Pinned NASA astronaut sample"
+    },
+    {
+      "input": "/home/johann/n1x-lab/npu/results/astronaut-1024-validation.png",
+      "input_shape": [
+        1024,
+        1024
+      ],
+      "output_shape": [
+        3072,
+        3072
+      ],
+      "tiles": 361,
+      "tile_shape": [
+        64,
+        64
+      ],
+      "halo": 5,
+      "model_sha256": "c1ffde5d1eb9c7486a08ecc1470a1b633a11c7a71411f8fb36064d16dbcfc1c0",
+      "onnx_sha256": "85f36ff88cc504a24af5e0602148bc56a8aa09a58eca8c0da2756f3e8186035e",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+      "platform_profile": "performance",
+      "boot_id": "dfa2cb44-dcfd-424a-a884-71a107503e69",
+      "module_srcversion": "1ED6855E6645BEEF8DA3534",
+      "transport_before": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 36102144,
+        "retain_limit": 67108864,
+        "retained_jobs": 12,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "automatic_retry": false,
+      "learned_inference": "physical N1X DLA via original NVIDIA cuDLA",
+      "dla_pipeline_seconds": 2.181038151999985,
+      "reference_seconds": 0.46076662499996246,
+      "maximum_absolute_error": 0.0015391111373901367,
+      "rmse": 0.00015884396599620052,
+      "reference_passed": true,
+      "acceptance": {
+        "max_abs": 0.01,
+        "rmse": 0.001
+      },
+      "transport_after": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 40652800,
+        "retain_limit": 67108864,
+        "retained_jobs": 13,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "output_sha256": "9d0db28c19e6353709edd9645e2f519833b86bee37b0bd7d0385ac2e002a584b",
+      "input_sha256": "be7b2e14a876ad169159991f89d2791f084ed51ecc172ac54d70e7133e7dca8a",
+      "input_preparation": "Bicubic 2x resize of pinned 512x512 NASA sample, for larger-grid validation; no learned preprocessing"
+    }
+  ],
+  "physical_reload_cycles": 2,
+  "full_image_tiles": 461,
+  "profile_changed_by_test": false,
+  "hardware_shutdown_reload_verified": true,
+  "physical_reuse_verified": true,
+  "full_image_verified": true,
+  "evidence": {
+    "events_sha256": "4ee561534727017be43817da10b7a3714e478f46e277555b8a326e897c2f6f0e",
+    "kernel_logs": {
+      "before-kernel.log": "0df27b071c82880cf3ce7c519c4e9399d02ee2907eb54a3d0c8e00ebbedebcf1",
+      "reload-01-kernel.log": "2919fb990d63b1dc11a85c7adf867f49ebc171b51d15b85387a5cdbd010eaae8",
+      "reload-02-kernel.log": "27c21f8e7cfa9a3aba55e3c5be8ea603ab92e8b26a67fe856b4b2dca9d4f63cd"
+    },
+    "after_superres_kernel_journal_sha256": "d10f9109f595654609ca9a14e520769771aefd7a7165c72439a2f0a2cc3461f0",
+    "kernel_fault_matches": []
+  },
+  "qualification_limits": [
+    "One audited board/BIOS/kernel and pinned trusted models",
+    "Two healthy reload cycles in one boot; this is not long-term reliability or failure recovery qualification",
+    "Image timings are one complete staged pipeline run per size, not a sustained benchmark",
+    "1024 image input is enlarged from the pinned 512 source, not a native-resolution quality benchmark",
+    "Suspend/resume, automatic startup, failed-channel recovery and arbitrary model compilation remain unsupported"
+  ],
+  "application_model_submissions": 509,
+  "bootstrap_relu_probes": 3,
+  "bootstrap_bypass_probes": 3
+}

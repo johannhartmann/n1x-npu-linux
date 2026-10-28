@@ -7,12 +7,21 @@ halo; the output preserves the complete image and its aspect ratio.
 
 ## Verification status
 
-The four-convolution graph has executed on the physical P16 for one 64x64
-window. Against the independent ONNX CPU reference, maximum absolute error
-was 0.00098825 and RMSE was 0.00006074. The complete 512x512 and 1024x1024
-image runs, physical I/O-buffer reuse and module reload qualification are
-still pending. CPU stitching tests cover 512x512 -> 1536x1536 and
-1024x1024 -> 3072x3072; those tests do not claim NPU execution.
+The complete physical P16 runs passed the independent whole-image ONNX
+reference checks:
+
+| Input → output | DLA windows | Pipeline seconds | Max absolute error | RMSE |
+| --- | --- | --- | --- | --- |
+| 512x512 → 1536x1536 | 100 | 0.856 | 0.00158405 | 0.000162065 |
+| 1024x1024 → 3072x3072 | 361 | 2.181 | 0.00153911 | 0.000158844 |
+
+Each image used exactly one retained 4,550,656-byte driver allocation, reused
+for all windows. Two healthy unload/reload cycles and changing-input fixture
+jobs passed first. See the [hardware receipt](../docs/npu-hardware-2026-10-28.json).
+These are one-run staged pipeline timings, not sustained performance figures.
+The 1024 input was enlarged with bicubic interpolation from the pinned NASA
+512 sample to validate a larger inference grid; it is not a native-resolution
+image quality benchmark. Learned inference in both runs executed on DLA.
 
 The demo refuses to run on the older driver without completed-task I/O reuse.
 See [controlled shutdown/reload](../docs/shutdown-reload.md) for the initial
@@ -64,3 +73,8 @@ Offline image/stitching checks, requiring the source model:
 ```sh
 sources/superres-venv/bin/python scripts/test_superres_image.py
 ```
+
+The independent ONNX CPU reference may warn that generic device discovery
+cannot read `accel0/device/vendor` on this ACPI platform device. The reference
+explicitly uses CPUExecutionProvider; physical learned inference uses cuDLA.
+That discovery warning does not indicate a fallback from DLA inference.

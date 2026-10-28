@@ -14,11 +14,11 @@ reproduction code and regression evidence, not a batch installer.
 | `build_models.py --superres` | Reconstruct four checked loadables | ARM64, vendor inputs, bwrap/GDB/Unicorn; device-free; fresh outputs required |
 | `qualify_p16_start.py` | Explicit bounded firmware-startup prefix | Root, exact board/kernel, ROM and firmware; changes NPU state |
 | `qualify_cudla.py` | Eight physical numerical jobs; `--reuse` keeps each graph loaded and verifies one allocation per graph | Already initialized NPU and CUDA; root; `--prepare-only` only creates references |
-| `qualify_p16_reload.py` | Stop, cleanup, unload, reload and numerical jobs | Root, exact audited setup; physical qualification pending |
+| `qualify_p16_reload.py` | Stop, cleanup, unload, reload and numerical jobs | Root, exact audited setup; two healthy physical cycles verified on P16 |
 | `qualify_superres_tile.py` | One physical learned-graph window | Root, initialized NPU, CUDA, image/reference venv |
 | `npu_trigger.py` | One unbuffered sysfs operation | Root for real hardware paths; no retries |
 | `select_npu_dma_domains.py` | Inspect dedicated IOMMU groups | Default read-only; `--apply` changes only audited unbound groups |
-| `../demo-superres` | Full-image super-resolution launcher | Explicit RAWIO elevation; image/reuse hardware qualification pending |
+| `../demo-superres` | Full-image super-resolution launcher | Explicit RAWIO elevation; 512/1024 image runs and reuse verified on P16 |
 
 Use [setup](../docs/setup.md) for ordering and [status](../docs/status.md) for
 which stages have physical evidence. None of the input/model helpers starts

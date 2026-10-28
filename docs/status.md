@@ -39,52 +39,58 @@ See [window receipt](superres-tile-2026-10-28.json). A prior compiler artifact
 produced incorrect numbers; correcting packed-constant replay fixed the window.
 No full image or sustained throughput is established by this result.
 
-The post-reboot test with module `0FD7E6269B085ED9DAD6DB9` also passed the
-startup ReLU probe and eight numerical cuDLA jobs under the unchanged `quiet`
-platform profile (`power-saver` in power-profiles-daemon). Its first shutdown
-failed at an overly strict host IRQ-mask readback assertion **before** HFRP
-power-off. DMA and module references remained retained; no reload was attempted.
-The assertion is corrected and offline-tested, with raw-mask diagnostics added,
-but needs another reboot for hardware qualification. A subsequent offline
-review also corrected the state-byte gating mask, joined the shutdown handler
-with the actual HFRP transport in tests and added explicit same-model reuse
-checks to the physical qualifier. See the
-[lifecycle review](lifecycle-review-2026-10-28.json) and the
-[attempt receipt](reload-attempt-2026-10-28.json).
+## Current physical lifecycle and image results
 
-## Implemented, awaiting physical qualification
+Module `1ED6855E6645BEEF8DA3534` passed two complete healthy
+stop/unload/reload cycles in boot `dfa2cb44-dcfd-424a-a884-71a107503e69`.
+At each of three starts, the firmware/bypass/ReLU sequence passed, followed by
+eight independent-process cuDLA jobs and eight same-module changing-input jobs.
+All **48 outputs** exactly matched independent references. The reuse groups
+performed **15 REEXECs** and consumed one allocation per graph.
 
-- Completed-task I/O reuse with one retained allocation per loaded model.
-  Driver and backend tests cover repeated reuse, ownership and sticky errors.
-- Checked immediate shutdown, power-state confirmation, DMA cleanup, balanced
-  runtime/module references and ordinary module unload/reload.
-- Full-image 3x super-resolution with static windows, halo cropping and exact
-  borders. CPU whole-image/reference checks pass through 1024x1024 → 3072x3072.
+Both stops returned power reply `43 00` and independent state `07`; every
+retained accel allocation was released. EXEC after stop returned ENODEV.
+An open client prevented ordinary unload; closing it allowed normal removal
+of the module, accel node and both endpoint bindings. Fresh load, firmware
+startup and inference succeeded each time, without a reboot between cycles.
+
+The complete image demo then passed on the final running instance:
+
+| Input → output | DLA windows | Pipeline seconds | Maximum absolute error | RMSE |
+| --- | --- | --- | --- | --- |
+| 512x512 → 1536x1536 | 100 | 0.856 | 0.00158405 | 0.000162065 |
+| 1024x1024 → 3072x3072 | 361 | 2.181 | 0.00153911 | 0.000158844 |
+
+Each image added exactly one 4,550,656-byte retained allocation. Learned
+inference ran on the physical DLA; whole-image FP32 ONNX execution independently
+validated the outputs. Timings are one staged pipeline run per size, not a
+sustained benchmark. The 1024 input was a bicubic enlargement of the pinned
+512 NASA sample to validate the larger grid, not a native-resolution quality
+benchmark. The existing `performance` profile was recorded and not changed.
+
+Exact hashes, stop evidence, allocation counters and measured results are in
+the [current hardware receipt](npu-hardware-2026-10-28.json).
+The [first failed attempt](reload-attempt-2026-10-28.json) and
+[offline review](lifecycle-review-2026-10-28.json) remain historical evidence.
+Their host-mask assertion and state-byte issues are corrected in this tested
+build. No failure recovery or long-term reliability claim follows from two
+healthy reload cycles.
 
 The fresh-checkout compiler pipeline reconstructs the three fixture models and
 the super-resolution loadable with their expected hashes, without loading a
 driver or accessing a device. See [setup](setup.md) and the
 [offline reproduction receipt](offline-reproduction-2026-10-28.json).
 
-## Remaining post-reboot checks
-
-1. Reboot the same audited `npu2` kernel to remove the instance with the failed
-   terminal stop; the corrected build is ready locally.
-2. Run [shutdown/reload qualification](shutdown-reload.md): healthy startup,
-   baseline plus changing-input reuse jobs with checked allocation counts,
-   checked stop, zero retained allocations, open-client unload
-   refusal, successful unload after close, fresh startup and numerical jobs.
-3. Run the complete [512x512 demo](../demo/README.md), then 1024x1024; inspect
-   the actual DLA output, numerical metrics, allocation counters and kernel logs.
-4. Record measured outcomes before promoting these paths to physically verified.
+## Remaining limits
 
 Uncertain DMA/firmware errors remain fail-closed and require reboot. Automatic
 recovery, suspend/resume, asynchronous scheduling, CUDA Graphs, zero-copy,
 arbitrary TensorRT engines and general ONNX compilation are unsupported.
+The two successful healthy reload cycles do not validate these paths.
 
 ## Announcement scope
 
-The supported announcement is an experimental, source-available Linux N1X/DLA
-bring-up with verified cuDLA inference on one P16 and reproducible offline
-compiler work. Full-image hardware demo and reload claims must wait for the
-checks above. Vendor inputs and generated loadables are acquired locally.
+The verified scope is experimental Linux N1X/DLA support on this P16, with
+cuDLA inference, bounded healthy shutdown/reload qualification and two complete
+super-resolution image runs. Vendor inputs and generated loadables are acquired
+locally. The [setup](setup.md) and [demo](../demo/README.md) explain reproduction.

@@ -183,6 +183,7 @@ or timer is installed to enforce a profile.
 
 Only after successful reload and reuse qualification, run the
 [full-image demo](../demo/README.md). Its complete physical 512x512 and
-1024x1024 runs remain pending. See [status](status.md) before making broader
-hardware claims. Setup, model generation and offline tests do not establish
+1024x1024 runs passed on the audited P16; see the
+[hardware receipt](npu-hardware-2026-10-28.json). See [status](status.md)
+before making broader hardware claims. Setup, model generation and offline tests do not establish
 successful physical boot, teardown or inference by themselves.

@@ -10,9 +10,9 @@ stage/date at which they were written, not necessarily current support.
 | Document | Purpose |
 | --- | --- |
 | [Setup](setup.md) | Inputs, environments, offline builds and explicit hardware qualification |
-| [Status](status.md) | Verified results, pending checks and announcement scope |
-| [cuDLA backend](cudla-backend.md) | Implemented API and physical eight-job result |
-| [Shutdown/reload](shutdown-reload.md) | Cleanup contract, fault tests and pending hardware cycle |
+| [Status](status.md) | Verified results, remaining limits and announcement scope |
+| [cuDLA backend](cudla-backend.md) | Implemented API, baseline and reuse qualification |
+| [Shutdown/reload](shutdown-reload.md) | Cleanup contract, fault tests and two verified hardware cycles |
 | [Super-resolution demo](../demo/README.md) | Image pipeline, usage and qualification limits |
 | [Tool index](../scripts/README.md) | Which commands to use and which alter hardware/boot state |
 
