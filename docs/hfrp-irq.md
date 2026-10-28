@@ -431,6 +431,69 @@ can suppress redundant operations. A transport error propagates; a nonzero
 firmware status becomes `0xffff`. Those errors must prevent the loader when
 this parent path is used.
 
+## Power-wakeup prerequisite before engine reset (2026-10-28)
+
+`scripts/inspect_kmd_reset_wakeup.py` resolves the previously modeled
+outer `+0xe0` callback: original profile-3 initializer `0x194fb08` installs
+**`0xd40060`**, together with power callback `+0xc8 -> 0xd405f0` and state
+query `+0x108 -> 0xd41630`. It executes these functions from the original
+reset parent `0xd41740`, which calls `+0xe0` when outer `+0x4a8` is nonzero.
+That field participates in power-state bookkeeping; calling this only a
+generic pending-work callback hid a firmware-wakeup prerequisite.
+
+Twenty original-code cases use explicit outer profile 3 and primary HAL 1.
+The primary constructor's synthetic selector initially installs HAL 2, so
+the test explicitly reruns the original HAL initializer with selector 1;
+these fixture values are not a claim about live Windows hardware discovery.
+The atomic acquire/release routines execute, with a synthetic owner identity.
+HFRP transport/replies, common loading, postinit method 23, IRQ setup and
+OS timing remain recording boundaries. No physical reset is attempted.
+
+With outer `+0x149 == 0`, the observed sequence is:
+
+1. Acquire outer `+0x4ac` and mark primary `+0x5ac` busy.
+2. Select wakeup operations from outer power bookkeeping/flags and invoke
+   the original power callback. The baseline pending mask 1 with `+0x14b=0`
+   emits v1.3 POWER_CONTROL `8c 00 00` (clock/domain/rail on, PPS fixture 0).
+   With `+0x14b=1`, tested pending mask `0x10` emits `80 00 00`; mask `0x60`
+   emits `0c 00 00`. These are synthetic policy cases, not recommended PPS.
+3. After successful power control, invoke primary `+0x3b0 -> 0xd48890`.
+   That original accessor reads **resource 0, offset `0x80`**. NVIDIA R38
+   `nvdla_fw_riscv_reg.h` names this `riscv_os_version_r()` /
+   `NV_PNVDLA_FALCON_OS`; it is **not IDLESTATE**. Header SHA-256:
+   `385b24b30a4f53ae681974b0e66cb5c1d0d0a1b3cbbfec944f4bb2ccd2f0bd8a`.
+4. A successful read of zero selects primary `+0x3d8` (HAL-1 no-op `0x5be0`)
+   and the common loader. Any tested nonzero word (`1`, `0x12345678`,
+   `0xffffffff`) skips this reload and uses postinit callback `+0x438`.
+   A failed register read also takes that latter path: it is not fatal.
+5. Perform IRQ setup, clear the busy flag, release the atomic owner, and
+   return to the reset parent. On success it then sends RESET_IDLE/RESET/
+   RESET_IDLE (`03`, `01`, `0c`) and calls the common loader again.
+
+Thus **a zero OS-version word produces two loader calls**, one in wakeup and
+one after the reset commands. Power-transport error `0x65` or firmware status
+1 (mapped to `0xffff`) stops before the version read and reset sequence;
+the original callback leaves its busy byte set but releases its owner.
+Failure from the wakeup loader also prevents the reset sequence, although
+the original callback still performs IRQ setup before returning that error.
+
+With outer `+0x149 == 1`, the callback instead queries state through
+`0xd41630`. The tested v1.5 path sends **`0x1af`**, zero request bytes, and
+reads the low three bits of its one-byte response. Query bits 1 or 2 cause
+the wakeup reload; bit 0 alone does not. No OS-version read occurs in this
+branch. POWER_CONTROL uses the v1.5 two-byte encoding. A query transport
+error, firmware error or empty response does **not** prevent the subsequent
+power operation or reset in the tested pending-mask-1 fixture, and does not
+trigger a fallback OS-version read. The empty response is treated like zero
+because the original query initializes its byte and does not check the
+returned length.
+
+The added evidence identifies a power/firmware-presence prerequisite, not a
+DMA drain. Linux must keep wakeup, firmware-presence, protocol completion and
+physical retirement separate; it must not interpret OS_VERSION nonzero or
+an ignored query failure as verified idle. This work does not enable a new
+Linux reset path or relax retained DMA lifetime.
+
 ## HFRP version discovery before power commands
 
 Original function **`0xd3da30`** starts with HFRP handshake `0xd4af88`, then

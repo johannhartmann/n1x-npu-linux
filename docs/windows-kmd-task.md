@@ -1125,6 +1125,14 @@ several tested successful paths do not establish that a reset happened.
 The native retention policy remains necessary until reset/idle semantics
 and physical memory reclamation are independently qualified.
 
+The previously modeled pending callback is now resolved as original power
+wakeup `0xd40060`; see [wakeup before reset](hfrp-irq.md#power-wakeup-prerequisite-before-engine-reset-2026-10-28).
+Its register `0x80` probe checks firmware OS-version presence, not idle. A zero
+value can cause an additional common-loader invocation **before** the HFRP
+reset sequence, whereas selected power-query/read errors are ignored. The
+new replay executes that callback and power policy while retaining the
+common-loader and hardware-transport boundaries explicitly.
+
 ```sh
 venv/bin/python scripts/inspect_kmd_reset_reload.py > results/windows-kmd-reset-reload.json
 ```

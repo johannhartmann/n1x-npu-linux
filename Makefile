@@ -74,6 +74,7 @@ test-vendor: test
 	venv/bin/python scripts/inspect_kmd_reset_dispatch.py
 	venv/bin/python scripts/inspect_kmd_reset_resources.py
 	venv/bin/python scripts/inspect_kmd_reset_reload.py
+	venv/bin/python scripts/inspect_kmd_reset_wakeup.py
 	venv/bin/python scripts/inspect_cudla_release.py
 	venv/bin/python scripts/test_acpi_collection.py
 	venv/bin/python scripts/test_iort.py
