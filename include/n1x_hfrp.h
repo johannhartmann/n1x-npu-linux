@@ -178,4 +178,28 @@ int n1x_hfrp_power_on(const struct n1x_dla_io *io,
                        const struct n1x_hfrp_version *version, __u8 pps,
                        __u32 polls, __u32 interval_us,
                        struct n1x_hfrp_exchange_result *result);
+
+struct n1x_hfrp_power_state {
+    __u8 raw;
+    __u8 valid;
+};
+/* Query command 0x1af, with no request payload, on protocol major 1/minor >=5.
+ * The original Windows wakeup policy consumes response bits 0..2. Preserve
+ * the whole byte without interpreting it as engine idle or DMA quiescence.
+ * Caller owns an established READY channel and serializes this with power,
+ * reset and device operations. This is a firmware-reported snapshot, not an
+ * independent measurement or permission to reclaim buffers.
+ *
+ * Argument/version/state rejection preserves all outputs and performs no I/O.
+ * An accepted attempt clears old state; valid is set only after a successful
+ * exchange with exactly one payload byte. Firmware errors propagate with the
+ * exchange diagnostics; malformed lengths fail the channel with -EBADMSG.
+ * No implicit handshake, power change, reset, retry or fallback read occurs.
+ */
+int n1x_hfrp_query_power_state(const struct n1x_dla_io *io,
+                                struct n1x_hfrp_channel *channel,
+                                const struct n1x_hfrp_version *version,
+                                __u32 polls, __u32 interval_us,
+                                struct n1x_hfrp_power_state *state,
+                                struct n1x_hfrp_exchange_result *result);
 #endif

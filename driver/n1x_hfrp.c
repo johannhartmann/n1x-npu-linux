@@ -413,6 +413,37 @@ int n1x_hfrp_power_on(const struct n1x_dla_io *io,
                              version->minor == 3 ? 3 : 2, polls, interval_us, result);
 }
 
+int n1x_hfrp_query_power_state(const struct n1x_dla_io *io,
+                                struct n1x_hfrp_channel *channel,
+                                const struct n1x_hfrp_version *version,
+                                __u32 polls, __u32 interval_us,
+                                struct n1x_hfrp_power_state *state,
+                                struct n1x_hfrp_exchange_result *result)
+{
+    int err = hfrp_parameters(io, channel, polls, interval_us, result);
+
+    if (err || !version || !version->valid || !state)
+        return -EINVAL;
+    if (version->major != 1 || version->minor < 5)
+        return -EOPNOTSUPP;
+    if (channel->state != N1X_HFRP_READY)
+        return channel->state == N1X_HFRP_FAILED ? -ENOTRECOVERABLE : -EBUSY;
+    if (channel->next_sequence >= N1X_HFRP_ASYNC_SEQ ||
+        channel->pending_sequence != N1X_HFRP_NO_SEQUENCE)
+        return -EINVAL;
+    memset(state, 0, sizeof(*state));
+    err = n1x_hfrp_exchange(io, channel, 0x1af, NULL, 0, polls, interval_us, result);
+    if (err)
+        return err;
+    if (result->reply.length != 1) {
+        channel->state = N1X_HFRP_FAILED;
+        return -EBADMSG;
+    }
+    state->raw = result->reply.payload[0];
+    state->valid = 1;
+    return 0;
+}
+
 int n1x_hfrp_exchange(const struct n1x_dla_io *io,
                        struct n1x_hfrp_channel *channel, __u16 command,
                        const __u8 *payload, __u32 length, __u32 polls,

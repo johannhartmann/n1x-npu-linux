@@ -494,6 +494,42 @@ physical retirement separate; it must not interpret OS_VERSION nonzero or
 an ignored query failure as verified idle. This work does not enable a new
 Linux reset path or relax retained DMA lifetime.
 
+### Native power-state query
+
+`n1x_hfrp_query_power_state()` in `driver/n1x_hfrp.c` now implements that
+`0x1af` query over the existing bounded, sequence-matched channel. It requires
+a valid discovered major-1/minor-5-or-newer protocol and an exclusively owned
+READY channel. It sends no payload and accepts exactly one response byte.
+`struct n1x_hfrp_power_state` exposes the full raw byte and a validity flag;
+the original wakeup decoder only consumes bits 0..2. No additional physical
+meaning is assigned to the other bits.
+
+An accepted attempt invalidates any old snapshot before I/O. Transport and
+firmware errors propagate with the existing exchange diagnostics. A complete
+firmware-error response leaves transport usable but provides no valid state;
+an empty or oversized response returns `-EBADMSG` and fails the channel.
+Timeouts and uncertain access failures also fail the channel. A full command
+ring before publication returns `-ENOSPC` without issuing a command. Invalid
+arguments, unsupported versions and invalid channel states preserve all
+outputs and perform no I/O. There is no automatic retry, power transition,
+fallback OS-version read, handshake or reset.
+
+`scripts/test_hfrp_power_state.py` compares all **256** response bytes against
+the original `0xd41630` decoder, checks the exact native packet, and tests
+v1.5/1.6/1.255 versus rejected older/other-major formats. It covers malformed
+lengths, firmware errors, timeouts, wrong/duplicate sequences and a full ring,
+plus **49** access-failure cases (including writes that take effect before
+returning an error) and **18** argument/state rejections. Unlike the native
+helper, the original accepts an empty response as zero state; that divergence
+is checked explicitly. Native tests use the real C transport with a synthetic
+RAM peer; original-code tests model the Windows sender. No physical state
+transition or DMA retirement is established.
+
+The component compiles into the bootstrap module, but startup and recovery do
+not call it yet. A snapshot is neither proof of engine idle nor authorization
+to free task buffers. Physical query qualification and the secure-firmware
+reset/drain contract remain separate work.
+
 ## HFRP version discovery before power commands
 
 Original function **`0xd3da30`** starts with HFRP handshake `0xd4af88`, then

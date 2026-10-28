@@ -111,6 +111,7 @@ test-vendor: test
 	venv/bin/python scripts/test_hfrp_power_policy.py
 	venv/bin/python scripts/test_hfrp_version.py
 	venv/bin/python scripts/test_hfrp_startup.py
+	venv/bin/python scripts/test_hfrp_power_state.py
 	venv/bin/python scripts/test_hfrp_config.py
 	venv/bin/python scripts/test_hfrp_setup.py
 	venv/bin/python scripts/test_cold_start_dispatch.py
