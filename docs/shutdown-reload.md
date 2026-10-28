@@ -37,7 +37,9 @@ Ghidra exports in ignored `results/kmd-ghidra-stop-*.txt` corroborate the chain.
 The Windows HAL returns success even after a power-command failure. Linux
 does **not** copy that behavior. The Linux implementation requires the exact
 two-byte immediate-off reply, then the independently requested `0x1af` power
-state byte to equal 7. Original Windows wakeup consumes bits 0/1/2 as pending
+state byte's low three gating bits to equal 7. The complete byte is retained
+for diagnostics; upper bits are not additional gating conditions (original
+query decoder `0xd41630` masks with 7). Original Windows wakeup consumes bits 0/1/2 as pending
 clock/domain/rail gating. The query alone is not an engine-idle proof.
 
 NVIDIA's [Linux power-control implementation](https://github.com/OE4T/linux-nv-oot/blob/33227347c89543042e0eda352db5de852983c8a3/drivers/video/tegra/host/nvdla/port/pm/nvdla_pm_hfrp_cmd_v1_3.c)
@@ -99,9 +101,12 @@ venv/bin/python scripts/test_linux_accel.py
 venv/bin/python scripts/test_linux_accel_backend.py
 ```
 
-Offline results: original Windows stop dispatch reproduced; two supported
-version encodings matched; 436 protocol failure/negative cases, shutdown
-ownership/refcount/error cases and actual accel allocation cleanup passed.
+Offline results: original Windows stop dispatch and same-object stop/wakeup
+policy reproduced; two supported version encodings matched; 405 protocol
+failure/negative cases, all 256 state-byte comparisons, 434 joined Linux
+shutdown/HFRP transport cases, ownership/refcount/error cases and actual accel
+allocation cleanup passed. The joined tests model DMA/PM edges but execute the
+real Linux shutdown handler and HFRP protocol code together.
 These tests use modeled hardware and cannot replace the next command.
 
 After rebooting to remove the instance with the failed stop (keep the current
@@ -113,14 +118,20 @@ pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_p16_reload.py" \
 ```
 
 Run from the repository root. The destination must be new. This performs a
-fresh startup when needed, eight real cuDLA numerical jobs, checked shutdown,
+fresh startup when needed, eight independent-process cuDLA jobs plus eight
+changing-input jobs with the same three models kept loaded (five REEXECs), checked shutdown,
 zero-retained-memory verification, rejection of EXEC after stop, refusal to
 unload with an open client, successful unload after close, then fresh startup
-and eight more numerical jobs. It repeats the cycle and leaves the final
+and the same sixteen numerical jobs. Each reuse group must consume exactly
+one kernel allocation; every output is compared to its independent reference.
+It repeats the cycle and leaves the final
 working device running. Each operation is logged before execution; a failure
 stops the sequence without an automatic retry. Only the final successful
 receipt establishes hardware reload qualification. Kernel logs are saved
-before the run, after each reload cycle and on a reported failure.
+before the run, after each reload cycle and on a reported failure. Cached
+shutdown status includes the failing phase, raw IRQ masks, power/query reply
+headers and payloads, publication attempts and channel state; collecting these
+fields does not touch powered-off MMIO.
 
 For a later manual stop after successful qualification:
 

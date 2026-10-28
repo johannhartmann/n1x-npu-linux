@@ -33,6 +33,7 @@ test-p16-stop:
 	venv/bin/python scripts/inspect_kmd_shutdown.py
 	venv/bin/python scripts/test_hfrp_stop.py
 	venv/bin/python scripts/test_linux_shutdown.py
+	venv/bin/python scripts/test_shutdown_transport.py
 	venv/bin/python scripts/test_linux_accel.py
 	venv/bin/python scripts/test_linux_accel_backend.py
 	venv/bin/python scripts/test_p16_reload.py
@@ -40,6 +41,7 @@ test-portable: test
 	$(PYTHON) scripts/test_prepare_inputs.py
 	$(PYTHON) scripts/test_hfrp_channel.py
 	$(PYTHON) scripts/test_linux_shutdown.py
+	$(PYTHON) scripts/test_shutdown_transport.py
 	$(PYTHON) scripts/test_linux_accel_backend.py
 	$(PYTHON) scripts/test_p16_reload.py
 	$(PYTHON) scripts/test_npu_trigger.py
@@ -114,6 +116,7 @@ test-vendor: test
 	venv/bin/python scripts/inspect_kmd_shutdown.py
 	venv/bin/python scripts/test_hfrp_stop.py
 	venv/bin/python scripts/test_linux_shutdown.py
+	venv/bin/python scripts/test_shutdown_transport.py
 	venv/bin/python scripts/inspect_cudla_release.py
 	venv/bin/python scripts/test_acpi_collection.py
 	venv/bin/python scripts/test_iort.py
@@ -264,6 +267,7 @@ cudla: runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke
 .PHONY: test-cudla
 test-cudla: cudla
 	venv/bin/python scripts/test_cudla_model.py
+	venv/bin/python scripts/test_qualify_cudla.py
 	venv/bin/python scripts/test_cudla_cuda_transport.py
 runtime/cudla/libnvcudla.so: runtime/cudla_backend.cpp runtime/cudla_model.cpp runtime/cudla_model.hpp runtime/libn1x_dla.so
 	mkdir -p runtime/cudla

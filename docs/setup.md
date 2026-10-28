@@ -174,7 +174,8 @@ pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_p16_reload.py" \
 ```
 
 The output directory must be new. The qualifier starts firmware when needed,
-runs numerical jobs, stops and releases DMA, tests module ownership, unloads,
+runs baseline and same-model changing-input jobs with allocation checks,
+stops and releases DMA, tests module ownership, unloads,
 reloads and verifies inference again. Logs are durable and the first failure
 stops the sequence. [Shutdown/reload](shutdown-reload.md) gives the exact contract.
 Qualifiers record the selected platform profile without changing it. No service

@@ -11,7 +11,7 @@ import tempfile
 import pefile
 from test_hfrp_channel import IO, Channel, Result, Peer, READY, FAILED, NO_SEQUENCE
 from test_hfrp_startup import Version
-from test_hfrp_power_state import State
+from test_hfrp_power_state import State, windows as windows_state
 from test_hfrp_power_policy import run as windows
 from extract_firmware import KMD_SHA256
 
@@ -75,8 +75,10 @@ def main():
             failures += 1
     for state in range(256):
         code, result, _ = call(StopPeer(state=bytes([state])))
-        assert (code == 0) == (state == 7) and bool(result.confirmed) == (state == 7)
-        failures += state != 7
+        gated = windows_state(pe, state)[1] == 7
+        assert (code == 0) == gated and bool(result.confirmed) == gated
+        assert result.state.raw == state  # Preserve upper bits without interpreting them.
+        failures += not gated
     for options, expected in (
         ({'off': b''}, -errno.EBADMSG), ({'off': b'\x43'}, -errno.EBADMSG),
         ({'off': b'\x43\0\0'}, -errno.EBADMSG), ({'off': b'\x8c\0'}, -errno.EBADMSG),
@@ -97,7 +99,7 @@ def main():
         code, result, _ = call(bus, channel=Channel(state=state, next_sequence=1, pending_sequence=NO_SEQUENCE))
         assert code < 0 and not bus.trace and bytes(result) == b'\xa5'*C.sizeof(Stop)
     print(json.dumps(dict(passed=True, hardware_access=False, injected_failures=failures,
-                         windows_v15_v16_payload='4300', confirmed_state=7)))
+                         windows_v15_v16_payload='4300', confirmed_gating_bits=7, original_query_comparisons=256)))
 
 
 if __name__ == '__main__':

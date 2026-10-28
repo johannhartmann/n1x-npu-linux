@@ -167,3 +167,22 @@ access. The current fixtures require 22,953,984 retained kernel bytes in total.
 Result directories must be new; plans, attempt records, stdout/stderr and output
 hashes are preserved, including on error. This does not qualify safe kernel
 buffer reclamation, arbitrary graphs, suspend/resume or recovery.
+
+### Completed-task reuse qualification
+
+The default qualifier keeps the eight independent-process baseline jobs. Add
+`--reuse` to execute the same eight distinct inputs with one loaded module per
+graph, requiring exactly three new retained allocations and five REEXECs:
+
+```sh
+pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_cudla.py" \
+  --reuse --output-dir "$PWD/results/NEW-cudla-reuse"
+```
+
+This requires a healthy initialized NPU with the reuse capability. The complete
+reload qualifier now runs both baseline and reuse checks before the first stop
+and after every restart. These physical reuse/reload checks remain pending.
+The production application's multi-input path has passed real-CUDA tests with
+a modeled NPU peer, including changing-input snapshots and stopping on a wrong
+reference without executing subsequent jobs. Those tests do not establish
+physical DLA arithmetic or lifecycle behavior.

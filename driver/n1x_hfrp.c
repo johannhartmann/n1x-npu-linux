@@ -479,7 +479,9 @@ int n1x_hfrp_stop(const struct n1x_dla_io *io,
                                      &result->state, &result->query);
     if (err)
         return err;
-    if (!result->state.valid || result->state.raw != 7) {
+    /* Original KMD query d41630 masks these three gating flags. Preserve
+     * upper bits in diagnostics; they are not additional gating conditions. */
+    if (!result->state.valid || (result->state.raw & 7) != 7) {
         channel->state = N1X_HFRP_FAILED;
         return -EBUSY;
     }

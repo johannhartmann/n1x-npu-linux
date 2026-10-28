@@ -55,6 +55,7 @@ int n1x_dla_resubmit(int fd,unsigned long long id,const struct n1x_dla_accel_pat
   assert(patches[i].offset<saved_bytes&&patches[i].bytes<=saved_bytes-patches[i].offset);
   memcpy(saved_image+patches[i].offset,(const void *)(uintptr_t)patches[i].data_ptr,patches[i].bytes);
  }
+ FILE *f=fopen(getenv("TEST_IMAGE"),"wb");assert(f);assert(fwrite(saved_image,1,saved_bytes,f)==saved_bytes);assert(!fclose(f));
  memset(result,0,sizeof(*result));result->job_id=++saved_id;
  result->status=fail("exec")?-ETIMEDOUT:0;result->completed=!result->status;return result->status;
 }
@@ -155,6 +156,31 @@ def main():
                 elif failure not in ('open','budget'):
                     assert events.count('free-host')==1,events
                 cases.append(dict(model=variant,failure=failure or None,events=events,exit_code=result.returncode))
+        # Exercise the production numerical application's same-module sequence,
+        # with distinct inputs; this peer returns a fixed pattern, not inference.
+        for failure in ('', 'wrong-reference'):
+            case=directory/('smoke-changing-inputs-'+(failure or 'success'));case.mkdir()
+            argv=[str(ROOT/'runtime/cudla/cudla-smoke'),str(path)]
+            patterns=[bytes((i*13+7+step*41)%256 for i in range(model.inputs[0].bytes)) for step in range(3)]
+            for step,data in enumerate(patterns):
+                inp,ref,out=(case/f'{step}.{name}' for name in ('input','expected','output'))
+                inp.write_bytes(data)
+                ref.write_bytes(bytes([0x38 if failure and step==1 else 0x37])*model.outputs[0].bytes)
+                argv.extend([str(inp),str(ref),str(out)])
+            env.update(TEST_EVENTS=str(case/'events'),TEST_IMAGE=str(case/'image'),TEST_RANGES=str(case/'ranges'),
+                       TEST_FAILURE='',TEST_REUSE='1')
+            result=subprocess.run(argv,env=env,capture_output=True,text=True,timeout=30)
+            assert result.returncode==(1 if failure else 0),(result.stdout,result.stderr)
+            events=(case/'events').read_text().splitlines()
+            assert events.count('EXEC')==1 and events.count('REEXEC')==(1 if failure else 2),events
+            last=1 if failure else 2
+            image,_=model.prepare({model.inputs[0].name:patterns[last]})
+            image[model.outputs[0].offset:model.outputs[0].offset+model.outputs[0].bytes]=b'\xff'*model.outputs[0].bytes
+            assert (case/'image').read_bytes()==image
+            for step in range(3):
+                assert (case/f'{step}.output').read_bytes()==(b'' if failure and step==2 else bytes([0x37])*model.outputs[0].bytes)
+            cases.append(dict(model='production changing-input reuse',failure=failure or None,events=events))
+        env.pop('TEST_REUSE',None)
         package=ROOT/'sources/cudla-13.4.92/libcudla-linux-sbsa-13.4.92-archive'
         api=directory/'api'
         subprocess.run(['c++','-std=c++17','-O2','-Wall','-Wextra','-Werror',

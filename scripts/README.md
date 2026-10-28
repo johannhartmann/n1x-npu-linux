@@ -13,7 +13,7 @@ reproduction code and regression evidence, not a batch installer.
 | `prepare_inputs.py --extract-firmware` | Extract firmware from supplied KMD | Analysis venv; writes ignored inputs; no device access |
 | `build_models.py --superres` | Reconstruct four checked loadables | ARM64, vendor inputs, bwrap/GDB/Unicorn; device-free; fresh outputs required |
 | `qualify_p16_start.py` | Explicit bounded firmware-startup prefix | Root, exact board/kernel, ROM and firmware; changes NPU state |
-| `qualify_cudla.py` | Eight physical numerical jobs | Already initialized NPU and CUDA; root; `--prepare-only` only creates references |
+| `qualify_cudla.py` | Eight physical numerical jobs; `--reuse` keeps each graph loaded and verifies one allocation per graph | Already initialized NPU and CUDA; root; `--prepare-only` only creates references |
 | `qualify_p16_reload.py` | Stop, cleanup, unload, reload and numerical jobs | Root, exact audited setup; physical qualification pending |
 | `qualify_superres_tile.py` | One physical learned-graph window | Root, initialized NPU, CUDA, image/reference venv |
 | `npu_trigger.py` | One unbuffered sysfs operation | Root for real hardware paths; no retries |
@@ -22,8 +22,7 @@ reproduction code and regression evidence, not a batch installer.
 
 Use [setup](../docs/setup.md) for ordering and [status](../docs/status.md) for
 which stages have physical evidence. None of the input/model helpers starts
-firmware or sets a power profile. Hardware qualifiers check the explicitly
-selected profile rather than changing it automatically.
+firmware or sets a power profile. Hardware qualifiers record the selected profile and leave it unchanged.
 
 ## Test targets
 
@@ -32,7 +31,7 @@ selected profile rather than changing it automatically.
 | `make test` | Native C firmware parser/bounds tests | C compiler only |
 | `make test-portable` | Fixture-free channel, shutdown, ownership and controller checks | Analysis venv and C compiler; no GPU/vendor files |
 | `make test-p16-start` | Board/startup/runtime regression suite | Pinned KMD/firmware, compiled fixtures, BIOS capture and analysis inputs |
-| `make test-p16-stop` | Original stop-path replay, protocol faults and cleanup tests | KMD, firmware and compiled ReLU fixture; no live NPU |
+| `make test-p16-stop` | Original stop/wakeup replay, joined protocol/lifetime faults and cleanup tests | KMD, firmware and compiled ReLU fixture; no live NPU |
 | `make test-cudla` | Backend model/API/CUDA staging checks | cuDLA package, CUDA headers and actual CUDA driver; NPU transport is modeled |
 | `make test-relu`, `test-conv`, `test-conv-relu` | Fixture compilation/materialization and protocol checks | Exact vendor inputs and analysis artifacts |
 | `make test-vendor` | Broad historical original-code regression suite | Additional pinned auxiliary drivers, runtime libraries, ACPI files and artifacts |

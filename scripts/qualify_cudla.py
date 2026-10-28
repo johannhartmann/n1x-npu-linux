@@ -27,6 +27,7 @@ def main():
     parser.add_argument('--output-dir',type=Path,required=True)
     parser.add_argument('--device',default='/dev/accel/accel0')
     parser.add_argument('--prepare-only',action='store_true',help='create inputs/references; no CUDA or device access')
+    parser.add_argument('--reuse',action='store_true',help='keep each graph loaded for changing inputs; require one kernel allocation per graph')
     args=parser.parse_args()
     root=args.output_dir.resolve();root.mkdir(exist_ok=False)
     owner=int(os.environ['PKEXEC_UID']) if os.geteuid()==0 and 'PKEXEC_UID' in os.environ else None
@@ -66,12 +67,14 @@ def main():
     if hashlib.sha256(library.read_bytes()).hexdigest()!=expected_library:raise RuntimeError('cuDLA frontend mismatch')
     executable=ROOT/'runtime/cudla/cudla-smoke'
     backend=ROOT/'runtime/cudla/libnvcudla.so'
-    record('plan.json',jobs=jobs,frontend_sha256=expected_library,
+    groups=[[job] for job in jobs] if not args.reuse else [
+        [job for job in jobs if job['model']==model] for model in dict.fromkeys(job['model'] for job in jobs)]
+    record('plan.json',jobs=jobs,allocations=len(groups),frontend_sha256=expected_library,
            backend_sha256=hashlib.sha256(backend.read_bytes()).hexdigest(),
            application_sha256=hashlib.sha256(executable.read_bytes()).hexdigest(),
-           prepared_only=args.prepare_only,hardware_verified=False)
+           prepared_only=args.prepare_only,reuse=args.reuse,hardware_verified=False)
     if args.prepare_only:
-        print(f'Prepared {len(jobs)} jobs; no device access; {sum(j["retained_bytes"] for j in jobs)} retained bytes required')
+        print(f'Prepared {len(jobs)} jobs; no device access; {sum(g[0]["retained_bytes"] for g in groups)} retained bytes required')
         return
     if os.geteuid()!=0 or platform.release()!=KERNEL:raise RuntimeError('requires root and audited npu2 kernel')
     profile=Path('/sys/firmware/acpi/platform_profile').read_text().strip()
@@ -82,32 +85,46 @@ def main():
     if status.get('task_verified')!='1' or status.get('lpwr_accepted')!='1' or hfrp.get('power_accepted')!='1':
         raise RuntimeError('startup/bypass qualification required')
     with Device(args.device) as device:info=device.info()
-    required=sum(j['retained_bytes'] for j in jobs)
-    if required>info['retain_limit']-info['retained_bytes'] or len(jobs)>info['max_jobs']-info['retained_jobs']:
+    if args.reuse and not info['capabilities']&4:
+        raise RuntimeError('completed-task reuse capability absent; no jobs submitted')
+    required=sum(group[0]['retained_bytes'] for group in groups)
+    if required>info['retain_limit']-info['retained_bytes'] or len(groups)>info['max_jobs']-info['retained_jobs']:
         raise RuntimeError('insufficient retained allocation budget; no jobs submitted')
     record('preflight.json',boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
            module_srcversion=built,platform_profile=profile,info=info,status=status,hfrp=hfrp)
     env={k:v for k,v in os.environ.items() if not k.startswith(('LD_','NVTX_','N1X_','TEST_'))}
     env.update(LD_LIBRARY_PATH=str(ROOT/'runtime/cudla'),N1X_DLA_DEVICE=args.device)
-    for index,job in enumerate(jobs):
-        record(f'{index:03d}.attempt.json',**job,automatic_retry=False)
+    for index,group in enumerate(groups):
+        record(f'{index:03d}.attempt.json',jobs=group,automatic_retry=False,reuse=args.reuse)
+        with Device(args.device) as device:before=device.info()
+        argv=[str(executable),group[0]['model']]
+        for job in group:argv.extend([job['input'],job['expected'],job['output']])
         try:
-            result=subprocess.run([str(executable),job['model'],job['input'],job['expected'],job['output']],
-                                  env=env,capture_output=True,timeout=45)
+            result=subprocess.run(argv,env=env,capture_output=True,timeout=45*len(group))
         except subprocess.TimeoutExpired as exc:
             record(f'{index:03d}.error.json',error=str(exc),submission_state_uncertain=True,automatic_retry=False)
             raise
         save(root/f'{index:03d}.stdout',result.stdout);save(root/f'{index:03d}.stderr',result.stderr)
-        output=Path(job['output'])
-        if output.exists():owned(output)
+        for job in group:
+            output=Path(job['output'])
+            if output.exists():owned(output)
         if result.returncode:
             record(f'{index:03d}.error.json',returncode=result.returncode,submission_state_uncertain=True,automatic_retry=False)
-            raise RuntimeError(f'cuDLA job {index} failed; stopped without retry')
-        digest=hashlib.sha256(output.read_bytes()).hexdigest()
-        if digest!=job['expected_sha256']:raise RuntimeError('output/reference mismatch; stopped')
-        record(f'{index:03d}.result.json',output_sha256=digest,numerical_match=True,returncode=0)
-        print(f'cuDLA job {index}: independently verified output',flush=True)
+            raise RuntimeError(f'cuDLA group {index} failed; stopped without retry')
+        digests=[]
+        for job in group:
+            digest=hashlib.sha256(Path(job['output']).read_bytes()).hexdigest()
+            if digest!=job['expected_sha256']:raise RuntimeError('output/reference mismatch; stopped')
+            digests.append(digest)
+        with Device(args.device) as device:after=device.info()
+        if args.reuse and (after['retained_jobs']!=before['retained_jobs']+1 or
+                           after['retained_bytes']!=before['retained_bytes']+group[0]['retained_bytes']):
+            raise RuntimeError('changing-input reuse allocated unexpected kernel backing; stopped')
+        record(f'{index:03d}.result.json',output_sha256=digests,numerical_match=True,returncode=0,
+               info_before=before,info_after=after,reuse_submissions=len(group)-1 if args.reuse else 0)
+        print(f'cuDLA group {index}: {len(group)} independently verified outputs',flush=True)
     record('complete.json',numerical_jobs=len(jobs),physical_cudla_path_verified=True,
+           io_reuse_verified=args.reuse,reuse_submissions=len(jobs)-len(groups),
            scope='three pinned graphs, changing inputs, blocking CUDA staging; no recovery/lifetime qualification')
 
 

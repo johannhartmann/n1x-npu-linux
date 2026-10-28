@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-28",
+  "scope": "Offline lifecycle re-review after the failed physical stop; no live NPU operations",
+  "base_commit": "8dffe20e1f41ee6bf4466363ac8be24ecd1118c9",
+  "corrected_findings": [
+    {
+      "component": "HFRP shutdown confirmation",
+      "problem": "Whole byte compared with 7 although original KMD decoder d41630 masks with 7",
+      "fix": "Require all three low gating bits; preserve full raw byte; confirm power reply and independent query before release"
+    },
+    {
+      "component": "Hardware qualifier coverage",
+      "problem": "Independent application processes did not exercise same-model completed-task reuse",
+      "fix": "Run baseline eight jobs and eight same-module changing-input jobs per startup, requiring three allocations and five REEXECs"
+    }
+  ],
+  "diagnostics": "Shutdown stage, raw masks, power/query headers, lengths, payloads, head-publication attempts and channel state are cached; error collection makes no MMIO access",
+  "original_code": {
+    "kmd_sha256": "73b3187cdf84c0306df78595e49626d096e84dfc1e6356543db57b145007f987",
+    "stop_cases": 4,
+    "preserved_object_stop_wakeup_cases": 3,
+    "observed_sequence": [
+      "POWER_CONTROL 4300",
+      "query 0x1af",
+      "POWER_CONTROL 8c00",
+      "firmware loader boundary",
+      "IRQ policy boundary"
+    ],
+    "boundaries": "HFRP responses, OS helpers, allocation teardown and firmware loader body remain modeled"
+  },
+  "software_tests": {
+    "hfrp_stop": {
+      "passed": true,
+      "hardware_access": false,
+      "injected_failures": 405,
+      "windows_v15_v16_payload": "4300",
+      "confirmed_gating_bits": 7,
+      "original_query_comparisons": 256
+    },
+    "joined_linux_shutdown_hfrp_cases": 434,
+    "qualifier_orchestration_cases": 6,
+    "model_loader_valid": 9,
+    "model_loader_malformed": 65,
+    "model_loader_ubsan": true,
+    "cuda_transport": {
+      "real_nvidia_frontend": true,
+      "real_cuda": true,
+      "npu_transport": "modeled",
+      "cases": 34,
+      "numerical_inference_test": false
+    },
+    "portable_suite": "passed",
+    "shutdown_suite": "passed"
+  },
+  "built_module": {
+    "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+    "srcversion": "1ED6855E6645BEEF8DA3534",
+    "sha256": "57bae30b452e3e420c4d0d6868604ba691d4df8757dce6978e9f99f538d030fa"
+  },
+  "loaded_module": {
+    "srcversion": "0FD7E6269B085ED9DAD6DB9",
+    "state": "Earlier failed stop remains terminal; no retry or forced unload attempted"
+  },
+  "power_profile_changed_by_review": false,
+  "hardware_shutdown_reload_verified": false,
+  "physical_reuse_verified": false,
+  "full_image_verified": false,
+  "remaining": [
+    "Reboot the same audited npu2 kernel to remove the earlier terminal instance",
+    "Two physical stop/unload/reload cycles including baseline and changing-input reuse checks",
+    "Full physical super-resolution image runs"
+  ],
+  "next_command": "pkexec \"$PWD/venv/bin/python\" \"$PWD/scripts/qualify_p16_reload.py\" --cycles 2 --output-dir \"$PWD/results/shutdown-reload-02\""
+}

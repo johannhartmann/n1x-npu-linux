@@ -123,6 +123,9 @@ def main():
             record(action='cuDLA numerical qualification', label=label)
             subprocess.run([sys.executable, str(ROOT/'scripts/qualify_cudla.py'),
                             '--output-dir', str(out/(label+'-cudla'))], check=True)
+            record(action='cuDLA changing-input reuse qualification', label=label)
+            subprocess.run([sys.executable, str(ROOT/'scripts/qualify_cudla.py'),
+                            '--reuse', '--output-dir', str(out/(label+'-reuse'))], check=True)
 
         try:
             if not MODULE.exists():
@@ -149,7 +152,7 @@ def main():
                 record(kernel_log_error=str(log_error))
             raise
         record(complete=True, physical_reload_cycles=args.cycles,
-               numerical_jobs=8*(args.cycles+1), final_device_running=True)
+               numerical_jobs=16*(args.cycles+1), reuse_submissions=5*(args.cycles+1), final_device_running=True)
 
 
 if __name__ == '__main__':

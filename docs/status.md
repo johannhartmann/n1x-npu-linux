@@ -45,7 +45,11 @@ platform profile (`power-saver` in power-profiles-daemon). Its first shutdown
 failed at an overly strict host IRQ-mask readback assertion **before** HFRP
 power-off. DMA and module references remained retained; no reload was attempted.
 The assertion is corrected and offline-tested, with raw-mask diagnostics added,
-but needs another reboot for hardware qualification. See the
+but needs another reboot for hardware qualification. A subsequent offline
+review also corrected the state-byte gating mask, joined the shutdown handler
+with the actual HFRP transport in tests and added explicit same-model reuse
+checks to the physical qualifier. See the
+[lifecycle review](lifecycle-review-2026-10-28.json) and the
 [attempt receipt](reload-attempt-2026-10-28.json).
 
 ## Implemented, awaiting physical qualification
@@ -67,7 +71,8 @@ driver or accessing a device. See [setup](setup.md) and the
 1. Reboot the same audited `npu2` kernel to remove the instance with the failed
    terminal stop; the corrected build is ready locally.
 2. Run [shutdown/reload qualification](shutdown-reload.md): healthy startup,
-   numerical jobs, checked stop, zero retained allocations, open-client unload
+   baseline plus changing-input reuse jobs with checked allocation counts,
+   checked stop, zero retained allocations, open-client unload
    refusal, successful unload after close, fresh startup and numerical jobs.
 3. Run the complete [512x512 demo](../demo/README.md), then 1024x1024; inspect
    the actual DLA output, numerical metrics, allocation counters and kernel logs.

@@ -110,6 +110,7 @@ static bool boot_attempted;
 static bool boot_stopping, boot_hfrp_held, boot_upload_held;
 static struct {
 	struct n1x_hfrp_stop_result transport;
+	const char *stage;
 	u32 irq_owned, irq_mask_before, irq_mask_after;
 	bool irq_readback_valid;
 	bool attempted, hardware_off, released;
@@ -1377,6 +1378,7 @@ static int n1x_boot_stop_hardware(struct device *dev)
 	}
 	boot_stopping = true;
 	boot_shutdown.attempted = true;
+	boot_shutdown.stage = "preflight";
 	if (!boot_hfrp.attempted && !boot_attempted) {
 		boot_shutdown.hardware_off = true; /* No write/DMA publisher existed. */
 		goto done;
@@ -1400,11 +1402,13 @@ static int n1x_boot_stop_hardware(struct device *dev)
 		err = -ENOTRECOVERABLE;
 		goto done;
 	}
+	boot_shutdown.stage = "dma-domain";
 	err = n1x_boot_dma_gate(boot_dla);
 	if (!err)
 		err = n1x_boot_dma_gate(boot_sroot);
 	if (err)
 		goto done;
+	boot_shutdown.stage = "idle-drain";
 	if (boot_task.attempted) {
 		err = n1x_boot_drain_task_idle(&boot_task);
 		if (err)
@@ -1418,6 +1422,7 @@ static int n1x_boot_stop_hardware(struct device *dev)
 	 * A readback is diagnostic, not the DMA-quiescence proof. Only the exact
 	 * HFRP immediate-off reply AND independent state query permit freeing.
 	 */
+	boot_shutdown.stage = "irq-mask";
 	err = n1x_boot_read(boot_dla, 0xd2c, &boot_shutdown.irq_owned);
 	if (!err)
 		err = n1x_boot_read(boot_dla, 0xd28, &boot_shutdown.irq_mask_before);
@@ -1431,6 +1436,7 @@ static int n1x_boot_stop_hardware(struct device *dev)
 	boot_shutdown.irq_readback_valid = true;
 	io = (struct n1x_dla_io){boot_dla, n1x_boot_hfrp_write,
 			       n1x_boot_hfrp_read, n1x_boot_delay};
+	boot_shutdown.stage = "hfrp-stop";
 	err = n1x_hfrp_stop(&io, &boot_hfrp.channel, &boot_hfrp.version,
 			    5001, 1000, &boot_shutdown.transport);
 	if (err)
@@ -1441,6 +1447,7 @@ static int n1x_boot_stop_hardware(struct device *dev)
 	}
 	boot_shutdown.hardware_off = true;
 	boot_hfrp.powered = false;
+	boot_shutdown.stage = "dma-release";
 	/* SROOT's successful synchronous upload transaction was already consumed
 	 * and firmware ran from its internal copy. Its failed/uncertain path is
 	 * excluded above. DLA's continuing region/task DMA is now power gated.
@@ -1465,8 +1472,8 @@ static int n1x_boot_stop_hardware(struct device *dev)
 	}
 done:
 	boot_shutdown.error = err;
-	dev_info(dev, "shutdown error=%d power_reply=%u state_valid=%u state=%#x off=%u irq_owned=%#x irq_before=%#x irq_after=%#x irq_readback=%u; %s\n",
-		 err, boot_shutdown.transport.accepted, boot_shutdown.transport.state.valid,
+	dev_info(dev, "shutdown stage=%s error=%d power_reply=%u state_valid=%u state=%#x off=%u irq_owned=%#x irq_before=%#x irq_after=%#x irq_readback=%u; %s\n",
+		 boot_shutdown.stage, err, boot_shutdown.transport.accepted, boot_shutdown.transport.state.valid,
 		 boot_shutdown.transport.state.raw, boot_shutdown.hardware_off,
 		 boot_shutdown.irq_owned, boot_shutdown.irq_mask_before,
 		 boot_shutdown.irq_mask_after, boot_shutdown.irq_readback_valid,
@@ -1493,6 +1500,7 @@ static int n1x_boot_stop_device(struct device *dev)
 	mutex_lock(&boot_lock);
 	if (!boot_shutdown.released) {
 		boot_shutdown.released = true;
+		boot_shutdown.stage = "released";
 		if (boot_upload_held) {
 			pm_runtime_put_noidle(boot_sroot->dev);
 			pm_runtime_put_noidle(boot_dla->dev);
@@ -1524,12 +1532,23 @@ static ssize_t shutdown_status_show(struct device *dev, struct device_attribute 
 {
 	ssize_t size;
 	mutex_lock(&boot_lock);
-	size = sysfs_emit(buf, "attempted=%u error=%d accepted=%u state_valid=%u state=%#x hardware_off=%u released=%u hfrp_held=%u upload_held=%u irq_owned=%#x irq_before=%#x irq_after=%#x irq_readback=%u\n",
-		boot_shutdown.attempted, boot_shutdown.error, boot_shutdown.transport.accepted,
-		boot_shutdown.transport.state.valid, boot_shutdown.transport.state.raw,
+	size = sysfs_emit(buf,
+		"attempted=%u stage=%s error=%d accepted=%u state_valid=%u state=%#x hardware_off=%u released=%u hfrp_held=%u upload_held=%u irq_owned=%#x irq_before=%#x irq_after=%#x irq_readback=%u "
+		"power_attempted=%u power_head_attempted=%u power_reply_valid=%u power_reply=%#x power_length=%u power_payload=%*phN "
+		"query_head_attempted=%u query_reply_valid=%u query_reply=%#x query_length=%u query_payload=%*phN channel=%u pending=%u\n",
+		boot_shutdown.attempted, boot_shutdown.stage ?: "not-started", boot_shutdown.error,
+		boot_shutdown.transport.accepted, boot_shutdown.transport.state.valid, boot_shutdown.transport.state.raw,
 		boot_shutdown.hardware_off, boot_shutdown.released, boot_hfrp_held, boot_upload_held,
 		boot_shutdown.irq_owned, boot_shutdown.irq_mask_before,
-		boot_shutdown.irq_mask_after, boot_shutdown.irq_readback_valid);
+		boot_shutdown.irq_mask_after, boot_shutdown.irq_readback_valid,
+		boot_shutdown.transport.attempted, boot_shutdown.transport.power.tx.head_publish_attempted,
+		boot_shutdown.transport.power.reply_valid, boot_shutdown.transport.power.reply.header,
+		boot_shutdown.transport.power.reply.length, (int)boot_shutdown.transport.power.reply.length,
+		boot_shutdown.transport.power.reply.payload,
+		boot_shutdown.transport.query.tx.head_publish_attempted, boot_shutdown.transport.query.reply_valid,
+		boot_shutdown.transport.query.reply.header, boot_shutdown.transport.query.reply.length,
+		(int)boot_shutdown.transport.query.reply.length, boot_shutdown.transport.query.reply.payload,
+		boot_hfrp.channel.state, boot_hfrp.channel.pending_sequence);
 	mutex_unlock(&boot_lock);
 	return size;
 }

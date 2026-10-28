@@ -213,7 +213,7 @@ struct n1x_hfrp_stop_result {
 };
 /* Immediate clock/domain/rail OFF (Windows request 0x70 -> wire 0x0043).
  * Requires v1.5+, a READY exclusively owned channel and caller-drained work.
- * Checks the complete two-byte power reply, then requires query 0x1af == 7.
+ * Checks the complete two-byte power reply, then requires the low three gating bits of query 0x1af to equal 7.
  * These bits report gating, NOT task completion. Caller must separately prove
  * successful retirement of every DMA publisher, including the SROOT upload.
  * No reset, retry, delayed gating, forced unmap or implicit memory release.

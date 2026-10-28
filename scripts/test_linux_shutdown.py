@@ -9,7 +9,7 @@ from npu_trigger import TRIGGERS
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def main():
+def shutdown_harness():
     text = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     state = text[text.index('struct n1x_boot_endpoint {'):text.index('static bool n1x_boot_machine(')]
     code = text[text.index('static int n1x_boot_stop_hardware('):text.index('static DEVICE_ATTR_WO(shutdown);')]
@@ -199,6 +199,11 @@ int main(void)
  return 0;
 }
 '''
+    return harness
+
+
+def main():
+    harness = shutdown_harness()
     with tempfile.TemporaryDirectory(prefix='n1x-linux-stop-') as tmp:
         path, exe = Path(tmp)/'stop.c', Path(tmp)/'stop'
         path.write_text(harness)
