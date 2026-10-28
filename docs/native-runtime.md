@@ -87,9 +87,9 @@ ownership without poisoning; no method was attempted in that case.
 
 The synchronous `n1x_dla_job_execute()` used by sysfs and accel EXEC now wraps
 those operations with the same 1-ms polling delays. The public accel ABI and
-memory retention policy are unchanged. This split provides an ownership boundary
-for later checkpoint/preemption integration; it does not yet suspend or resume
-a job. The mock lifecycle suite covers 81 cases. The original-firmware harness
+memory retention policy are unchanged. This split provides the ownership boundary
+used by the private checkpoint controller below. The mock lifecycle suite covers
+81 cases. The original-firmware harness
 also drives start and poll as separate native calls for 32 successive jobs on
 one firmware instance, and verifies a postaction-error case. Those tests use
 modeled MMIO, DMA and interrupt delivery, not the physical P16.
@@ -149,7 +149,48 @@ bootstrap module or called by EXEC. Its caller must own a single accepted task,
 its context and request allocations, serialize response consumption, and
 quarantine uncertain execution. Even a successful observation does not permit
 freeing DMA or automatic resume. Physical qualification and integration with
-the job lifecycle remain necessary before exposing cancellation to applications.
+the public execution path remain necessary before exposing cancellation to applications.
+
+### Private job preemption and resume controller
+
+`driver/n1x_dla_job_control.c` now connects the preemption primitive to an owned
+native job. It is compiled for offline/kernel checks but is not linked into the
+bootstrap module or called by the public EXEC interface. Its caller must declare
+the job resumable before first submission and supply an immutable context-enabled
+descriptor with restore permission, retained checkpoint and compiler engine
+context storage. Merely setting the C flag is not descriptor validation.
+
+On checkpoint completion the job stays attached to its queue; normal polling
+and another submission are refused. Resume verifies the checkpoint marker,
+unchanged task-fence state and last preemption sequence, then sends the same
+descriptor again. It does not call the publication callback, change the input,
+reset the cumulative poll budget, or allocate another task fence. Firmware owns
+consumption/clearing of the saved marker. The owner must enforce an absolute
+wall-clock deadline across pauses; polling and individual bounded commands do
+not supply that scheduling policy.
+
+If the original task completes during preemption, the exact control response,
+sequence fence and task fence form an alternative completion protocol. The
+controller checks for late mailbox errors and records `preempt_completed`;
+SWGEN0 is cleared when present but is not fabricated when the preemption path
+suppresses it. This is protocol completion, not numerical or physical-quiescence
+proof. A failed save, stale resume state, late error or uncertain command delivery
+quarantines the queue without freeing any memory or retrying. A preflight
+EBUSY/EALREADY with no preemption attempt leaves the running job available for
+ordinary polling. Other invalid API/ownership calls perform no device I/O.
+
+`scripts/test_job_preemption.py` drives the actual C start/poll/preempt/resume
+functions against the original firmware in 36 scenarios. It covers both engine
+IRQ bits, two save/restore cycles on one job, completion races, failed saves,
+disabled preemption, timeouts, late-error/idle transport injections, stale
+checkpoint/sequence/task-fence values, resume delivery failure, exhausted poll
+budget and caller abandonment. The native publication callback executes once;
+descriptor bytes, input data and unique task fence remain unchanged across
+resume, and both original restore IL records execute. Arithmetic and physical
+engine-context transfers are unmodeled; output remains poisoned deliberately.
+The repeated-cycle test schedules the next preemption after modeled restore
+completion. Arbitrary preemption during restore and physical recovery still
+need qualification.
 
 The [Windows release investigation](windows-buffer-lifetime.md) now traces
 cuDLA unregister through error gating and last-reference D3DKMT destruction.

@@ -24,6 +24,10 @@ struct n1x_dla_job {
     bool idle_blocked;
     __u32 fence_value;
     __u32 polls;
+    /* Caller asserts the immutable descriptor has context+restore flags and
+     * valid retained checkpoint/engine-context backing before first start. */
+    bool resumable, suspended, preempt_completed;
+    __u32 preempt_sequence;
 };
 struct n1x_dla_job_ops {
     void *context;

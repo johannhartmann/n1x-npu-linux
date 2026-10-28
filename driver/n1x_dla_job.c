@@ -106,7 +106,8 @@ int n1x_dla_job_start(struct n1x_dla_job_queue *queue,
     if (queue->active || queue->owner_job)
         return -EBUSY;
     if (job->attempted || job->fence_value || job->accepted || job->verified ||
-        job->signal_seen || job->response_valid || job->polls)
+        job->signal_seen || job->response_valid || job->polls || job->suspended ||
+        job->preempt_completed || job->preempt_sequence)
         return -EALREADY;
     if (queue->last_fence == (__u32)~0U)
         return -EOVERFLOW;
@@ -138,6 +139,8 @@ int n1x_dla_job_poll(struct n1x_dla_job_queue *queue,
         return err;
     if (!io || !io->read32 || !io->write32 || !ops || !ops->read_fence)
         return -EINVAL;
+    if (job->suspended)
+        return -EBUSY;
     err = poll_once(io, ops, job);
     if (err == 1)
         return -EINPROGRESS;

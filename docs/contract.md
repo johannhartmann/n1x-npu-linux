@@ -1383,7 +1383,14 @@ the original idle producer: `{word=12,data=0}`, with 12 decimal (`0x0c`), not
 `0x12`. The initial native helper/mock confusion between those values is fixed;
 the latter is now a negative test. See
 [native runtime](native-runtime.md#lifetime-and-failures) for ownership and wait
-bounds. EXEC integration and physical engine qualification remain separate work.
+bounds. The [private job controller](native-runtime.md#private-job-preemption-and-resume-controller)
+now connects that primitive to native queue ownership, checkpoint validation
+and same-descriptor resubmission. Its 36 original-firmware scenarios include
+two save/restore cycles without re-publication or a new task fence, completion
+races and explicit host/DMA-state failures. A completed preemption is recorded
+as a separate completion protocol when SWGEN0 is suppressed; a checkpoint keeps
+the queue reserved. Public EXEC integration, arbitrary preemption during restore,
+physical engine-context transfer and safe reclamation remain separate work.
 
 ## HAL-1 firmware rearms each mailbox response
 

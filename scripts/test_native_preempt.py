@@ -43,12 +43,13 @@ class Ops(C.Structure):
     _fields_ = [('context', C.c_void_p), ('snapshot', SNAPSHOT)]
 
 
-def library(directory):
+def library(directory, extra_sources=()):
     path = directory/'preempt.so'
     subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
         '-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-Werror', '-I'+str(ROOT/'include'),
         *[str(ROOT/'driver'/('n1x_dla_'+name+'.c'))
-          for name in ('preempt', 'task', 'command', 'response')], '-o', str(path)], check=True)
+          for name in ('preempt', 'task', 'command', 'response')],
+        *map(str, extra_sources), '-o', str(path)], check=True)
     lib = C.CDLL(str(path))
     lib.n1x_dla_preempt.argtypes = [C.POINTER(IO), C.POINTER(Ops), C.c_uint64,
                                    C.c_uint32, C.c_uint32, C.POINTER(Result)]

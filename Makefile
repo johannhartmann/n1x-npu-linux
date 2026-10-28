@@ -83,6 +83,7 @@ test-vendor: test
 	venv/bin/python scripts/test_profile1_context_save.py
 	venv/bin/python scripts/test_native_context.py
 	venv/bin/python scripts/test_native_preempt.py
+	venv/bin/python scripts/test_job_preemption.py
 	venv/bin/python scripts/test_hfrp_power_policy.py
 	venv/bin/python scripts/test_hfrp_version.py
 	venv/bin/python scripts/test_hfrp_startup.py
@@ -176,7 +177,7 @@ test-vendor: test
 	venv/bin/python scripts/test_il_slice.py
 	venv/bin/python scripts/emulate_init_il.py
 kernel-check:
-	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" n1x_dla_vbios.o n1x_dla_ring.o n1x_hfrp.o n1x_hfrp_setup.o n1x_dla_control.o n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_job.o n1x_dla_preempt.o n1x_dla_response.o n1x_dla_statistics.o n1x_dla_model.o n1x_sroot.o
+	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" n1x_dla_vbios.o n1x_dla_ring.o n1x_hfrp.o n1x_hfrp_setup.o n1x_dla_control.o n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_job.o n1x_dla_preempt.o n1x_dla_job_control.o n1x_dla_response.o n1x_dla_statistics.o n1x_dla_model.o n1x_sroot.o
 clean:
 	rm -f tests/test_firmware runtime/libn1x_dla.so
 

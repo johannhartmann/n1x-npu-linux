@@ -112,7 +112,7 @@ def check_preemption_builder(lib, pe):
 
 
 def start_native(lib, pe, firmware, model, *, job_flags=0, save_context=True,
-                 response_handler=None, enabled=True):
+                 response_handler=None, enabled=True, submit_task=True):
     backing, addresses, layout = build_relu(model, HOST+0x10000)
     payload = bytearray(0x10000)+backing
     descriptor = ctypes.create_string_buffer(256)
@@ -140,12 +140,15 @@ def start_native(lib, pe, firmware, model, *, job_flags=0, save_context=True,
         offset = 0x10000+layout[memory]['offset']
         payload[offset:offset+3136] = data
     live, notifications = [], []
+    commands = [(0x31c, int(enabled))]
+    if submit_task:
+        commands.append((0x307, HOST >> 8))
 
     def word(u, address):
         return int.from_bytes(u.mem_read(address, 4), 'little')
 
     def submit(u):
-        method, data = ((0x31c, int(enabled)), (0x307, HOST >> 8))[len(live)]
+        method, data = commands[len(live)]
         live.append(u)
         u.mem_write(MMIO+0x68, struct.pack('<II', method, data))
 
@@ -160,16 +163,17 @@ def start_native(lib, pe, firmware, model, *, job_flags=0, save_context=True,
             u.mem_write(MMIO+offset, struct.pack('<I', word(u, MMIO+offset) & ~128))
         u.mem_write(MMIO+0x40, struct.pack('<I', ACK))
 
-    result = run(firmware, host_submit=submit, host_handler=ack, sequence=[0, 0],
+    result = run(firmware, host_submit=submit, host_handler=ack, sequence=[0]*len(commands),
                  host_payload=payload, boot_from_reset=True, via_trap=True,
                  dma_register_model=True, resume_scheduler=True)
     u = live[-1]
     assert result['returned'] and result['scheduler_wfi']
-    assert result['wfi_return_address'] == 0x101424
     assert result['firmware_code_unmodified'] and not result['function_stubs']
-    assert word(u, 0x1862a4) == word(u, 0x180114) == 1
-    internal = word(u, word(u, 0x1862bc)+40)
-    assert word(u, internal+40) == 1 and word(u, HOST+0x6060) == 0
+    assert word(u, 0x1862a4) == word(u, 0x180114) == int(submit_task)
+    internal = word(u, word(u, 0x1862bc)+40) if submit_task else None
+    if submit_task:
+        assert result['wfi_return_address'] == 0x101424
+        assert word(u, internal+40) == 1 and word(u, HOST+0x6060) == 0
     return {'u': u, 'result': result, 'word': lambda address: word(u, address),
             'layout': layout, 'input': input_data, 'payload': payload,
             'notifications': notifications, 'header': request_header, 'fence': fence,
