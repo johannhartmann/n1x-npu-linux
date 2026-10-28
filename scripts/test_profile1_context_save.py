@@ -15,8 +15,9 @@ from emulate_profile1_commands import MMIO, PROFILE1_HASH
 from emulate_firmware_commands import HOST
 
 
-def check(runtime, pe, firmware, model, ready=1, flags=0, irq=0x400, checkpoint=True):
-    f = start_task(runtime, pe, firmware, model, job_flags=flags, save_context=checkpoint)
+def check(runtime, pe, firmware, model, ready=1, flags=0, irq=0x400, checkpoint=True,
+          start=start_task):
+    f = start(runtime, pe, firmware, model, job_flags=flags, save_context=checkpoint)
     u, result, word = f['u'], f['result'], f['word']
     events, writes, execution_status, predicates = [], [], [], []
     host_before = bytes(u.mem_read(HOST, len(f['payload'])))
@@ -26,7 +27,7 @@ def check(runtime, pe, firmware, model, ready=1, flags=0, irq=0x400, checkpoint=
                   0x1059d8, 0x1059ce, 0x105f70, 0x105cd8):
             events.append([hex(pc), *[hex(u.reg_read(getattr(rv, 'UC_RISCV_REG_'+r)))
                                      for r in ('A0', 'A1', 'A2')]])
-        if pc == 0x101990:
+        if pc in (0x101990, 0x101b1c):  # version-3 UMD or native version-2 consumer
             value = u.reg_read(rv.UC_RISCV_REG_A0)
             execution_status.append(value if value < 1 << 31 else value-(1 << 32))
         if pc == 0x102800:
@@ -94,13 +95,13 @@ def check(runtime, pe, firmware, model, ready=1, flags=0, irq=0x400, checkpoint=
                     'events': events}
         states.append(snapshot())
     assert checkpoint, 'Missing-checkpoint test did not reach the expected DMA boundary'
-    saved = struct.pack('<QQQQ', 0, 0, 1800, 1)
+    saved = struct.pack('<QQQQ', 0, 0, f.get('checkpoint_budget', 1800), 1)
     assert [s['state'] for s in states] == ([2, 3] if failed else [2, 3, 3, 0])
     assert [s['queue'] for s in states] == ([1, 0] if failed else [1, 1, 1, 0])
     assert [s['save_remaining'] for s in states] == ([2, 2] if failed else [2, 2, 1, 0])
     assert all(s['done'] == 0 and s['remaining'] == 1 for s in states)
     assert all(s['context'] == bytes(32).hex() for s in states[:-1])
-    assert states[-1]['context'] == (bytes(32) if failed else saved).hex()
+    assert states[-1]['context'] == (bytes(32) if failed else saved).hex(), states[-1]
     assert [s['notifications'] for s in states] == ([2, 3] if failed else [2, 2, 2, 3])
     assert execution_status == ([-16] if failed else [0])
     assert not result['task_interrupts']

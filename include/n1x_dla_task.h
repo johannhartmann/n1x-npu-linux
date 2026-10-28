@@ -4,6 +4,8 @@
 #include "n1x_dla_firmware.h"
 #define N1X_DLA_TASK_V2_BYTES 60
 #define N1X_DLA_FENCED_TASK_V2_BYTES 256
+#define N1X_DLA_CONTEXT_HEADER_BYTES 64
+#define N1X_DLA_CHECKPOINT_BYTES 32
 struct n1x_dla_task_args {
     __u64 next;
     __u64 address_list;
@@ -31,6 +33,30 @@ int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
 int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
                                 const struct n1x_dla_task_args *args,
                                 __u64 fence_address, __u32 fence_value);
+/* HAL-1 context transport, qualified against original firmware in RAM only.
+ * Header byte 0 is 1, byte 1 copies the caller's vendor context tag (semantics
+ * not inferred), and LE u64 at +4 addresses a separate 32-byte checkpoint.
+ * Caller initially zeros that checkpoint, retains firmware-written contents
+ * for resume, and provides the model's separate engine-context allocation.
+ * Linux policy requires a nonzero, 256-aligned checkpoint address in 36 bits,
+ * with 256 mapped bytes. Pure serialization; no initialization of device RAM.
+ * Output is unchanged on failure, and bytes after the 64-byte header are untouched.
+ */
+int n1x_dla_build_context_header(__u8 *out, size_t out_size,
+                                 __u64 checkpoint, __u8 context_tag);
+/* Fenced single-task v2 descriptor with context-header flag bit 2 and optional
+ * restore flag bit 1. restore must be 0 or 1. Header address is nonzero,
+ * 256-aligned and backed by 256 mapped bytes within 36 bits. Address list and
+ * fence must also be within 36 bits; 1..512 addresses and no task chain.
+ * Does not enable preemption, submit, wait, reclaim DMA or implement cancel.
+ * No physical context-switch qualification is implied. A preemption message
+ * can follow an execution error; callers must not treat it as successful save.
+ * Output is unchanged on failure; args may overlap output.
+ */
+int n1x_dla_build_context_fenced_task_v2(__u8 *out, size_t out_size,
+                                        const struct n1x_dla_task_args *args,
+                                        __u64 fence_address, __u32 fence_value,
+                                        __u64 context_header, __u8 restore);
 /* Single-task transport qualification descriptor: same fenced v2 layout,
  * with flags bit 0 at byte 41 set (BYPASS_EXEC). The raw HAL-1 executor skips
  * network/instruction execution, but still runs scheduler/postactions and can

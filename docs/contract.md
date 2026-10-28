@@ -1280,6 +1280,62 @@ The test suite therefore contains **22 cases** in total.
 venv/bin/python scripts/test_profile1_context_save.py > results/context-save.json
 ```
 
+### Native version-2 context transport
+
+`test_native_context.py` replaces the Windows UMD/v3 task path with the compiled
+Linux C v2 task/address-list serializers and a native context-header serializer.
+The preemption request remains the checked original Windows-built request.
+The same original firmware save/restore tests pass with native task version 2.
+
+The additional transport requirement is **descriptor flag bit 2**. At
+`0x1046ee`, the original firmware reads the flags at packed offset 0x29; bit 2
+branches to the 64-byte context-header read at `0x1044ce`. Setting just the
+pointer at +0x33 is insufficient. Bit 1 then gates the checkpoint restore read
+in the task consumer. Thus the native descriptors use flags **4** for a fresh
+context-capable task and **6** for a restore-capable submission. Neither flag
+enables global firmware preemption; command 28 is still separate.
+
+Two pure serializers now live in `driver/n1x_dla_task.c`:
+
+- `n1x_dla_build_context_header`: builds the 64-byte header pointing to separate
+  checkpoint storage, with the caller-supplied context tag. Native firmware
+  tests use tag zero; three byte-for-byte comparisons use tag 7 against the
+  original Windows initializer, including the upper address boundary.
+- `n1x_dla_build_context_fenced_task_v2`: builds the ordinary padded fenced
+  descriptor, adds flags 4/6 and the header address, and rejects task chains.
+
+Both require caller-owned mapped backing and leave outputs unchanged on
+invalid input. The conservative Linux policy requires 256-byte-aligned,
+nonzero header/checkpoint addresses with 256 mapped bytes within 36 bits.
+Address-list padding must also fit that aperture; fences are aligned four-byte
+words. These are serialization policies, not newly discovered universal
+hardware limits. Model buffers and every indirect reference still require
+independent mapping/lifetime validation by their owner.
+
+The native test has **29 serializer cases** (including comparison with Windows,
+address limits, padded address-list extent, invalid flags/counts, null/short
+outputs and overlapping args/output) and **20 firmware cases**. The latter
+exercise both IRQ sources, restore enabled/disabled and the same five save
+predicate values. Input and poisoned output remain unchanged, while exact
+checkpoint/fence writes and firmware execution status are checked.
+
+One transport difference remains visible: in the fresh native v2 fixture, the
+checkpoint words are **0, 0, 0, 1**, whereas the v3 UMD fixture records
+**0, 0, 1800, 1**. The v2 path does not run the UMD bookkeeping that populated
+that budget word. Treating v3 checkpoint fields as a universal timeout ABI
+would therefore be wrong; a future Linux resume implementation must retain
+its own bounded deadline across interruptions.
+
+These helpers are not called by the current EXEC path, which still uses the
+existing non-preemptible descriptor and retains submitted DMA. There is no
+new cancel/resume ioctl, live register write or module installation. Physical
+engine context integrity, memory ownership during failure and safe reclamation
+remain necessary before enabling this path on the machine.
+
+```sh
+venv/bin/python scripts/test_native_context.py > results/native-context.json
+```
+
 ## HAL-1 firmware rearms each mailbox response
 
 The earlier inference that masking SWGEN1 on ACK necessarily requires an extra

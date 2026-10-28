@@ -85,6 +85,14 @@ operation: a future cancel path must reconcile execution errors, checkpoint
 state and task completion rather than turning message `0x120b` into successful
 inference or immediately freeing DMA.
 
+The [native v2 context transport](contract.md#native-version-2-context-transport)
+now has C serializers and original-firmware save/restore control-flow coverage.
+It requires descriptor bit 2 to load a separate context header, bit 1 to permit
+restore, a 32-byte checkpoint and the compiler's engine-context backing. These
+helpers are not yet used by EXEC and do not change its retention policy or add
+a cancellation API. Native v2 checkpoint bookkeeping also differs from the
+Windows v3 UMD path; host deadlines must remain independent of that checkpoint.
+
 The [Windows release investigation](windows-buffer-lifetime.md) now traces
 cuDLA unregister through error gating and last-reference D3DKMT destruction.
 Its zero destruction flags explicitly allow Windows to defer reclamation.

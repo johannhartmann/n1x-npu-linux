@@ -91,6 +91,52 @@ int n1x_dla_build_bypass_fenced_task_v2(__u8 *out, size_t out_size,
     return 0;
 }
 
+int n1x_dla_build_context_header(__u8 *out, size_t out_size,
+                                 __u64 checkpoint, __u8 context_tag)
+{
+    __u8 header[N1X_DLA_CONTEXT_HEADER_BYTES] = {0};
+    unsigned int i;
+
+    if (!out || out_size < sizeof(header) || !checkpoint ||
+        (checkpoint & 255) || checkpoint > ((__u64)1 << 36) - 256)
+        return -EINVAL;
+    header[0] = 1;
+    header[1] = context_tag;
+    put64(header + 4, checkpoint);
+    for (i = 0; i < sizeof(header); i++)
+        out[i] = header[i];
+    return 0;
+}
+
+int n1x_dla_build_context_fenced_task_v2(__u8 *out, size_t out_size,
+                                        const struct n1x_dla_task_args *args,
+                                        __u64 fence_address, __u32 fence_value,
+                                        __u64 context_header, __u8 restore)
+{
+    __u8 descriptor[N1X_DLA_FENCED_TASK_V2_BYTES];
+    unsigned int i;
+    int err;
+
+    if (!out || !args || out_size < sizeof(descriptor) || args->next ||
+        args->num_addresses > 512 ||
+        args->address_list > ((__u64)1 << 36) - n1x_dla_address_list_bytes(args->num_addresses) ||
+        fence_address > ((__u64)1 << 36) - 4 || !context_header ||
+        (context_header & 255) || context_header > ((__u64)1 << 36) - 256 || restore > 1)
+        return -EINVAL;
+    err = n1x_dla_build_fenced_task_v2(descriptor, sizeof(descriptor), args,
+                                     fence_address, fence_value);
+    if (err)
+        return err;
+    /* 1046ee loads the context header only with bit 2 set. The consumer
+     * tests bit 1 before reading the saved-work checkpoint for restoration.
+     */
+    put16(descriptor + 41, 4 | (restore ? 2 : 0));
+    put64(descriptor + 51, context_header);
+    for (i = 0; i < sizeof(descriptor); i++)
+        out[i] = descriptor[i];
+    return 0;
+}
+
 size_t n1x_dla_address_list_bytes(__u16 count)
 {
     if (!count || count > 512)
