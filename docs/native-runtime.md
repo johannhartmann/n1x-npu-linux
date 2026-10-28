@@ -106,6 +106,13 @@ operation: a future cancel path must reconcile execution errors, checkpoint
 state and task completion rather than turning message `0x120b` into successful
 inference or immediately freeing DMA.
 
+The [compiler engine-context trace](contract.md#compiler-engine-context-programs-2026-10-28)
+now resolves the four save/restore IL slices and their original register writes.
+Two slices program a context pointer equal to the allocation's logical end;
+the engine program's effective transfer ranges remain unknown. This is an
+additional qualification question, not evidence of a measured overflow or a
+reason to guess a larger allocation. Public EXEC does not enable preemption.
+
 The [native v2 context transport](contract.md#native-version-2-context-transport)
 now has C serializers and original-firmware save/restore control-flow coverage.
 It requires descriptor bit 2 to load a separate context header, bit 1 to permit

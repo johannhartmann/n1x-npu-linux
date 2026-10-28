@@ -1280,6 +1280,61 @@ The test suite therefore contains **22 cases** in total.
 venv/bin/python scripts/test_profile1_context_save.py > results/context-save.json
 ```
 
+### Compiler engine-context programs (2026-10-28)
+
+`inspect_engine_context.py` traces the actual compiler IL while the original
+firmware performs the save/restore sequence above. It observes the slice parser
+at `0x102d7a`, the batch dispatch call at `0x102b5c`, and all writes in the
+engine register range. The instruction bytes must match the pinned loadable,
+and independently decoded write/address instructions must reproduce the entire
+observed register-write sequence. Both IRQ sources produce identical traces.
+No firmware functions are stubbed or patched.
+
+The task-local address list is `[3,1,2,4,5,6,7,8]`: local index 3 resolves to
+the `task-0-inst` allocation (memory ID 4), while local index 5 resolves to
+`task-0-preempt_ctx` (memory ID 6). The four slices are:
+
+| Phase | IL offset in `task-0-inst` | 16-byte IL instructions | Engine-program offset in the same allocation | Context offset | Context register pair |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Save 1 | `0x6a00` | 25 | `0x0e00` | `0` | `0x25018/0x2501c` |
+| Save 2 | `0x6c00` | 9 | `0x1500` | `0x29cb00` | `0x25018/0x2501c` |
+| Restore 1 | `0x6e00` | 25 | `0x2c00` | `0x29cb00` | `0x25010/0x25014` |
+| Restore 2 | `0x7000` | 15 | `0x4300` | `0` | `0x25010/0x25014` |
+
+All four program addresses use register pair `0x25000/0x25004`. Save programs
+write `0x20` to `0x25034`; restore programs write `1`. All end by writing `1`
+to `0x25054`. These are observations of compiler-generated engine setup, not
+a recipe for host MMIO writes or established register names. The two levels
+of instructions must remain separate: the decoded 16-byte firmware IL launches
+additional engine programs whose transfer semantics are still unresolved.
+
+Opcode `0x20`, handler `0x1027a8`, writes the u32 value at instruction +8 to
+the MMIO offset at +4. Opcode `0x21`, handler `0x102962`, reads a u16 task-local
+address index at +2, adds the u32 byte offset at +12, and writes low/high u32
+halves to the offsets at +4/+8. Eight direct original-handler tests verify
+normal addition, low-word carry, 64-bit wrap, invalid-index rejection and the
+special index `0xffff` (base `0x00000000ffffffff`). They also reproduce the
+previously documented `index == count` acceptance. These cases program only
+modeled registers; there is no device DMA to the synthetic high addresses.
+This handler is not a buffer-range or device-address-width validator.
+
+**Unresolved boundary:** the loadable declares the context allocation size as
+exactly `0x29cb00` (2,738,944 bytes). Save 2 and Restore 1 therefore program a
+pointer equal to its logical end. In the fixture this is `0x202bbb00`, with
+the next allocation beginning at `0x202bc000`. This does **not** establish
+that the engine accesses either the gap or the next allocation: a programmed
+base alone does not prove a transfer, its direction, addressing convention or
+length. Do not silently enlarge the buffer, declare this a compiler overflow,
+or enable hardware preemption from this trace. Decode the engine programs and
+their effective transfer ranges before qualifying physical context save/restore.
+The existing unchanged-host-memory assertion also confirms that our RAM model
+does not perform these engine transfers; synthetic completion IRQs cannot
+validate their integrity. Public accel EXEC still does not expose this path.
+
+```sh
+venv/bin/python scripts/inspect_engine_context.py > results/engine-context-trace.json
+```
+
 ### Native version-2 context transport
 
 `test_native_context.py` replaces the Windows UMD/v3 task path with the compiled
