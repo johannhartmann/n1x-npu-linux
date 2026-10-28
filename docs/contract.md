@@ -1318,21 +1318,88 @@ previously documented `index == count` acceptance. These cases program only
 modeled registers; there is no device DMA to the synthetic high addresses.
 This handler is not a buffer-range or device-address-width validator.
 
-**Unresolved boundary:** the loadable declares the context allocation size as
+**Compiler-declared empty ranges:** the loadable declares the context allocation size as
 exactly `0x29cb00` (2,738,944 bytes). Save 2 and Restore 1 therefore program a
 pointer equal to its logical end. In the fixture this is `0x202bbb00`, with
 the next allocation beginning at `0x202bc000`. This does **not** establish
-that the engine accesses either the gap or the next allocation: a programmed
-base alone does not prove a transfer, its direction, addressing convention or
-length. Do not silently enlarge the buffer, declare this a compiler overflow,
-or enable hardware preemption from this trace. Decode the engine programs and
-their effective transfer ranges before qualifying physical context save/restore.
+that the engine accesses either the gap or the next allocation. The subsequent
+original-compiler trace below resolves the size metadata behind these addresses:
+the two additional ranges have zero bytes and generate zero count fields.
+There is no evidence here requiring extra context padding. Decoding the remaining
+engine programs and qualifying their physical behavior are still required
+before enabling hardware preemption.
 The existing unchanged-host-memory assertion also confirms that our RAM model
 does not perform these engine transfers; synthetic completion IRQs cannot
 validate their integrity. Public accel EXEC still does not expose this path.
 
 ```sh
 venv/bin/python scripts/inspect_engine_context.py > results/engine-context-trace.json
+```
+
+### Original compiler context extents and count encoding
+
+`inspect_compiler_context.py` reexecutes the pinned Windows backend translation
+with read-only observation hooks. All existing input, output-hash, original
+size/copy and guard assertions in `inspect_windows_mtl_collector.py` still run.
+It observes context construction at RVA `0xcbe538`, the original field stores,
+IL generation, and preservation of the fields until linking at `0xc74dd8`.
+No compiler function or generated buffer is replaced with an expected result.
+
+The `mapper::Preemption` object's fields starting at +8 contain four u32
+offset/size pairs in this fixture:
+
+| Pair | Offset | Size | Original store RVA |
+| --- | ---: | ---: | --- |
+| 0 | `0` | `0x1cb00` | `0xcbe8a8` |
+| 1 | `0x1cb00` | `0x280000` | `0xcbe8bc` |
+| 2 | `0x29cb00` | `0` | `0xcbea80` |
+| 3 | `0x29cb00` | `0` | `0xcbec10` |
+
+The first two sizes sum to the exact declared context blob size. The third
+and fourth sizes come from empty input vectors in this ReLU translation;
+the original code computes their sizes as vector byte length rounded down
+to a multiple of four. Their offset is the preceding accumulated size.
+These extra zero-length ranges explain why the compiler can retain an end
+pointer without declaring additional context bytes.
+
+The firmware IL encodes a related size in 64-byte units. For example, original
+save-stage-1 generator `0xcbab28` reads the third size at parameter 5 +0x14,
+requires `size & 63 == 0` at `0xcbaccc`, and shifts it right by six before
+calling the register-write IL constructor for `0x25028`. It uses the third
+offset at parameter 5 +0x10 for the `0x25018/0x2501c` address pair.
+The observed count writes, in execution order, are:
+
+| Firmware IL sequence | `0x25028` | `0x2502c` |
+| --- | ---: | ---: |
+| Save 1 | `0` | `0x72c` |
+| Save 2 | `0` | `0` |
+| Restore 1 | `0` | `0` |
+| Restore 2 | `0x72c` | `0` |
+
+`0x72c * 64 == 0x1cb00`. The restore-stage-0 generator similarly loads the
+fourth size and shifts it right by six at `0xcb9eac..0xcb9ed0`. This establishes
+the compiler's size encoding; it does not assign undocumented hardware names
+to the registers or determine every transfer performed by the engine program.
+
+Eight additional cases execute the **original save-stage-1 generator and its
+helpers** directly with synthetic metadata and preallocated C++ vectors.
+Sizes 0, 64, 128, 256 and `0x1cb00` produce count values 0, 1, 2, 4 and `0x72c`.
+Every other byte of the generated 256-byte IL block matches the real compiler
+output, including padding; the generated slice metadata also matches. Sizes
+1, 63 and 65 return status 1 after producing only the first four instructions,
+with no count write or second slice added. Failure is not transactional, so
+those partial output vectors must not be submitted. Destination guards and
+all executable PE sections remain unchanged.
+
+The end-pointer observation is therefore explained at the compiler contract
+level. It is **not** proof that zero means no transfer in every hardware mode,
+nor that all save/restore engine programs obey their declared ranges. The
+remaining physical gates are actual context preservation, repeated numerical
+results after resume and DMA quiescence before reuse/free. No larger allocation
+or public preemption API is introduced from this analysis.
+
+```sh
+venv/bin/python scripts/inspect_compiler_context.py > results/compiler-context-contract.json
 ```
 
 ### Native version-2 context transport

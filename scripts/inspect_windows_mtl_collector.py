@@ -12,11 +12,11 @@ from unicorn import arm64_const as r
 from inspect_dla_compiler import ROOT,NATIVE_HASH
 
 
-def main():
+def main(argv=None, observer=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--translation-input',action='store_true',
                         help='Use the captured second frontend handoff after real pretranslation output replay')
-    args=parser.parse_args()
+    args=parser.parse_args(argv)
     path=ROOT/'sources/tensorrt-11.4/nvdla_compiler.dll'
     digest=hashlib.sha256(path.read_bytes()).hexdigest()
     assert digest=='0ef7c9366205a7151490f07b0df94a5e6908c94da32e83fabaaef5d06254147d'
@@ -248,6 +248,8 @@ def main():
         uc.reg_write(r.UC_ARM64_REG_PC,uc.reg_read(r.UC_ARM64_REG_LR))
     for address in set(stub_names)|{base+x for x in (0xc76488,0xc76734,0xf19384,0xc6ddd8,0x61e1b0,0x61e298,0xf02e08,0xf0c6b8,0xf028b0,0xf02908,0x1200)}:
         u.hook_add(UC_HOOK_CODE,hook,begin=address,end=address)
+    if observer is not None:
+        observer(u, pe, base)
     for reg,value in ((r.UC_ARM64_REG_X0,0),(r.UC_ARM64_REG_X1,common),(r.UC_ARM64_REG_X2,vector),
                       (r.UC_ARM64_REG_X18,teb),(r.UC_ARM64_REG_SP,stack+0x40000),(r.UC_ARM64_REG_LR,stop)):
         u.reg_write(reg,value)

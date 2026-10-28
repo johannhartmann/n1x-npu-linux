@@ -109,9 +109,12 @@ inference or immediately freeing DMA.
 The [compiler engine-context trace](contract.md#compiler-engine-context-programs-2026-10-28)
 now resolves the four save/restore IL slices and their original register writes.
 Two slices program a context pointer equal to the allocation's logical end;
-the engine program's effective transfer ranges remain unknown. This is an
-additional qualification question, not evidence of a measured overflow or a
-reason to guess a larger allocation. Public EXEC does not enable preemption.
+the [original compiler extent trace](contract.md#original-compiler-context-extents-and-count-encoding)
+now confirms those additional ranges have size zero and generate zero count
+fields. This explains the pointer at the compiler-contract level without
+guessing extra allocation space. Actual engine transfer behavior and context
+preservation still require physical qualification. Public EXEC does not enable
+preemption.
 
 The [native v2 context transport](contract.md#native-version-2-context-transport)
 now has C serializers and original-firmware save/restore control-flow coverage.
