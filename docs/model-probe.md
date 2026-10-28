@@ -1191,11 +1191,20 @@ resumes the original firmware tail. It reaches scheduler WFI without another
 DMA command or access to the revoked memory. Status variants 0 and 4 still
 remain incomplete: no SWGEN0, no retirement boundary and no release.
 
-The emulator still supplies engine status/IRQ and synchronous DMA completion;
+The emulator still supplies engine status/IRQ and synthetic DMA completion;
 it does not simulate engine arithmetic or an engine performing late physical
-DMA independently of firmware. Output remains poisoned in all eight cases.
+DMA independently of firmware. Output remains poisoned in every case.
 This strengthens the firmware-side lifetime evidence beyond the bypass case,
 but is not another numerical hardware result or permission to free buffers on
 errors. Physical numerical execution is recorded in `p16-board-start.md`.
 Local records: `results/relu-retirement-boundary.json` and
 `results/relu-retirement-ubsan.json`.
+
+The same matrix now runs with both instantaneous DMA and a 17-status-read
+delay before each modeled copy (16 cases total). Completion records prove
+that all 24 original firmware DMA commands have completed at SWGEN0, including
+the final postaction-fence write. Each transfer must incur the requested
+delay. Revoking the backing after that signal still permits the firmware tail
+to return without further DMA. Noncompletion engine statuses remain pending
+under both DMA timings. This exercises original firmware waiting behavior,
+not real device memory ordering. Result: `results/relu-delayed-dma.json`.

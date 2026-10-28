@@ -13,7 +13,7 @@ CTX = 0x20010000
 
 
 def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=True,
-        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False, via_trap=False, trap_dma_ready=True, dma_register_model=False, host_payload=None, resume_scheduler=False, scheduler_handshake=True, scheduler_checkpoint=None, scheduler_registers=None):
+        host_handler=None, sequence=None, suppress_mask_set=False, host_submit=None, boot_from_reset=False, via_trap=False, trap_dma_ready=True, dma_register_model=False, host_payload=None, resume_scheduler=False, scheduler_handshake=True, scheduler_checkpoint=None, scheduler_registers=None, dma_delay_reads=0):
     stop = 0x40000000 if boot_from_reset else STOP
     if resume_scheduler and not (via_trap and dma_register_model):
         raise ValueError('Scheduler tests require original reset, trap and DMA paths')
@@ -24,6 +24,10 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
         raise ValueError('Register DMA model requires reset initialization and no high-level error injection')
     if via_trap and not boot_from_reset:
         raise ValueError('Trap tests require original reset initialization')
+    if not isinstance(dma_delay_reads, int) or not 0 <= dma_delay_reads <= 1000:
+        raise ValueError('DMA delay must be 0..1000 synthetic status reads')
+    if dma_delay_reads and not (dma_register_model and trap_dma_ready):
+        raise ValueError('Delayed DMA requires register DMA and eventual ready status')
     if boot_from_reset:
         u, boot_state = boot(blob)
         assert boot_state['scheduler_wfi']
@@ -49,6 +53,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
     u.mem_write(MMIO+0x40, struct.pack('<II', 0x11223344, 0x55667788))
     transfers, interrupts, register_writes, completed, method_reads = [], [], [], [], []
     trap_entries, trap_returns, dispatches, dma_commands = [], [], [], []
+    dma_completions, dma_pending = [], None
     scheduler_running = False
     scheduler_waiting = False
     checkpoint_reached = False
@@ -95,6 +100,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             u.reg_write(regs.UC_RISCV_REG_A0, 0xfffffffc if direction == dma_error else 0)
 
     def write(_, access, address, size, value, user):
+        nonlocal dma_pending
         offset = address-MMIO
         if scheduler_running and 0 <= offset < 0x40000:
             scheduler_mmio_writes.append((offset, size, value))
@@ -116,10 +122,15 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             assert 0x180000 <= local and local+length <= 0x190000
             direction = 'write' if value & 0x20 else 'read'
             source, destination = (local, external) if direction == 'write' else (external, local)
-            u.mem_write(destination, bytes(u.mem_read(source, length)))
+            assert dma_pending is None, 'DMA command overwrote an incomplete transfer'
             transfers.append(direction)
             dma_commands.append({'command': value, 'source': source, 'destination': destination,
                                  'bytes': length, 'direction': direction})
+            if dma_delay_reads:
+                dma_pending = {'index': len(dma_commands)-1, 'reads': 0}
+            else:
+                u.mem_write(destination, bytes(u.mem_read(source, length)))
+                dma_completions.append({'index': len(dma_commands)-1, 'reads': 0})
         elif offset in (0xd20, 0xd24):
             mask = struct.unpack('<I', u.mem_read(MMIO+0xd28, 4))[0]
             if offset == 0xd20 and not suppress_mask_set:
@@ -145,7 +156,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             u.mem_write(MMIO+8, struct.pack('<I', pending))
 
     def read(_, access, address, size, value, user):
-        nonlocal scheduler_handshakes
+        nonlocal scheduler_handshakes, dma_pending
         if scheduler_running and address-MMIO in (0x7008, 0x5000, 0x6000):
             key = hex(address-MMIO)
             scheduler_engine_reads[key] = scheduler_engine_reads.get(key, 0)+1
@@ -156,8 +167,18 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
                 if scheduler_handshake:
                     u.mem_write(address, struct.pack('<I', previous & ~1))
         if dma_register_model and address == MMIO+0x118:
-            # Synchronous fake DMA: not busy, idle bit set. No physical timing inferred.
-            u.mem_write(address, struct.pack('<I', 2 if trap_dma_ready else 0))
+            # Explicit synthetic completion: no physical timing or coherence inferred.
+            status = 2 if trap_dma_ready else 0
+            if dma_pending is not None:
+                dma_pending['reads'] += 1
+                if dma_pending['reads'] <= dma_delay_reads:
+                    status = 1
+                else:
+                    command = dma_commands[dma_pending['index']]
+                    u.mem_write(command['destination'], bytes(u.mem_read(command['source'], command['bytes'])))
+                    dma_completions.append(dma_pending)
+                    dma_pending = None
+            u.mem_write(address, struct.pack('<I', status))
         if via_trap and address in (MMIO+0x64, MMIO+0x68):
             method_reads.append((address-MMIO, struct.unpack('<I', u.mem_read(address, 4))[0]))
 
@@ -224,6 +245,7 @@ def run(blob, challenge=0x11111111, method=0x301, dma_error=None, acknowledge=Tr
             'via_trap': via_trap, 'method_reads': method_reads,
             'trap_entries': trap_entries, 'trap_returns': trap_returns, 'dispatches': dispatches,
             'dma_commands': dma_commands, 'function_stubs': [hex(address) for address in stubs],
+            'dma_completions': dma_completions, 'dma_delay_reads': dma_delay_reads,
             'firmware_code_unmodified': code_unmodified,
             'first_task_slot': bytes(u.mem_read(0x180200, 256)).hex() if boot_from_reset else None,
             'scheduler_wfi': scheduler_waiting, 'task_events': task_events, 'task_interrupts': task_interrupts,

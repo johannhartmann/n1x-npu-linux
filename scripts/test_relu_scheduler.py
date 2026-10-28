@@ -6,6 +6,7 @@ is emulated: even the control-completion cases leave the output poisoned.
 """
 import ctypes
 import hashlib
+from itertools import product
 import json
 import os
 from pathlib import Path
@@ -48,7 +49,7 @@ def main():
     address_list.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.POINTER(ctypes.c_uint64),ctypes.c_uint16]
     cases=[]
     for irq in (0x400,0x800):
-        for engine_status in (0,1,4,5):
+        for engine_status,dma_delay_reads in product((0,1,4,5),(0,17)):
             reference,addresses,layout=build_relu(data,HOST)
             payload=initialize_relu(lib,data,layout)
             assert payload==reference
@@ -75,7 +76,7 @@ def main():
                 u.mem_write(MMIO+0x40,struct.pack('<I',ACK))
             result=run(firmware,method=0x307,host_payload=payload,host_handler=response,
                        boot_from_reset=True,via_trap=True,dma_register_model=True,
-                       resume_scheduler=True)
+                       resume_scheduler=True,dma_delay_reads=dma_delay_reads)
             assert result['returned'] and result['scheduler_wfi'] and result['wfi_return_address']==0x101424
             assert result['function_stubs']==[] and result['firmware_code_unmodified']
             assert result['interrupts']==[(0x702,HOST>>8)] and not result['task_interrupts']
@@ -100,8 +101,10 @@ def main():
             def completion_write(_,access,address,size,value,user):
                 if address!=MMIO or not value&0x40:
                     return
+                assert len(result['dma_completions'])==len(result['dma_commands'])
                 retirement.append(dict(pc=hex(u.reg_read(regs.UC_RISCV_REG_PC)),
                     dma_count=len(result['dma_commands']), queue_count=word(0x180114),
+                    dma_completed=len(result['dma_completions']),
                     slot_in_use=word(0x18027c), remaining_records=word(internal+40),
                     active=word(0x1862a4), fence=word(HOST+768)))
                 pc=u.reg_read(regs.UC_RISCV_REG_PC)
@@ -152,10 +155,14 @@ def main():
             assert bytes(u.mem_read(layout[1]['address'],3136))==input_data
             assert bytes(u.mem_read(layout[2]['address'],3136))==b'\xa5'*3136
             assert bytes(u.mem_read(0x100000,36864))==firmware[512:512+36864]
+            assert len(result['dma_completions'])==len(result['dma_commands'])
+            assert all(c['reads']==(dma_delay_reads+1 if dma_delay_reads else 0)
+                       for c in result['dma_completions'])
             if completed:
                 assert any(d['direction']=='write' and d['destination']==HOST+768 and d['bytes']==4
                            for d in result['dma_commands'])
             cases.append(dict(irq=hex(irq),modeled_engine_status=engine_status,
+                dma_delay_reads=dma_delay_reads,dma_completed=len(result['dma_completions']),
                 original_handler_entered=True,original_trap_returned=True,
                 original_postaction_fence_written=completed,task_irq_asserted=completed,
                 remaining_records=word(internal+40),output_unchanged=True,
@@ -165,7 +172,7 @@ def main():
         firmware_sha256=PROFILE1_HASH,input_sha256=hashlib.sha256(input_data).hexdigest(),
         task_local_address_ids=[3,1,2,4,5,6,7,8],native_content_initialization=True,
         native_address_resolution_and_serialization=True,cases=cases,
-        limitations=['Synchronous RAM DMA, modeled engine status and injected firmware IRQs',
+        limitations=['Instantaneous or read-count-delayed RAM DMA, modeled engine status and injected firmware IRQs',
                      'No engine arithmetic is emulated; the poisoned output remains unchanged',
                      'Control completion is not numerical inference or physical NPU execution',
                      'Post-SWGEN0 revocation checks firmware tail accesses, not physical engine DMA quiescence',

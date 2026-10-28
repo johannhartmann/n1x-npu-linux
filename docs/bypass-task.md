@@ -278,6 +278,19 @@ post-SWGEN0 backing revocation, and the existing failure/early-revocation
 controls. The UBSan result is `results/job-executor-fw-ubsan.json`; the complete
 startup regression log is `results/job-executor-p16-tests.log`.
 
+The DMA register model additionally supports delayed completion: it leaves
+each transfer pending for 1 or 17 status reads before copying bytes and
+publishing completion. For each delay, four successive native jobs preserve
+the queue and original firmware instance. At SWGEN0 all 11 per-job DMA
+commands have completed; the test then revokes device backing and runs the
+firmware tail as above. The delayed postaction-error cases still fail through
+the native error path with retained backing. The test checks the expected
+delay on every transfer, so a silently instantaneous copy cannot pass this
+variant. Results are in `results/native-fw-delayed-dma.json`.
+This removes the instantaneous-copy assumption from these control-path tests;
+the explicit RAM visibility transition remains a model, not physical ordering
+or arithmetic-engine quiescence evidence.
+
 The bootstrap sysfs entry points remain one attempt each. On a fresh run their
 expected completion values are 1 for bypass and 2 for ReLU; sysfs reports
 `task_fence_value`/`fence_value` and `queue_poisoned`. Historical physical logs

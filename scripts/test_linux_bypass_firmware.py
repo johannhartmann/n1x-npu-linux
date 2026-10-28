@@ -107,7 +107,7 @@ u32 native_result(unsigned field)
 
 
 def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1,
-            revoke_after_acceptance=False, split=False):
+            revoke_after_acceptance=False, split=False, dma_delay_reads=0):
     lib.native_queue_reset()
     lib.native_split(int(split))
     state = {'active': False, 'sent': False, 'paused': False, 'trap_finished': False,
@@ -144,7 +144,8 @@ def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1,
     # A real original reset/trap/DMA ping initializes the instance and installs
     # the existing exact DMA register model. No firmware function is replaced.
     initial = run(blob, method=0x301, host_payload=bytes(4096), host_handler=response,
-                  boot_from_reset=True, via_trap=True, dma_register_model=True)
+                  boot_from_reset=True, via_trap=True, dma_register_model=True,
+                  dma_delay_reads=dma_delay_reads)
     assert initial['returned'] and initial['function_stubs'] == []
     u = live[0]
     initial_dma = len(initial['dma_commands'])
@@ -163,9 +164,11 @@ def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1,
     def signal(_, access, address, size, value, data):
         if address != MMIO or not value & 0x40:
             return
+        assert len(initial['dma_completions']) == len(initial['dma_commands'])
         completion_snapshots.append({
             'pc': hex(u.reg_read(regs.UC_RISCV_REG_PC)),
             'dma_count': len(initial['dma_commands'])-initial_dma,
+            'dma_completed': len(initial['dma_completions'])-initial_dma,
             'queue_count': struct.unpack('<I', u.mem_read(0x180114, 4))[0],
             'slot_in_use': struct.unpack('<I', u.mem_read(0x18027c, 4))[0],
             'fence': struct.unpack('<I', u.mem_read(HOST+768, 4))[0],
@@ -336,10 +339,14 @@ def execute(lib, blob, fault, *, completion_boundary=False, repeat_count=1,
             actual_fence = struct.unpack('<I', u.mem_read(HOST+768, 4))[0]
             assert actual_fence == (fields[8] if fault == 'postaction' else fields[8] ^ 0xffffffff)
         assert len(initial['dma_commands'])-initial_dma == {None: 11, 'version': 4, 'execution': 13, 'postaction': 11}[fault]
+        assert len(initial['dma_completions']) == len(initial['dma_commands'])
+        assert all(c['reads'] == (dma_delay_reads+1 if dma_delay_reads else 0)
+                   for c in initial['dma_completions'][initial_dma:])
         record = {'fault': fault, 'native_return': status, 'frames': list(frames),
                 'completion_value': fields[8], 'accepted': bool(fields[1]), 'verified': bool(fields[3]),
                 'dma_retained': bool(fields[7]), 'firmware_code_unmodified': True,
                 'original_dma_commands': len(initial['dma_commands'])-initial_dma,
+                'dma_delay_reads': dma_delay_reads,
                 'completion_boundary': completion_boundary, 'native_return_pc': native_return_pc,
                 'scheduler_finished_on_native_return': scheduler_finished_on_native_return,
                 'completion_snapshots': list(completion_snapshots),
@@ -361,10 +368,14 @@ def main():
         rows.append(execute(lib, blob, None, revoke_after_acceptance=True))
         rows.append(execute(lib, blob, None, split=True, repeat_count=32))
         rows.append(execute(lib, blob, 'postaction', split=True))
+        for delay in (1, 17):
+            rows.append(execute(lib, blob, None, completion_boundary=True,
+                                repeat_count=4, dma_delay_reads=delay))
+            rows.append(execute(lib, blob, 'postaction', dma_delay_reads=delay))
     print(json.dumps({'passed': True, 'hardware_access': False, 'cases': rows,
                       'limitations': ['Kernel machine/DMA/allocation/prior-phase gates are synthetic',
                                       'Original firmware reset/trap/scheduler/DMA code runs; no firmware function stubs',
-                                      'MMIO/FIFO/IRQ, synchronous DMA completion, coherence and handshake devices are modeled',
+                                      'MMIO/FIFO/IRQ, instantaneous or read-count-delayed DMA completion, coherence and handshake devices are modeled',
                                       'Error cases stop with retained backing while firmware may still be in its IRQ handler',
                                       'Repeated runs preserve the native queue and firmware; only per-job host state is reset; sysfs probes remain one-shot',
                                       'Post-SWGEN0 revocation covers bypass descriptors, not neural-engine buffers or teardown',
