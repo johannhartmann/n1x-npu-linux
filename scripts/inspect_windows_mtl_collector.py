@@ -98,6 +98,9 @@ def main(argv=None, observer=None, initialized_probe=None):
     process_heap=0x12340000  # An opaque handle, never dereferenced.
     def allocate(n,zero=False):
         nonlocal allocation_cursor
+        # Model a unique minimum allocation for legitimate malloc/new(0).
+        # Larger graphs can omit optional statistics buffers entirely.
+        if n==0:n=1
         assert 0<n<=0x1000000 and allocation_cursor+n<heap+0x8000000,(n,hex(allocation_cursor))
         ptr=allocation_cursor;allocation_cursor+=(n+15)&~15
         u.mem_write(ptr,(b'\0' if zero else b'\xa5')*n)
@@ -123,7 +126,11 @@ def main(argv=None, observer=None, initialized_probe=None):
             context=statistics_builder[-1]['context']
             n=struct.unpack('<I',uc.mem_read(context+0x34,4))[0]
             pointer=struct.unpack('<Q',uc.mem_read(context+0x38,8))[0]
-            header=list(struct.unpack('<7I',uc.mem_read(pointer,28)))
+            if initialized_probe is not None and n==0:
+                assert pointer==0,('empty statistics buffer',hex(pointer))
+                header=[]
+            else:
+                header=list(struct.unpack('<7I',uc.mem_read(pointer,28)))
             if initialized_probe is None:
                 assert n==28736 and header==[0x300,2,4,6144,28,1024,24640]
             statistics_builder[-1].update(status=0,bytes=n,header_words=header)
@@ -300,6 +307,7 @@ def main(argv=None, observer=None, initialized_probe=None):
     if initialized_probe is not None:
         # Reuse the checked OS/CRT model and original initializer sequence for
         # other graph fixtures; the normal ReLU oracle remains unchanged.
+        u.n1x_compiler_diagnostics=dict(error_flags=error_flags,statistics=statistics_builder)
         return initialized_probe(u, pe, base, invoke, allocate)
     assert invoke(0x6e34e8,heap+0x50000)==heap+0x50000
     assert struct.unpack('<Q',u.mem_read(heap+0x50000,8))[0]==base+0x11664d8

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Explicit-load, one-attempt SROOT upload qualification backend.
- * No aliases, automatic upload, IRQ setup or reset/recovery.
+ * No aliases, automatic upload, IRQ setup or forced reset/recovery.
  * Optional RAWIO-only accel API uses the explicitly initialized backend.
- * After an attempted upload, retain DMA/runtime/module references until reboot.
+ * Retain DMA/runtime/module references until checked explicit shutdown.
+ * Failed/uncertain execution or shutdown remains pinned until reboot.
  */
 #include <crypto/sha2.h>
 #include <linux/acpi.h>
@@ -106,6 +107,12 @@ static void *boot_buffer;
 static dma_addr_t boot_dma;
 static int boot_error;
 static bool boot_attempted;
+static bool boot_stopping, boot_hfrp_held, boot_upload_held;
+static struct {
+	struct n1x_hfrp_stop_result transport;
+	bool attempted, hardware_off, released;
+	int error;
+} boot_shutdown;
 static struct {
 	struct n1x_hfrp_channel channel;
 	struct n1x_hfrp_version version;
@@ -358,6 +365,7 @@ static int n1x_boot_prepare_hfrp_once(void)
 	io = (struct n1x_dla_io){boot_dla, n1x_boot_hfrp_write,
 				n1x_boot_hfrp_read, n1x_boot_delay};
 	boot_hfrp.attempted = true;
+	boot_hfrp_held = true;
 	boot_hfrp.phase = 1;
 	err = n1x_hfrp_handshake(&io, &boot_hfrp.channel, 5001, 1000, &boot_hfrp.exchange);
 	if (err)
@@ -381,7 +389,7 @@ static int n1x_boot_prepare_hfrp_once(void)
 	}
 done:
 	dev_info(boot_dla->dev,
-		 "HFRP phase=%u error=%d version=%u.%u command=%u completed=%u setup_reply=%#x/%u final_reply=%#x/%u power_accepted=%u; retained until reboot\n",
+		 "HFRP phase=%u error=%d version=%u.%u command=%u completed=%u setup_reply=%#x/%u final_reply=%#x/%u power_accepted=%u; retained until checked shutdown\n",
 		 boot_hfrp.phase, err, boot_hfrp.version.major, boot_hfrp.version.minor,
 		 boot_hfrp.setup.command, boot_hfrp.setup.completed_commands,
 		 boot_hfrp.setup.exchange.reply.header, boot_hfrp.setup.exchange.reply.length,
@@ -474,9 +482,9 @@ static int n1x_boot_upload(void)
 				    0xe0000000, 0xffffffff, words);
 	if (err)
 		goto free;
-	/* Reference acquired BEFORE publication. No path releases it after this
-	 * point, including timeout/rejection/idle failure. Unload is prohibited
-	 * until reboot rather than guessing DMA quiescence.
+	/* Reference acquired BEFORE publication. Only checked explicit shutdown
+	 * may release it. Timeout/rejection/idle failure stays pinned; no guessed
+	 * DMA quiescence or forced unload.
 	 */
 	if (!try_module_get(THIS_MODULE)) {
 		err = -ENODEV;
@@ -486,9 +494,10 @@ static int n1x_boot_upload(void)
 	dla_io = (struct n1x_dla_io){boot_dla, NULL, n1x_boot_read, n1x_boot_delay};
 	dma_wmb();
 	boot_attempted = true;
+	boot_upload_held = true;
 	err = n1x_dla_sroot_upload(&sroot_io, &dla_io, 16, words, 5001, 1000, &boot_result);
 	dev_info(boot_dla->dev,
-		 "upload variant %u phase returned %d: reply_valid=%u raw=%#x idle=%u; DMA %pad retained until reboot\n",
+		 "upload variant %u phase returned %d: reply_valid=%u raw=%#x idle=%u; DMA %pad retained until checked shutdown\n",
 		 firmware_variant, err, boot_result.reply_valid, boot_result.reply.header,
 		 boot_result.idle_observed, &boot_dma);
 	/* The original firmware file is independent of its staged DMA copy. */
@@ -615,7 +624,7 @@ static int n1x_boot_read_config_once(void)
 	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
 	dma_wmb();
 	/* Retain conservatively even on a stale-response/pre-send error. The
-	 * preceding upload already pins module/runtime references until reboot.
+	 * preceding upload already pins module/runtime references until checked shutdown.
 	 */
 	boot_config.attempted = true;
 	err = n1x_dla_control_command(&io, 22, boot_config.dma, 5001, 1000,
@@ -695,7 +704,9 @@ static ssize_t init_region5_store(struct device *dev, struct device_attribute *a
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "init"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
-	if (!boot_dla || boot_dla->dev != dev)
+	if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!boot_dla || boot_dla->dev != dev)
 		err = -ENODEV;
 	else
 		err = n1x_boot_init_region5_once();
@@ -713,7 +724,9 @@ static ssize_t read_config_store(struct device *dev, struct device_attribute *at
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "read"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
-	if (!boot_dla || boot_dla->dev != dev)
+	if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!boot_dla || boot_dla->dev != dev)
 		err = -ENODEV;
 	else
 		err = n1x_boot_read_config_once();
@@ -767,7 +780,9 @@ static ssize_t apply_config_store(struct device *dev, struct device_attribute *a
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "apply"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
-	if (!boot_dla || boot_dla->dev != dev)
+	if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!boot_dla || boot_dla->dev != dev)
 		err = -ENODEV;
 	else
 		err = n1x_boot_apply_config_once();
@@ -841,7 +856,9 @@ static ssize_t apply_lpwr_store(struct device *dev, struct device_attribute *att
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "apply"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
-	if (!boot_dla || boot_dla->dev != dev)
+	if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!boot_dla || boot_dla->dev != dev)
 		err = -ENODEV;
 	else
 		err = n1x_boot_apply_lpwr_once();
@@ -867,8 +884,6 @@ static int n1x_boot_drain_task_idle(struct n1x_dla_job *task)
 		return -ENOTRECOVERABLE;
 	if (boot_queue.active)
 		return -EBUSY;
-	if (boot_queue.last_fence == U32_MAX)
-		return -EOVERFLOW;
 	for (i = 0; i < 16; i++) {
 		err = n1x_boot_read(boot_dla, 8, &task->pending);
 		if (err)
@@ -955,6 +970,8 @@ static int n1x_boot_bypass_task_once(void)
 	err = n1x_boot_dma_gate(boot_dla);
 	if (err)
 		return err;
+	if (boot_queue.last_fence == U32_MAX)
+		return -EOVERFLOW;
 	err = n1x_boot_drain_task_idle(&boot_task);
 	if (err)
 		return err;
@@ -1001,7 +1018,9 @@ static ssize_t bypass_task_store(struct device *dev, struct device_attribute *at
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "run"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
-	if (!boot_dla || boot_dla->dev != dev)
+	if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!boot_dla || boot_dla->dev != dev)
 		err = -ENODEV;
 	else
 		err = n1x_boot_bypass_task_once();
@@ -1105,7 +1124,7 @@ static int n1x_boot_relu_once(void)
     }
     if (!err)
         err = n1x_boot_check_relu();
-    dev_info(boot_dla->dev, "ReLU error=%d accepted=%u completed=%u numerical_match=%u input=%*phN output=%*phN; DMA retained until reboot\n",
+    dev_info(boot_dla->dev, "ReLU error=%d accepted=%u completed=%u numerical_match=%u input=%*phN output=%*phN; DMA retained until checked shutdown\n",
              err, boot_relu.accepted, boot_relu.verified, boot_relu_numeric,
              SHA256_DIGEST_SIZE, boot_relu_input_hash, SHA256_DIGEST_SIZE, boot_relu_output_hash);
     return err;
@@ -1125,7 +1144,9 @@ static ssize_t relu_probe_store(struct device *dev, struct device_attribute *att
     if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "run"))
         return -EPERM;
     mutex_lock(&boot_lock);
-    if (!boot_dla || boot_dla->dev != dev)
+    if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!boot_dla || boot_dla->dev != dev)
         err = -ENODEV;
     else if (boot_relu.attempted)
         err = -EALREADY;
@@ -1183,7 +1204,9 @@ static ssize_t ping_store(struct device *dev, struct device_attribute *attr,
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "ping"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
-	if (!boot_dla || boot_dla->dev != dev)
+	if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!boot_dla || boot_dla->dev != dev)
 		err = -ENODEV;
 	else
 		err = n1x_boot_ping_once();
@@ -1201,7 +1224,9 @@ static ssize_t upload_store(struct device *dev, struct device_attribute *attr,
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "upload"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
-	if (!boot_dla || boot_dla->dev != dev)
+	if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!boot_dla || boot_dla->dev != dev)
 		err = -ENODEV;
 	else if (boot_attempted)
 		err = -EALREADY; /* Preserve the first published operation's result. */
@@ -1221,7 +1246,9 @@ static ssize_t prepare_hfrp_store(struct device *dev, struct device_attribute *a
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "prepare"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
-	if (!boot_dla || boot_dla->dev != dev)
+	if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!boot_dla || boot_dla->dev != dev)
 		err = -ENODEV;
 	else if (boot_hfrp.attempted)
 		err = -EALREADY;
@@ -1246,7 +1273,9 @@ static ssize_t query_power_state_store(struct device *dev, struct device_attribu
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "query"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
-	if (!enable_hfrp || !n1x_boot_machine())
+	if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!enable_hfrp || !n1x_boot_machine())
 		err = -EPERM;
 	else if (!boot_dla || boot_dla->dev != dev || !boot_dla->hfrp || !boot_sroot)
 		err = -ENODEV;
@@ -1325,7 +1354,181 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	return size;
 }
 static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_show, NULL);
+
+/* accel->lock (if present) -> boot_lock, matching submission. Stop is terminal
+ * for this module instance. A fresh load constructs a fresh channel/queue.
+ * No speculative reset or rollback is attempted after any stop failure.
+ */
+static int n1x_boot_stop_hardware(struct device *dev)
+{
+	struct n1x_dla_io io;
+	u32 mask, owned;
+	int err = 0;
+
+	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev || !boot_sroot) {
+		err = -ENODEV;
+		goto out;
+	}
+	if (boot_shutdown.attempted) {
+		err = boot_shutdown.error;
+		goto out;
+	}
+	boot_stopping = true;
+	boot_shutdown.attempted = true;
+	if (!boot_hfrp.attempted && !boot_attempted) {
+		boot_shutdown.hardware_off = true; /* No write/DMA publisher existed. */
+		goto done;
+	}
+	/* Only the healthy, retired protocol has a recovered shutdown contract.
+	 * In particular a poisoned queue, failed upload or incomplete HFRP setup
+	 * must keep ALL mappings, PM and module references. No forced recovery.
+	 */
+	if (!n1x_boot_machine() || !boot_hfrp.powered || boot_hfrp.error ||
+	    (boot_hfrp.gating.request_mask & 0x70) != 0x70 ||
+	    boot_queue.poisoned || boot_queue.active || boot_queue.owner_job ||
+	    (boot_attempted && (boot_error || !boot_result.reply_valid ||
+	     !boot_result.idle_observed || boot_result.reply.status || boot_result.reply.detail)) ||
+	    (boot_ping.attempted && !boot_ping.verified) ||
+	    (boot_config.attempted && !boot_config.valid) ||
+	    (boot_region5.attempted && !boot_region5.registered) ||
+	    (boot_config_apply.attempted && !boot_config_apply.accepted) ||
+	    (boot_lpwr.attempted && !boot_lpwr.accepted) ||
+	    (boot_task.attempted && !boot_task.verified) ||
+	    (boot_relu.attempted && !boot_relu.verified)) {
+		err = -ENOTRECOVERABLE;
+		goto done;
+	}
+	err = n1x_boot_dma_gate(boot_dla);
+	if (!err)
+		err = n1x_boot_dma_gate(boot_sroot);
+	if (err)
+		goto done;
+	if (boot_task.attempted) {
+		err = n1x_boot_drain_task_idle(&boot_task);
+		if (err)
+			goto done;
+	}
+	/* This backend never requests/enables Linux IRQ handlers: it polls masked
+	 * firmware sources. Mask only the recovered owned sources and flush the
+	 * write, BEFORE cutting DLA power. Never read its powered-off aperture.
+	 */
+	err = n1x_boot_read(boot_dla, 0xd2c, &owned);
+	if (!err)
+		err = n1x_boot_read(boot_dla, 0xd28, &mask);
+	if (!err)
+		err = n1x_boot_write(boot_dla, 0xd24, mask & owned);
+	if (!err)
+		err = n1x_boot_read(boot_dla, 0xd28, &mask);
+	if (!err && (mask & owned))
+		err = -EIO;
+	if (err)
+		goto done;
+	io = (struct n1x_dla_io){boot_dla, n1x_boot_hfrp_write,
+			       n1x_boot_hfrp_read, n1x_boot_delay};
+	err = n1x_hfrp_stop(&io, &boot_hfrp.channel, &boot_hfrp.version,
+			    5001, 1000, &boot_shutdown.transport);
+	if (err)
+		goto done;
+	if (!boot_shutdown.transport.confirmed) {
+		err = -EIO;
+		goto done;
+	}
+	boot_shutdown.hardware_off = true;
+	boot_hfrp.powered = false;
+	/* SROOT's successful synchronous upload transaction was already consumed
+	 * and firmware ran from its internal copy. Its failed/uncertain path is
+	 * excluded above. DLA's continuing region/task DMA is now power gated.
+	 */
+#define FREE_DLA_BUFFER(object, bytes) do { \
+	if ((object).buffer) { \
+		dma_free_coherent(boot_dla->dev, bytes, (object).buffer, (object).dma); \
+		(object).buffer = NULL; (object).dma = 0; \
+	} \
+} while (0)
+	FREE_DLA_BUFFER(boot_relu, N1X_RELU_BYTES);
+	FREE_DLA_BUFFER(boot_task, 4096);
+	FREE_DLA_BUFFER(boot_lpwr, 4096);
+	FREE_DLA_BUFFER(boot_region5, N1X_REGION5_ALLOC);
+	FREE_DLA_BUFFER(boot_config, 4096);
+	FREE_DLA_BUFFER(boot_ping, 4096);
+#undef FREE_DLA_BUFFER
+	if (boot_buffer) {
+		dma_free_coherent(boot_sroot->dev, N1X_BOOT_BYTES, boot_buffer, boot_dma);
+		boot_buffer = NULL;
+		boot_dma = 0;
+	}
+done:
+	boot_shutdown.error = err;
+	dev_info(dev, "shutdown error=%d power_reply=%u state_valid=%u state=%#x off=%u; %s\n",
+		 err, boot_shutdown.transport.accepted, boot_shutdown.transport.state.valid,
+		 boot_shutdown.transport.state.raw, boot_shutdown.hardware_off,
+		 err ? "DMA/lifetime retained, no retry" : "hardware stopped");
+out:
+	mutex_unlock(&boot_lock);
+	return err;
+}
+
+static int n1x_boot_stop_device(struct device *dev)
+{
+	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
+	int err;
+
+	if (!endpoint || endpoint->sroot)
+		return -ENODEV;
+	/* Keep the same lock order for shutdown and EXEC; never call this while
+	 * holding boot_lock. accel_stop frees its list only after hardware success.
+	 */
+	err = endpoint->accel ? n1x_dla_accel_stop(endpoint->accel, n1x_boot_stop_hardware) :
+			       n1x_boot_stop_hardware(dev);
+	if (err)
+		return err;
+	mutex_lock(&boot_lock);
+	if (!boot_shutdown.released) {
+		boot_shutdown.released = true;
+		if (boot_upload_held) {
+			pm_runtime_put_noidle(boot_sroot->dev);
+			pm_runtime_put_noidle(boot_dla->dev);
+			boot_upload_held = false;
+			module_put(THIS_MODULE);
+		}
+		if (boot_hfrp_held) {
+			pm_runtime_put_noidle(boot_dla->dev);
+			boot_hfrp_held = false;
+			module_put(THIS_MODULE);
+		}
+	}
+	mutex_unlock(&boot_lock);
+	return 0;
+}
+
+static ssize_t shutdown_store(struct device *dev, struct device_attribute *attr,
+			      const char *buf, size_t count)
+{
+	int err;
+	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "stop"))
+		return -EPERM;
+	err = n1x_boot_stop_device(dev);
+	return err ? err : (ssize_t)count;
+}
+static DEVICE_ATTR_WO(shutdown);
+
+static ssize_t shutdown_status_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	ssize_t size;
+	mutex_lock(&boot_lock);
+	size = sysfs_emit(buf, "attempted=%u error=%d accepted=%u state_valid=%u state=%#x hardware_off=%u released=%u hfrp_held=%u upload_held=%u\n",
+		boot_shutdown.attempted, boot_shutdown.error, boot_shutdown.transport.accepted,
+		boot_shutdown.transport.state.valid, boot_shutdown.transport.state.raw,
+		boot_shutdown.hardware_off, boot_shutdown.released, boot_hfrp_held, boot_upload_held);
+	mutex_unlock(&boot_lock);
+	return size;
+}
+static struct device_attribute dev_attr_shutdown_status =
+	__ATTR(shutdown_status, 0400, shutdown_status_show, NULL);
+
 static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
+	&dev_attr_shutdown.attr, &dev_attr_shutdown_status.attr,
 	&dev_attr_prepare_hfrp.attr, &dev_attr_hfrp_status.attr, &dev_attr_query_power_state.attr,
 	&dev_attr_relu_probe.attr, &dev_attr_relu_status.attr,
 	&dev_attr_config_snapshot.attr, &dev_attr_init_region5.attr,
@@ -1339,7 +1542,7 @@ static int n1x_boot_accel_submit(struct device *dev, struct n1x_dla_job *job,
     struct n1x_dla_io io;
     int err;
     mutex_lock(&boot_lock);
-    if (!enable_accel || !n1x_boot_machine() || !boot_dla || boot_dla->dev != dev ||
+    if (boot_stopping || !enable_accel || !n1x_boot_machine() || !boot_dla || boot_dla->dev != dev ||
         !boot_sroot || !boot_task.verified || !boot_lpwr.accepted ||
         !boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid ||
         (boot_relu.attempted && !boot_relu_numeric)) {
@@ -1460,14 +1663,30 @@ static int n1x_boot_suspend(struct device *dev)
 	int err;
 
 	mutex_lock(&boot_lock);
-	err = (boot_attempted || boot_hfrp.attempted) ? -EBUSY : 0;
+	err = ((boot_attempted || boot_hfrp.attempted) && !boot_shutdown.released) ? -EBUSY : 0;
 	mutex_unlock(&boot_lock);
 	return err;
 }
 static int n1x_boot_runtime_suspend(struct device *dev)
 {
-	/* No device quiescence/power-down protocol has been established. */
+	/* Runtime autosuspend cannot perform the explicit joint-endpoint teardown
+	 * or silently restart this one-attempt module instance.
+	 */
 	return -EBUSY;
+}
+
+static void n1x_boot_system_shutdown(struct platform_device *pdev)
+{
+	struct n1x_boot_endpoint *endpoint = platform_get_drvdata(pdev);
+	int err;
+	/* DLA owns the joint lifetime of both endpoints. ROT0's callback must not
+	 * stop its transport while DLA teardown still needs it.
+	 */
+	if (!endpoint || endpoint->sroot)
+		return;
+	err = n1x_boot_stop_device(&pdev->dev);
+	if (err)
+		dev_err(&pdev->dev, "shutdown failed (%d); retaining DMA, no forced reset\n", err);
 }
 
 static const struct dev_pm_ops n1x_boot_pm = {
@@ -1480,6 +1699,7 @@ static const struct acpi_device_id n1x_boot_ids[] = {{"NVDA200A", 0}, {"NVDA8600
 static struct platform_driver n1x_boot_driver = {
 	.probe = n1x_boot_probe,
 	.remove = n1x_boot_remove,
+	.shutdown = n1x_boot_system_shutdown,
 	.driver = {
 		.name = "n1x-npu-bootstrap",
 		.acpi_match_table = n1x_boot_ids,
@@ -1504,7 +1724,7 @@ static void __exit n1x_boot_exit(void)
 }
 module_exit(n1x_boot_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Explicit one-attempt P16 SROOT upload qualification; reboot required after attempt");
+MODULE_DESCRIPTION("Explicit P16 DLA bootstrap with checked shutdown; uncertain failures remain pinned");
 MODULE_FIRMWARE(N1X_BOOT_FIRMWARE);
 MODULE_FIRMWARE(N1X_BOOT_FALLBACK_FIRMWARE);
 MODULE_FIRMWARE(N1X_BOARD_FIRMWARE);

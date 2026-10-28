@@ -34,6 +34,12 @@ covers eight numerical jobs. Additional tests use a modeled NPU boundary for
 error injection. Submission currently blocks and attempted kernel DMA backing
 remains retained until reboot.
 
+A [controlled shutdown and reload path](docs/shutdown-reload.md) is now
+implemented and fault-tested offline. Its first physical unload/reload cycle
+is pending; the older loaded module still requires one reboot. The new path
+releases DMA and module/power references only after checked shutdown of a
+healthy device, and keeps uncertain failures pinned.
+
 On the tested P16, the Linux module reads the verified board policy, performs
 the power/configuration handshake, uploads the extracted firmware, establishes
 DMA communication and submits a compiler-produced task. The numerical test

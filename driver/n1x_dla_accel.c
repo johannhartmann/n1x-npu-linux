@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Experimental trusted-model API. Submitted DMA is retained until reboot.
+/* Experimental trusted-model API. Submitted DMA is retained until checked stop.
  * Kernel-produced descriptors contain no caller-supplied physical addresses.
  * Embedded model instructions are NOT sandboxed; every ioctl requires RAWIO.
  */
@@ -38,7 +38,7 @@ struct n1x_dla_accel {
     u64 last_id;
     size_t retained;
     u32 count;
-    bool unplugged;
+    bool unplugged, stopped;
 };
 static struct n1x_dla_accel *to_accel(struct drm_device *drm)
 {
@@ -72,7 +72,8 @@ static int info_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
     mutex_lock(&accel->lock);
     *info = (struct n1x_dla_accel_info){
         .abi_version = N1X_DLA_ABI_VERSION,
-        .capabilities = N1X_DLA_CAP_RAWIO_REQUIRED | N1X_DLA_CAP_RETAIN_UNTIL_REBOOT,
+        .capabilities = N1X_DLA_CAP_RAWIO_REQUIRED | N1X_DLA_CAP_RETAIN_UNTIL_REBOOT |
+                        N1X_DLA_CAP_REEXEC_IO | N1X_DLA_CAP_CONTROLLED_STOP,
         .max_image_bytes = N1X_DLA_MAX_IMAGE, .max_addresses = N1X_DLA_MAX_ADDRESSES,
         .retained_bytes = accel->retained, .retain_limit = N1X_DLA_RETAIN_LIMIT,
         .retained_jobs = accel->count, .max_jobs = N1X_DLA_MAX_JOBS,
@@ -123,7 +124,7 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
         goto free_ranges;
     }
     mutex_lock(&accel->lock);
-    if (accel->unplugged) {
+    if (accel->unplugged || accel->stopped) {
         err = -ENODEV;
         goto free_job;
     }
@@ -229,6 +230,101 @@ static int read_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
     mutex_unlock(&accel->lock);
     return err;
 }
+static int reexec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
+{
+    struct n1x_dla_accel *accel = to_accel(drm);
+    struct n1x_dla_accel_reexec *req = data;
+    struct n1x_dla_accel_patch *patches;
+    struct n1x_accel_job *job = NULL, *candidate;
+    struct n1x_dla_job_ops ops;
+    void **copies;
+    size_t total = 0;
+    unsigned int i, j;
+    int err = -ENOENT;
+    if (!capable(CAP_SYS_RAWIO))
+        return -EPERM;
+    if (!req->job_id || !req->patches_ptr || !req->num_patches || req->num_patches > 64 ||
+        req->reserved || req->new_job_id || req->status || req->completed)
+        return -EINVAL;
+    patches = memdup_user(u64_to_user_ptr(req->patches_ptr), req->num_patches * sizeof(*patches));
+    if (IS_ERR(patches))
+        return PTR_ERR(patches);
+    copies = kcalloc(req->num_patches, sizeof(*copies), GFP_KERNEL);
+    if (!copies) {
+        kfree(patches);
+        return -ENOMEM;
+    }
+    /* Snapshot every user byte before modifying any device-visible storage. */
+    for (i = 0; i < req->num_patches; i++) {
+        if (!patches[i].bytes || !patches[i].data_ptr || patches[i].bytes > N1X_DLA_MAX_IMAGE - total) {
+            err = -EINVAL;
+            goto free_copies;
+        }
+        total += patches[i].bytes;
+        copies[i] = memdup_user(u64_to_user_ptr(patches[i].data_ptr), patches[i].bytes);
+        if (IS_ERR(copies[i])) {
+            err = PTR_ERR(copies[i]);
+            copies[i] = NULL;
+            goto free_copies;
+        }
+    }
+    mutex_lock(&accel->lock);
+    if (accel->unplugged || accel->stopped) {
+        err = -ENODEV;
+        goto unlock;
+    }
+    list_for_each_entry(candidate, &accel->jobs, link)
+        if (candidate->id == req->job_id && candidate->owner == file) {
+            job = candidate;
+            break;
+        }
+    if (!job)
+        goto unlock;
+    if (job->task.error || !job->task.verified || job->task.resumable || job->task.suspended) {
+        err = -EIO;
+        goto unlock;
+    }
+    if (accel->last_id == U64_MAX) {
+        err = -EOVERFLOW;
+        goto unlock;
+    }
+    for (i = 0; i < req->num_patches; i++) {
+        if (patches[i].offset >= job->image_bytes || patches[i].bytes > job->image_bytes - patches[i].offset) {
+            err = -EINVAL;
+            goto unlock;
+        }
+        for (j = 0; j < i; j++)
+            if (patches[i].offset < patches[j].offset + patches[j].bytes &&
+                patches[j].offset < patches[i].offset + patches[i].bytes) {
+                err = -EINVAL;
+                goto unlock;
+            }
+    }
+    /* Only the owner explicitly opts into this successful-task I/O reuse.
+     * Program, address list and allocation remain resident. This is neither
+     * error recovery nor a whole-device DMA-free/unmap boundary.
+     */
+    for (i = 0; i < req->num_patches; i++)
+        memcpy(job->task.buffer + N1X_JOB_PREFIX + patches[i].offset, copies[i], patches[i].bytes);
+    job->task = (struct n1x_dla_job){.buffer = job->task.buffer, .dma = job->task.dma};
+    job->id = ++accel->last_id; /* Old READ IDs cannot observe the replacement. */
+    ops = (struct n1x_dla_job_ops){job, publish, read_fence};
+    err = accel->submit(drm->dev, &job->task, &ops);
+    if (!job->task.attempted && !err)
+        err = -EIO;
+    req->new_job_id = job->id;
+    req->status = job->task.error = err;
+    req->completed = !err && job->task.verified;
+    err = 0; /* Execution status is separate from syscall/copy failure. */
+unlock:
+    mutex_unlock(&accel->lock);
+free_copies:
+    for (i = 0; i < req->num_patches; i++)
+        kfree(copies[i]);
+    kfree(copies);
+    kfree(patches);
+    return err;
+}
 static void postclose(struct drm_device *drm, struct drm_file *file)
 {
     struct n1x_dla_accel *accel = to_accel(drm);
@@ -238,6 +334,33 @@ static void postclose(struct drm_device *drm, struct drm_file *file)
         if (job->owner == file)
             job->owner = NULL;
     mutex_unlock(&accel->lock);
+}
+int n1x_dla_accel_stop(struct n1x_dla_accel *accel, int (*stop)(struct device *))
+{
+    struct n1x_accel_job *job, *next;
+    int err;
+
+    if (!accel || !stop)
+        return -EINVAL;
+    mutex_lock(&accel->lock);
+    /* Wait for any synchronous EXEC to return before entering the backend.
+     * This stays set on failure: administrative stop cannot revive DMA.
+     */
+    accel->stopped = true;
+    err = stop(accel->drm.dev);
+    if (!err) {
+        list_for_each_entry_safe(job, next, &accel->jobs, link) {
+            list_del(&job->link);
+            dma_free_coherent(accel->drm.dev, job->allocated,
+                              job->task.buffer, job->task.dma);
+            kfree(job);
+        }
+        accel->retained = 0;
+        accel->count = 0;
+        /* IDs are never recycled while this DRM device can have open FDs. */
+    }
+    mutex_unlock(&accel->lock);
+    return err;
 }
 /* No GEM mmap: all device-visible bytes are immutable after EXEC's snapshot. */
 static const struct file_operations accel_fops = {
@@ -250,6 +373,7 @@ static const struct drm_ioctl_desc accel_ioctls[] = {
     DRM_IOCTL_DEF_DRV(N1X_DLA_INFO, info_ioctl, 0),
     DRM_IOCTL_DEF_DRV(N1X_DLA_EXEC, exec_ioctl, 0),
     DRM_IOCTL_DEF_DRV(N1X_DLA_READ, read_ioctl, 0),
+    DRM_IOCTL_DEF_DRV(N1X_DLA_REEXEC, reexec_ioctl, 0),
 };
 static const struct drm_driver accel_driver = {
     .driver_features = DRIVER_COMPUTE_ACCEL,

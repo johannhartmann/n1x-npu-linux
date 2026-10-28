@@ -56,3 +56,21 @@ int n1x_dla_read(int fd, unsigned long long job_id, unsigned long long offset,
     if (!output || !bytes) return -EINVAL;
     return ioctl(fd, DRM_IOCTL_N1X_DLA_READ, &req) < 0 ? -errno : 0;
 }
+int n1x_dla_resubmit(int fd, unsigned long long job_id,
+                     const struct n1x_dla_accel_patch *patches, unsigned int count,
+                     struct n1x_dla_accel_exec *result)
+{
+    struct n1x_dla_accel_reexec req = {.job_id = job_id,
+        .patches_ptr = (uintptr_t)patches, .num_patches = count};
+    if (!job_id || !patches || !count || !result)
+        return -EINVAL;
+    memset(result, 0, sizeof(*result));
+    if (ioctl(fd, DRM_IOCTL_N1X_DLA_REEXEC, &req) < 0)
+        return -errno;
+    result->job_id = req.new_job_id;
+    result->status = req.status;
+    result->completed = req.completed;
+    if (!result->job_id || (!result->status && !result->completed))
+        return -EPROTO;
+    return result->status;
+}

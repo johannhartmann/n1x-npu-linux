@@ -29,6 +29,7 @@ struct Device {
 };
 struct Module {
     uintptr_t owner;
+    uint64_t retained_job=0;
     n1x::Model model;
     Module(uintptr_t d,const uint8_t *p,size_t n):owner(d),model(p,n) {}
 };
@@ -253,14 +254,16 @@ cudlaStatus cudlaDrvSubmitTask(cudlaDevHandle handle,const cudlaTask *tasks,uint
         n1x_dla_accel_info info{}; int err=n1x_dla_info(d->fd,&info);
         if(err) return cudlaErrorOs;
         auto required=(m->model.image.size()+8192+4095)&~size_t(4095);
-        if(info.retained_bytes>info.retain_limit || required>info.retain_limit-info.retained_bytes ||
-           info.retained_jobs>=info.max_jobs) return cudlaErrorOutOfResources;
+        bool reuse=m->retained_job && (info.capabilities&N1X_DLA_CAP_REEXEC_IO);
+        if(!reuse && (info.retained_bytes>info.retain_limit || required>info.retain_limit-info.retained_bytes ||
+           info.retained_jobs>=info.max_jobs)) return cudlaErrorOutOfResources;
         HostImage host;
         if(quarantine_count==quarantined.size() ||
            m->model.image.size()>(64U<<20)-quarantine_bytes) return cudlaErrorOutOfResources;
         if(cuMemHostAlloc(&host.data,m->model.image.size(),0)!=CUDA_SUCCESS) return cudlaErrorOutOfResources;
         auto image=static_cast<uint8_t*>(host.data);
         std::memcpy(image,m->model.image.data(),m->model.image.size());
+        for(const auto& tensor:m->model.outputs) std::memset(image+tensor.offset,0xff,tensor.desc.size);
         bool copy_error=false;
         for(size_t i=0;i<inputs.size();i++) {
             const auto& t=m->model.inputs[i];
@@ -273,8 +276,17 @@ cudlaStatus cudlaDrvSubmitTask(cudlaDevHandle handle,const cudlaTask *tasks,uint
         }
         if(copy_error) return d->last=cudlaErrorCuda;
         n1x_dla_accel_exec result{};
-        err=n1x_dla_submit(d->fd,image,m->model.image.size(),m->model.ranges.data(),m->model.ranges.size(),&result);
+        if(reuse) {
+            std::vector<n1x_dla_accel_patch> patches;
+            for(const auto *tensors:{&m->model.inputs,&m->model.outputs})
+                for(const auto& tensor:*tensors)
+                    patches.push_back({tensor.offset,tensor.desc.size,reinterpret_cast<uintptr_t>(image+tensor.offset)});
+            err=n1x_dla_resubmit(d->fd,m->retained_job,patches.data(),patches.size(),&result);
+        } else {
+            err=n1x_dla_submit(d->fd,image,m->model.image.size(),m->model.ranges.data(),m->model.ranges.size(),&result);
+        }
         if(err) return d->last=kernel_error(err); // Never retry an uncertain EXEC.
+        if(info.capabilities&N1X_DLA_CAP_REEXEC_IO) m->retained_job=result.job_id;
         for(const auto& t:m->model.outputs) {
             err=n1x_dla_read(d->fd,result.job_id,t.offset,image+t.offset,t.desc.size);
             if(err) return d->last=kernel_error(err);

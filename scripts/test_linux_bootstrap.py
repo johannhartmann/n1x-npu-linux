@@ -60,7 +60,7 @@ struct n1x_boot_endpoint {struct device *dev;};
 static struct device root_dev={0},dla_dev={1};
 static struct n1x_boot_endpoint root_ep={&root_dev},dla_ep={&dla_dev};
 static struct n1x_boot_endpoint *boot_sroot,*boot_dla;
-static bool enable_upload,machine_ok,boot_attempted;
+static bool enable_upload,machine_ok,boot_attempted,boot_upload_held,boot_stopping;
 static struct {bool powered;} boot_hfrp = {true};
 static unsigned int firmware_variant,selected_variant;
 static struct n1x_dla_sroot_load_result boot_result;

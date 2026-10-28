@@ -45,4 +45,16 @@ if os.environ.get('N1X_COMPILER_MODEL') in ('conv1x1','conv1x1_relu'):
         (out/name).write_bytes(data)
         constants.append(dict(offset=offset,bytes=size,file=name,sha256=hashlib.sha256(data).hexdigest()))
     (out/'constants.json').write_text(json.dumps(constants,indent=2)+'\n')
+elif os.environ.get('N1X_COMPILER_MODEL')=='superres':
+    spec=json.loads((out/'constants-spec.json').read_text())
+    constants=[]
+    for entry in spec['entries']:
+        pointer=q(maps['pointer'][3]+entry['offset'])
+        data=read(pointer,entry['bytes']);digest=hashlib.sha256(data).hexdigest()
+        (out/('constant-observed-%x.bin'%entry['offset'])).write_bytes(data)
+        assert digest==entry['expected_sha256'],(entry,digest)
+        name='constant-%x.bin'%entry['offset'];(out/name).write_bytes(data)
+        constants.append(dict(offset=entry['offset'],bytes=len(data),file=name,sha256=digest,
+                              backing_bytes=entry['backing_bytes']))
+    (out/'constants.json').write_text(json.dumps(constants,indent=2)+'\n')
 end

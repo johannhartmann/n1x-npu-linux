@@ -22,7 +22,7 @@ struct device {int unused;};
 struct n1x_boot_endpoint {struct device *dev;};
 static struct device device,foreign;
 static struct n1x_boot_endpoint ep={&device},*boot_dla,*boot_sroot;
-static bool enable_accel,machine_ok,boot_relu_numeric;
+static bool enable_accel,machine_ok,boot_relu_numeric,boot_stopping;
 static struct n1x_dla_job boot_task,boot_relu;
 static struct n1x_dla_job_queue boot_queue;
 static struct {bool accepted;} boot_lpwr;
@@ -45,7 +45,7 @@ int n1x_dla_job_execute(struct n1x_dla_job_queue *q,const struct n1x_dla_io *io,
 '''
     tests = r'''
 static void reset(void)
-{enable_accel=machine_ok=boot_relu_numeric=true;boot_dla=boot_sroot=&ep;
+{boot_stopping=false;enable_accel=machine_ok=boot_relu_numeric=true;boot_dla=boot_sroot=&ep;
  boot_task.verified=boot_lpwr.accepted=boot_hfrp.powered=boot_hfrp.policy.boot_tables_valid=true;
  boot_relu.attempted=false;gates=drains=runs=gate_error=drain_error=run_error=0;}
 static void check(struct device *dev,int expected,int g,int d,int r)
@@ -64,6 +64,7 @@ int main(void)
   check(mode==9?&foreign:&device,-ENODEV,0,0,0);
  }
  reset();gate_error=-EOPNOTSUPP;check(&device,-EOPNOTSUPP,1,0,0);
+ reset();boot_stopping=true;check(&device,-ENODEV,0,0,0);
  reset();drain_error=-ENOTRECOVERABLE;check(&device,-ENOTRECOVERABLE,1,1,0);
  reset();run_error=-ETIMEDOUT;check(&device,-ETIMEDOUT,1,1,1);
  reset();check(&device,0,1,1,1);

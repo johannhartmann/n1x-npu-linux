@@ -11,7 +11,8 @@ from pathlib import Path
 
 TRIGGERS = {'prepare_hfrp': b'prepare\n', 'upload': b'upload\n', 'ping': b'ping\n', 'init_region5': b'init\n',
             'read_config': b'read\n', 'apply_config': b'apply\n',
-            'apply_lpwr': b'apply\n', 'bypass_task': b'run\n', 'relu_probe': b'run\n'}
+            'apply_lpwr': b'apply\n', 'bypass_task': b'run\n', 'relu_probe': b'run\n',
+            'shutdown': b'stop\n'}
 
 
 def trigger(path, payload):

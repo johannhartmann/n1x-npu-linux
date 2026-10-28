@@ -37,7 +37,7 @@ struct n1x_boot_endpoint {struct device *dev;void *hfrp;};
 static struct device dla_dev,other_dev;
 static struct n1x_boot_endpoint ep={&dla_dev,&dla_dev},sroot;
 static struct n1x_boot_endpoint *boot_dla,*boot_sroot;
-static bool enable_hfrp,machine_ok,privileged;
+static bool enable_hfrp,machine_ok,privileged,boot_stopping;
 static int boot_lock,locks,queries,logs,emits,reply_error,cases;
 #define CAP_SYS_RAWIO 17
 static bool capable(int cap) {assert(cap==CAP_SYS_RAWIO);return privileged;}
@@ -73,7 +73,7 @@ int n1x_hfrp_query_power_state(const struct n1x_dla_io *io,struct n1x_hfrp_chann
  return reply_error;}
 ''' + store + show + r'''
 static void reset(void)
-{memset(&boot_hfrp,0,sizeof(boot_hfrp));boot_dla=&ep;boot_sroot=&sroot;ep.hfrp=&dla_dev;
+{boot_stopping=false;memset(&boot_hfrp,0,sizeof(boot_hfrp));boot_dla=&ep;boot_sroot=&sroot;ep.hfrp=&dla_dev;
  enable_hfrp=machine_ok=privileged=true;locks=queries=logs=emits=reply_error=0;
  assert(!boot_lock);boot_hfrp.attempted=boot_hfrp.powered=true;boot_hfrp.phase=5;
  boot_hfrp.channel.state=N1X_HFRP_READY;boot_hfrp.exchange.reply.header=0x5678;
@@ -97,6 +97,7 @@ int main(void)
  reset();rejected(&other_dev,"query\n",-ENODEV,1);
  reset();ep.hfrp=NULL;rejected(&dla_dev,"query\n",-ENODEV,1);
  reset();boot_sroot=NULL;rejected(&dla_dev,"query\n",-ENODEV,1);
+ reset();boot_stopping=true;rejected(&dla_dev,"query\n",-ESHUTDOWN,1);
  reset();boot_hfrp.attempted=false;rejected(&dla_dev,"query\n",-EHOSTDOWN,1);
  reset();boot_hfrp.powered=false;rejected(&dla_dev,"query\n",-EHOSTDOWN,1);
  reset();boot_hfrp.error=-EIO;rejected(&dla_dev,"query\n",-EHOSTDOWN,1);

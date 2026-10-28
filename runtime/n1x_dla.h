@@ -16,6 +16,9 @@ int n1x_dla_submit(int fd, const void *image, unsigned int bytes,
                    struct n1x_dla_accel_exec *result);
 int n1x_dla_read(int fd, unsigned long long job_id, unsigned long long offset,
                  void *output, unsigned long long bytes);
+int n1x_dla_resubmit(int fd, unsigned long long job_id,
+                     const struct n1x_dla_accel_patch *patches, unsigned int count,
+                     struct n1x_dla_accel_exec *result);
 #ifdef __cplusplus
 }
 #endif

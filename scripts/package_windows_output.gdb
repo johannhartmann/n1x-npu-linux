@@ -20,6 +20,13 @@ for e in (fm['translation']['outputs'] if conv else fm['outputs']):
     assert e['kind'] not in payloads
     payloads[e['kind']]=data
 assert set(payloads)=={0,1,3,4,5,6,7}
+if model=='superres' and fm.get('constant_outputs'):
+    for entry in fm['constant_outputs']:
+        data=(final/entry['file']).read_bytes()
+        assert len(data)==entry['bytes'] and hashlib.sha256(data).hexdigest()==entry['sha256']
+        pointer=q(maps['pointer'][3]+entry['offset'])
+        assert pointer
+        inf.write_memory(pointer,data)
 calls=[]
 expected_calls=[('sizes',7),('imatrix',0),('copy',3),('copy',0),('copy',1),('copy',5),('copy',4)]
 def replay(name):

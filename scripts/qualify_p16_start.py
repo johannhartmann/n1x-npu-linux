@@ -3,7 +3,8 @@
 
 Explicit manual experiment on npu2, not an autostart service. Starts only
 with unbound endpoints and no bootstrap loaded. Leaves attempted hardware
-state/module/DMA retained until reboot, including after success.
+state/module/DMA retained until checked explicit shutdown. Uncertain failures
+remain retained until reboot.
 """
 import argparse
 import hashlib
@@ -145,7 +146,7 @@ def main():
             if (dev/'driver').resolve().name != 'n1x-npu-bootstrap':
                 raise RuntimeError('DLA is not bound to the bootstrap')
             run_phases(dev, args.through, record, after_hfrp=True)
-            record(completed_through=args.through, retained_until_reboot=True,
+            record(completed_through=args.through, retained_until_checked_shutdown=True,
                    relu_numerical_verified=args.through == 'relu_probe', general_inference_verified=False)
             return
         destination = Path('/usr/lib/firmware/nvidia/n1x/p16-bios300-physical.rom')
@@ -172,7 +173,7 @@ def main():
         if args.enable_accel:
             preflight_accel(dev, record)
         run_phases(dev, args.through, record)
-        record(completed_through=args.through, retained_until_reboot=True,
+        record(completed_through=args.through, retained_until_checked_shutdown=True,
                relu_numerical_verified=args.through == 'relu_probe', general_inference_verified=False,
                automatic_start_installed=False)
 

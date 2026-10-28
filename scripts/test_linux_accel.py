@@ -61,6 +61,12 @@ struct list_head {struct list_head *next,*prev;};
 static void INIT_LIST_HEAD(struct list_head *h) {h->next=h->prev=h;}
 static void list_add_tail(struct list_head *n,struct list_head *h)
 {n->next=h;n->prev=h->prev;h->prev->next=n;h->prev=n;}
+static void list_del(struct list_head *n) {n->prev->next=n->next;n->next->prev=n->prev;}
+#define list_for_each_entry_safe(pos,tmp,head,member) \
+ for(struct list_head *node=(head)->next,*following=node->next; \
+     node!=(head) && ((pos)=container_of(node,__typeof__(*(pos)),member), \
+     (tmp)=following==(head)?NULL:container_of(following,__typeof__(*(tmp)),member),1); \
+     node=following,following=node->next)
 #define list_for_each_entry(pos,head,member) \
  for(struct list_head *node=(head)->next;node!=(head) && ((pos)=container_of(node,__typeof__(*(pos)),member),1);node=node->next)
 static bool privileged=true,copyin_fail,copyout_fail,memdup_fail,dma_fail;
@@ -97,6 +103,9 @@ static struct n1x_dla_accel accel;
 static struct n1x_dla_accel_range ranges[512];
 static struct n1x_dla_accel_exec req;
 static int cases;
+static int stop_error,stops;
+static int stopped_hardware(struct device *d)
+{assert(d==&device && accel.lock.locked && accel.stopped);stops++;return stop_error;}
 static u64 word64(const u8 *p) {u64 v=0;for(int i=0;i<8;i++)v|=(u64)p[i]<<(8*i);return v;}
 static int backend(struct device *d,struct n1x_dla_job *task,const struct n1x_dla_job_ops *ops)
 {
@@ -196,16 +205,53 @@ int main(int argc,char **argv)
  read.offset=image_bytes;assert(read_ioctl(&accel.drm,&read,&owner)==-EINVAL);
  read.offset=0;read.bytes=UINT64_MAX;assert(read_ioctl(&accel.drm,&read,&owner)==-EINVAL);
  read.bytes=1;read.reserved=1;assert(read_ioctl(&accel.drm,&read,&owner)==-EINVAL);read.reserved=0;
+ unsigned char replacement=0xcc;
+ struct n1x_dla_accel_patch patch={13,1,(uintptr_t)&replacement};
+ struct n1x_dla_accel_reexec again={.job_id=1,.patches_ptr=(uintptr_t)&patch,.num_patches=1};
+ privileged=false;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EPERM);privileged=true;
+ assert(reexec_ioctl(&accel.drm,&again,&other)==-ENOENT);
+ again.reserved=1;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EINVAL);again.reserved=0;
+ patch.offset=image_bytes;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EINVAL);patch.offset=13;
+ memdup_fail=true;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EFAULT);memdup_fail=false;
+ u64 previous=1;
+ int reuse_allocs=allocations,reuse_frees=frees;
+ read.offset=13;
+ for(int iteration=0;iteration<64;iteration++){
+  replacement=(unsigned char)(0x80+iteration);image[13]=replacement;
+  again=(struct n1x_dla_accel_reexec){.job_id=previous,.patches_ptr=(uintptr_t)&patch,.num_patches=1};
+  assert(!reexec_ioctl(&accel.drm,&again,&owner));
+  assert(again.new_job_id==previous+1&&again.completed&&!again.status);
+  assert(accel.count==1&&accel.retained==12288&&allocations==reuse_allocs&&frees==reuse_frees);
+  read.job_id=previous;assert(read_ioctl(&accel.drm,&read,&owner)==-ENOENT);
+  read.job_id=again.new_job_id;assert(!read_ioctl(&accel.drm,&read,&owner)&&output==0x5a);
+  previous=again.new_job_id;
+ }
  int savedfrees=frees;postclose(&accel.drm,&owner);
  assert(frees==savedfrees&&accel.count==1&&read_ioctl(&accel.drm,&read,&owner)==-ENOENT);
+ u64 expected_next=accel.last_id+1;
  reset_request();backend_error=-ETIMEDOUT;check(0);
- assert(req.job_id==2&&!req.completed&&req.status==-ETIMEDOUT&&frees==savedfrees);
- read.job_id=2;assert(read_ioctl(&accel.drm,&read,&owner)==-EIO);
+ assert(req.job_id==expected_next&&!req.completed&&req.status==-ETIMEDOUT&&frees==savedfrees);
+ read.job_id=req.job_id;assert(read_ioctl(&accel.drm,&read,&owner)==-EIO);
+ again=(struct n1x_dla_accel_reexec){.job_id=req.job_id,.patches_ptr=(uintptr_t)&patch,.num_patches=1};
+ assert(reexec_ioctl(&accel.drm,&again,&owner)==-EIO);
  assert(!info_ioctl(&accel.drm,&info,&owner)&&info.retained_jobs==2&&info.retained_bytes==24576);
- assert(info.abi_version==1&&info.capabilities==3&&info.reserved==0);
- /* Only the test may discard modeled device storage; production retains it. */
- while(accel.jobs.next!=&accel.jobs){struct n1x_accel_job *j=container_of(accel.jobs.next,struct n1x_accel_job,link);
-  accel.jobs.next=j->link.next;free(j->task.buffer);free(j);}
+ assert(info.abi_version==1&&info.capabilities==15&&info.reserved==0);
+ /* An uncertain stop must retain every job and block all future execution. */
+ stop_error=-ETIMEDOUT;int before_stop=frees;
+ assert(n1x_dla_accel_stop(&accel,stopped_hardware)==-ETIMEDOUT && stops==1);
+ assert(accel.count==2 && accel.retained==24576 && frees==before_stop);
+ reset_request();check(-ENODEV);
+ again=(struct n1x_dla_accel_reexec){.job_id=read.job_id,.patches_ptr=(uintptr_t)&patch,.num_patches=1};
+ assert(reexec_ioctl(&accel.drm,&again,&owner)==-ENODEV);
+ /* The callback here models independently established power-off, not recovery.
+  * The real bootstrap refuses retry after failure (separately fault-tested). */
+ stop_error=0;u64 last=accel.last_id;
+ assert(!n1x_dla_accel_stop(&accel,stopped_hardware) && stops==2);
+ assert(!accel.count && !accel.retained && frees==before_stop+2 && accel.last_id==last);
+ assert(accel.jobs.next==&accel.jobs && accel.jobs.prev==&accel.jobs);
+ assert(read_ioctl(&accel.drm,&read,&owner)==-ENOENT);
+ postclose(&accel.drm,&owner);assert(!accel.lock.locked);
+ assert(!n1x_dla_accel_stop(&accel,stopped_hardware) && frees==before_stop+2);
  printf("%d exact accel EXEC cases plus READ/INFO/ownership/close checks passed; no hardware access\n",cases);
 }
 '''

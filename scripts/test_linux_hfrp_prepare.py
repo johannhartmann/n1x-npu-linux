@@ -42,7 +42,7 @@ static struct device dla_dev={0},sroot_dev={1};
 static u32 registers[128];
 static struct n1x_boot_endpoint dla_ep={&dla_dev,registers},sroot_ep={&sroot_dev,NULL};
 static struct n1x_boot_endpoint *boot_dla,*boot_sroot;
-static bool enable_hfrp,boot_attempted,machine_ok,module_ok;
+static bool enable_hfrp,boot_attempted,machine_ok,module_ok,boot_hfrp_held;
 static int gates[2],request_error,resume_error,resume_refs,module_refs,releases,requests;
 static int step,fail_step,reads,writes,cases;
 static u8 image[0x110000];

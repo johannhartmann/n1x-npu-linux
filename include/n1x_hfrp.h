@@ -202,4 +202,27 @@ int n1x_hfrp_query_power_state(const struct n1x_dla_io *io,
                                 __u32 polls, __u32 interval_us,
                                 struct n1x_hfrp_power_state *state,
                                 struct n1x_hfrp_exchange_result *result);
+
+struct n1x_hfrp_stop_result {
+    struct n1x_hfrp_exchange_result power;
+    struct n1x_hfrp_exchange_result query;
+    struct n1x_hfrp_power_state state;
+    __u8 attempted;
+    __u8 accepted;
+    __u8 confirmed;
+};
+/* Immediate clock/domain/rail OFF (Windows request 0x70 -> wire 0x0043).
+ * Requires v1.5+, a READY exclusively owned channel and caller-drained work.
+ * Checks the complete two-byte power reply, then requires query 0x1af == 7.
+ * These bits report gating, NOT task completion. Caller must separately prove
+ * successful retirement of every DMA publisher, including the SROOT upload.
+ * No reset, retry, delayed gating, forced unmap or implicit memory release.
+ * Any attempted failure leaves the caller's device/lifetime quarantined.
+ * Invalid input/state/version preserves result and performs no I/O.
+ */
+int n1x_hfrp_stop(const struct n1x_dla_io *io,
+                   struct n1x_hfrp_channel *channel,
+                   const struct n1x_hfrp_version *version,
+                   __u32 polls, __u32 interval_us,
+                   struct n1x_hfrp_stop_result *result);
 #endif

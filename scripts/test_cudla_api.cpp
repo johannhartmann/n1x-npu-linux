@@ -10,7 +10,7 @@
 #include <vector>
 
 int main(int argc,char **argv) {
-    assert(argc==2);
+    assert(argc==2 || argc==3);
     std::ifstream file(argv[1],std::ios::binary);
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)),{});
     assert(!bytes.empty());
@@ -60,6 +60,8 @@ int main(int argc,char **argv) {
     assert(extra!=ih);inputs[0]=extra;
     assert(cuMemsetD8(input,0x46,in.size)==CUDA_SUCCESS);assert(cuCtxSynchronize()==CUDA_SUCCESS);
     assert(cudlaGetLastError(a)==cudlaSuccess);
+    if(argc==3) for(unsigned int i=0;i<64;i++)
+        assert(cudlaSubmitTask(a,&task,1,stream,0)==cudlaSuccess);
     assert(!setenv("TEST_FAILURE","exec",1));
     assert(cudlaSubmitTask(a,&task,1,stream,0)==cudlaErrorDlaErrEngineTimeout);
     assert(cudlaGetLastError(a)==cudlaErrorDlaErrEngineTimeout);

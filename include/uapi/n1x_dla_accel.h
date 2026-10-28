@@ -15,6 +15,12 @@
 #define N1X_DLA_MAX_JOBS 128U
 #define N1X_DLA_CAP_RAWIO_REQUIRED 1U
 #define N1X_DLA_CAP_RETAIN_UNTIL_REBOOT 2U
+#define N1X_DLA_CAP_REEXEC_IO 4U
+/* With this bit, the privileged sysfs shutdown may invalidate all results and
+ * release retained DMA after checked device stop. Close/unregister alone never
+ * releases it. The retention flag keeps its historical name for compatibility.
+ */
+#define N1X_DLA_CAP_CONTROLLED_STOP 8U
 struct n1x_dla_accel_info {
     __u32 abi_version, capabilities;
     __u32 max_image_bytes, max_addresses;
@@ -41,10 +47,24 @@ struct n1x_dla_accel_read {
     __u64 job_id, offset, bytes, data_ptr;
     __u64 reserved;
 };
+/* Opt-in reuse of a successfully completed, non-preemptible trusted task.
+ * Caller restricts patches to model I/O; constants/instructions stay resident.
+ * Retains the allocation, including after error. Replaces the prior result ID.
+ */
+struct n1x_dla_accel_patch { __u64 offset, bytes, data_ptr; };
+struct n1x_dla_accel_reexec {
+    __u64 job_id, patches_ptr;
+    __u32 num_patches, reserved;
+    __u64 new_job_id;
+    __s32 status;
+    __u32 completed;
+};
 #define DRM_N1X_DLA_INFO 0x00
 #define DRM_N1X_DLA_EXEC 0x01
 #define DRM_N1X_DLA_READ 0x02
+#define DRM_N1X_DLA_REEXEC 0x03
 #define DRM_IOCTL_N1X_DLA_INFO DRM_IOR(DRM_COMMAND_BASE + DRM_N1X_DLA_INFO, struct n1x_dla_accel_info)
 #define DRM_IOCTL_N1X_DLA_EXEC DRM_IOWR(DRM_COMMAND_BASE + DRM_N1X_DLA_EXEC, struct n1x_dla_accel_exec)
 #define DRM_IOCTL_N1X_DLA_READ DRM_IOW(DRM_COMMAND_BASE + DRM_N1X_DLA_READ, struct n1x_dla_accel_read)
+#define DRM_IOCTL_N1X_DLA_REEXEC DRM_IOWR(DRM_COMMAND_BASE + DRM_N1X_DLA_REEXEC, struct n1x_dla_accel_reexec)
 #endif

@@ -25,7 +25,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target',choices=('t234','t254','t256'),help='Attempt an offline compile for this explicit candidate target')
-    parser.add_argument('--model',choices=('relu','conv1x1','conv1x1_relu'),default='relu',help='Graph fixture to construct')
+    parser.add_argument('--model',choices=('relu','conv1x1','conv1x1_relu','superres'),default='relu',help='Graph fixture to construct')
     parser.add_argument('--capture-mtl',action='store_true',help='Stop under GDB and save intermediate MTL buffers without translation')
     parser.add_argument('--capture-translation-input',action='store_true',
                         help='Replay verified Windows pretranslation outputs and capture the next frontend handoff')
@@ -82,12 +82,16 @@ def main():
     network,tensor,layer,output=H(),H(),H(),H()
     invoke('NvDlaCreateNetwork',[PH],C.byref(network));assert network.value
     try:
-        dims=Dims(1,32,7,7)
+        dims=Dims(1,1,64,64) if args.model=='superres' else Dims(1,32,7,7)
         invoke('NvDlaNetworkAddInput',[H,C.c_char_p,Dims,PH],network,b'input',dims,C.byref(tensor));assert tensor.value
         observed=Dims()
         invoke('NvDlaTensorGetDimensions',[H,C.POINTER(Dims)],tensor,C.byref(observed))
         assert bytes(observed)==bytes(dims)
-        if args.model=='relu':
+        graph_tensors=[]
+        if args.model=='superres':
+            from superres_graph import build
+            layer,output,graph_tensors,constant_backing=build(ROOT,invoke,network,tensor,H,PH,Dims2,Weights,outdir)
+        elif args.model=='relu':
             invoke('NvDlaNetworkAddActivation',[H,H,C.c_uint8,PH],network,tensor,0,C.byref(layer))
         else:
             # C wrapper 0x633434: five Dims2 values, two indirect 24-byte
@@ -124,7 +128,7 @@ def main():
             assert linked.value==intermediate.value
         layer_count=C.c_uint32()
         invoke('NvDlaNetworkGetNumLayers',[H,C.POINTER(C.c_uint32)],network,C.byref(layer_count))
-        assert layer_count.value==(2 if args.model=='conv1x1_relu' else 1)
+        assert layer_count.value==(7 if args.model=='superres' else 2 if args.model=='conv1x1_relu' else 1)
         invoke('NvDlaNetworkMarkOutput',[H,H],network,output)
         invoke('NvDlaTensorSetName',[H,C.c_char_p],output,b'output')
         # Numeric definitions from the public NvDlaType.h counterpart:
@@ -134,7 +138,7 @@ def main():
             activation=C.c_uint8(255)
             invoke('NvDlaActivationLayerGetActivationType',[H,C.POINTER(C.c_uint8)],layer,C.byref(activation))
             assert activation.value==0
-        for item in (tensor,output)+((intermediate,) if intermediate else ()):
+        for item in tuple(graph_tensors) if graph_tensors else (tensor,output)+((intermediate,) if intermediate else ()):
             invoke('NvDlaTensorSetDataType',[H,C.c_uint8],item,2)
             invoke('NvDlaTensorSetDataFormat',[H,C.c_uint8],item,3)
             dtype=C.c_uint8(255)
@@ -143,7 +147,7 @@ def main():
             count=C.c_uint32(0)
             invoke(name,[H,C.POINTER(C.c_uint32)],network,C.byref(count));assert count.value==1
         invoke('NvDlaTensorGetDimensions',[H,C.POINTER(Dims)],output,C.byref(observed))
-        assert bytes(observed)==bytes(dims)
+        assert bytes(observed)==bytes(Dims(1,9,64,64) if args.model=='superres' else dims)
         compiled=None
         if args.target:
             wisdom,compiler,profiler,profile,target,loadable=H(),H(),H(),H(),H(),H()

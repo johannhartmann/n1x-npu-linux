@@ -26,6 +26,10 @@ MOCK=r'''
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdint.h>
+static unsigned char *saved_image;
+static unsigned int saved_bytes;
+static unsigned long long saved_id;
 static int fail(const char *name) {const char *p=getenv("TEST_FAILURE");return p&&!strcmp(p,name);}
 static void event(const char *name) {
  FILE *f=fopen(getenv("TEST_EVENTS"),"a");assert(f);assert(fprintf(f,"%s\n",name)>0);assert(!fclose(f));
@@ -33,17 +37,29 @@ static void event(const char *name) {
 int n1x_dla_open(const char *p) {(void)p;event("open");return fail("open")?-EACCES:open("/dev/null",O_RDWR);}
 int n1x_dla_info(int fd,struct n1x_dla_accel_info *i) {
  assert(fd>=0);event("info");memset(i,0,sizeof(*i));i->abi_version=1;
+ i->capabilities=getenv("TEST_REUSE")?N1X_DLA_CAP_REEXEC_IO:0;
  i->retain_limit=fail("budget")?1:64U<<20;i->max_jobs=128;return 0;
 }
 int n1x_dla_submit(int fd,const void *image,unsigned int bytes,
  const struct n1x_dla_accel_range *ranges,unsigned int count,struct n1x_dla_accel_exec *r) {
  assert(fd>=0);event("EXEC");
+ free(saved_image);saved_image=malloc(bytes);assert(saved_image);memcpy(saved_image,image,bytes);saved_bytes=bytes;saved_id=7;
  FILE *f=fopen(getenv("TEST_IMAGE"),"wb");assert(f);assert(fwrite(image,1,bytes,f)==bytes);assert(!fclose(f));
  f=fopen(getenv("TEST_RANGES"),"wb");assert(f);assert(fwrite(ranges,sizeof(*ranges),count,f)==count);assert(!fclose(f));
  memset(r,0,sizeof(*r));r->job_id=7;r->completed=!fail("exec");r->status=fail("exec")?-ETIMEDOUT:0;return r->status;
 }
+int n1x_dla_resubmit(int fd,unsigned long long id,const struct n1x_dla_accel_patch *patches,
+ unsigned int count,struct n1x_dla_accel_exec *result) {
+ assert(fd>=0&&id==saved_id&&getenv("TEST_REUSE"));event("REEXEC");
+ for(unsigned int i=0;i<count;i++){
+  assert(patches[i].offset<saved_bytes&&patches[i].bytes<=saved_bytes-patches[i].offset);
+  memcpy(saved_image+patches[i].offset,(const void *)(uintptr_t)patches[i].data_ptr,patches[i].bytes);
+ }
+ memset(result,0,sizeof(*result));result->job_id=++saved_id;
+ result->status=fail("exec")?-ETIMEDOUT:0;result->completed=!result->status;return result->status;
+}
 int n1x_dla_read(int fd,unsigned long long job,unsigned long long offset,void *out,unsigned long long bytes) {
- assert(fd>=0&&job==7);event("READ");
+ assert(fd>=0&&job==saved_id);event("READ");
  assert(offset==strtoull(getenv("TEST_OUTPUT_OFFSET"),NULL,0));
  assert(bytes==strtoull(getenv("TEST_OUTPUT_BYTES"),NULL,0));
  if(fail("read"))return -EIO;
@@ -109,6 +125,7 @@ def main():
             model=Model.from_file(path)
             data=bytes((i*13+7)%256 for i in range(model.inputs[0].bytes))
             image,ranges=model.prepare({model.inputs[0].name:data})
+            image[model.outputs[0].offset:model.outputs[0].offset+model.outputs[0].bytes]=b'\xff'*model.outputs[0].bytes
             for failure in ('', 'open','budget','exec','read','wrong-reference',
                             'cuda-input-copy','cuda-output-copy','cuda-input-sync','cuda-output-sync'):
                 case=directory/(variant+'-'+(failure or 'success'));case.mkdir()
@@ -151,6 +168,14 @@ def main():
         events=(case/'events').read_text().splitlines()
         assert events.count('EXEC')==1 and 'READ' not in events,events
         cases.append(dict(model='API regression',events=events,exit_code=0))
+        case=directory/'reuse-case';case.mkdir()
+        env.update(TEST_EVENTS=str(case/'events'),TEST_IMAGE=str(case/'image'),TEST_RANGES=str(case/'ranges'),
+                   TEST_FAILURE='',TEST_REUSE='1')
+        result=subprocess.run([str(api),str(path),'repeat'],env=env,capture_output=True,text=True,timeout=30)
+        assert result.returncode==0,(result.stdout,result.stderr)
+        events=(case/'events').read_text().splitlines()
+        assert events.count('EXEC')==1 and events.count('REEXEC')==64 and events.count('READ')==64,events
+        cases.append(dict(model='64 completed I/O reuse cycles and sticky error',events=events,exit_code=0))
     print(json.dumps(dict(real_nvidia_frontend=True,real_cuda=True,npu_transport='modeled',
                          numerical_inference_test=False,cases=cases),indent=2))
 

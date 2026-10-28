@@ -3,6 +3,7 @@ CFLAGS ?= -O2 -g -Wall -Wextra -Werror
 # Explicit installed-kernel target; builds only, never installs/loads modules.
 KERNEL_RELEASE ?= $(shell uname -r)
 .PHONY: test test-vendor test-relu test-conv test-conv-relu test-p16-start kernel-check module clean generate-probe
+.PHONY: test-p16-stop
 # Requires the exact ignored physical BIOS-300 capture and pinned vendor KMD.
 # Offline: no root, module load, hardware access or firmware installation.
 test-p16-start:
@@ -26,6 +27,13 @@ test-p16-start:
 	venv/bin/python scripts/test_response.py
 	venv/bin/python scripts/test_response_decode.py
 	venv/bin/python scripts/test_profile1_lpwr_consumer.py
+test-p16-stop:
+	venv/bin/python scripts/inspect_kmd_shutdown.py
+	venv/bin/python scripts/test_hfrp_stop.py
+	venv/bin/python scripts/test_linux_shutdown.py
+	venv/bin/python scripts/test_linux_accel.py
+	venv/bin/python scripts/test_linux_accel_backend.py
+	venv/bin/python scripts/test_p16_reload.py
 # Device-free convolution compiler bridge; preserves the pinned ReLU directory.
 test-conv:
 	venv/bin/python scripts/probe_native_graph.py --model conv1x1
@@ -93,6 +101,9 @@ test-vendor: test
 	venv/bin/python scripts/inspect_kmd_reset_resources.py
 	venv/bin/python scripts/inspect_kmd_reset_reload.py
 	venv/bin/python scripts/inspect_kmd_reset_wakeup.py
+	venv/bin/python scripts/inspect_kmd_shutdown.py
+	venv/bin/python scripts/test_hfrp_stop.py
+	venv/bin/python scripts/test_linux_shutdown.py
 	venv/bin/python scripts/inspect_cudla_release.py
 	venv/bin/python scripts/test_acpi_collection.py
 	venv/bin/python scripts/test_iort.py

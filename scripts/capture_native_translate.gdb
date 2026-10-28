@@ -5,7 +5,7 @@ python
 native_sha='28668e74ced3c04ca34f30d41b7ea1d39cabe791418fbad31fcfb009d5558ad9'
 windows_sha='0ef7c9366205a7151490f07b0df94a5e6908c94da32e83fabaaef5d06254147d'
 model=os.environ.get('N1X_COMPILER_MODEL')
-conv=model in ('conv1x1','conv1x1_relu')
+conv=model in ('conv1x1','conv1x1_relu','superres')
 post=pathlib.Path('results/windows-'+model+'-pretranslation' if conv else 'results/windows-pretranslation-output')
 m=json.loads((post/'manifest.json').read_text())
 assert m['passed'] and m['return_value']==0 and m['descriptor_unchanged']
@@ -40,14 +40,15 @@ newdir=out/'translation-input';newdir.mkdir(exist_ok=True)
 maps={name:tree(q(obj+offset),name=='index') for name,offset in [('pointer',0x60),('size',0xc0),('other',0x90),('index',0xf0)]}
 expected_index=({5:5,6:6,8:8,10:7,11:9} if model=='conv1x1_relu' else
                 {5:4,6:5,8:7,10:6,11:8} if conv else {5:3,6:4,8:6,10:5,11:7})
-assert maps['index']==expected_index,maps['index']
+if model!='superres':assert maps['index']==expected_index,maps['index']
+else:assert len(maps['index'])==5 and all(0<=i<4096 for i in maps['index'].values())
 entries=[]
 # MTL::translate supplies a new network descriptor, not map kind 0.
 network=read(q(common+0x28),44)
 expected_network=('72ce45488942e15f7f0d9e14c0f2135ac0f6a9e5ca7e1784066e510087d46b40' if model=='conv1x1_relu' else
                   '51bc13fa4d5b094618f2de1fff00e776fade8d79ccbf547d0ca69aeadbe88bcf' if conv else
                   '8c52127eee7cbbe584ed4ea87c94632fa30c4623527560074f38f1f4b0a7d9d2')
-assert hashlib.sha256(network).hexdigest()==expected_network,(network.hex(),hashlib.sha256(network).hexdigest())
+if model!='superres':assert hashlib.sha256(network).hexdigest()==expected_network,(network.hex(),hashlib.sha256(network).hexdigest())
 assert struct.unpack_from('<I',raw,48)[0]==struct.unpack_from('<I',raw,80)[0]==0,raw.hex()
 for offset,kind in ((8,2),(24,3),(32,4)):
     assert q(common+offset)==maps['pointer'][kind],(offset,kind,hex(q(common+offset)),hex(maps['pointer'][kind]))
@@ -69,7 +70,8 @@ for kind,ptr in maps['pointer'].items():
     hardware_access=False,complete_loadable=False),indent=2)+'\n')
 print('TRANSLATION INPUT',network.hex(),json.dumps(maps))
 if conv:
-    for offset,constant in zip((0x2e0,0x89e8),m['constants']):
+    constant_offsets=([entry['offset']+136 for entry in m['constants']] if model=='superres' else (0x2e0,0x89e8))
+    for offset,constant in zip(constant_offsets,m['constants']):
         pointer=q(maps['pointer'][3]+offset)
         assert hashlib.sha256(read(pointer,constant['bytes'])).hexdigest()==constant['sha256']
 end
