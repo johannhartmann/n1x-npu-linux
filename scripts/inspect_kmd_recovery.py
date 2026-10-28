@@ -6,6 +6,7 @@ DLA adapter's slot-0x40 path after its gate/OS synchronization boundaries.
 """
 import hashlib
 import json
+import struct
 
 import pefile
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
@@ -15,10 +16,12 @@ from inspect_kmd_task_submission import (Machine, BASE, OBJECT, PARENT, OWNER,
                                          KMD_SHA256)
 
 ARGS, REQUEST, OUTPUT, CONTEXT = (PRIMARY+i*0x1000 for i in range(1, 5))
+TASK_RING = 0x35000000
 
 
 def replay(pe, previous=0, count=1, reject=False, flags=0):
     m = Machine(pe)
+    m.u.mem_map(TASK_RING, 0x10000)
     for page in (0xe18000, 0xe19000, 0xe07000, 0xc000, 0x5000, 0x92000, 0xe9c000,
                  0xdf8000, 0x14be000, 0x14f8000):
         m.u.mem_map(BASE+page, 0x1000)
@@ -36,8 +39,12 @@ def replay(pe, previous=0, count=1, reject=False, flags=0):
     m.write(OWNER+0x9000+0xf0, 'Q', BASE+0x5be0)
     m.write(OWNER+0x9000+0xd0, 'Q', BASE+0xdd6440)
     m.write(PARENT+0x8680, 'Q', OWNER+0x6000)
-    m.write(OWNER+0x6000, 'Q', OWNER+0x7000)
-    m.write(OWNER+0x7000+0x18, 'Q', STUB+16)
+    # Both original ring-manager constructors install slot 0x18 -> dd6dd0.
+    # It rewrites queued descriptors; it neither waits for DMA nor stops an engine.
+    m.write(OWNER+0x6000, 'Q', BASE+0xe9cb68)
+    m.write(OWNER+0x6000+0x18, 'I', 0x500)
+    m.write(OWNER+0x6000+0x30, 'Q', TASK_RING)
+    assert m.read(BASE+0xe9cb68+0x18, 'Q') == (BASE+0xdd6dd0,)
     # The original DLA context factory installs this table. Slot 0x98 is
     # an atomic counter increment, not an engine-stop operation; its complete
     # instructions now execute here rather than an injected callback return.
@@ -80,12 +87,23 @@ def replay(pe, previous=0, count=1, reject=False, flags=0):
         m.write(address+0x100, 'I', 1)
         m.write(address+0x1b0, 'Q', 100+i)
         m.write(address+0x1e8, 'I', flags)
+        slot = TASK_RING+(seq & 31)*0x500
+        m.u.mem_write(slot, bytes([0xa5])*0x500)
+        m.write(slot+0xc, 'H', seq & 0xffff)
+        m.write(slot+0x29, 'H', 0xa5a4)
+    expected_ring = bytearray(m.u.mem_read(TASK_RING, 0x10000))
+    if not reject:
+        for address in jobs[1:]:
+            sequence, = m.read(address+0x2c, 'I')
+            offset = (sequence & 31)*0x500
+            struct.pack_into('<QH', expected_ring, offset+0x15, 0xdeadf000, 0)
+            struct.pack_into('<H', expected_ring, offset+0x29, 0xa5a4 | 1)
     m.write(ARGS, 'QQ', OBJECT, REQUEST)
     m.write(ARGS+0x20, 'Q', OUTPUT)
     m.write(ARGS+0x28, 'I', 32)
     m.write(ARGS+0x30, 'I', 0xc0000001)
     m.write(REQUEST, 'III', node, engine, 0xdeadbeef)
-    events, bank_reads, bank_writes = [], [], []
+    events, bank_reads, bank_writes, vendor_assertions = [], [], [], []
 
     def hook(_, pc, size, user):
         if pc == STUB+4:
@@ -96,17 +114,21 @@ def replay(pe, previous=0, count=1, reject=False, flags=0):
         elif pc == BASE+0x92c30:
             assert [m.reg(i) for i in (0, 1)] == [CONTEXT, 0]
             events.append('context_slot_98')
-        elif pc == STUB+16:
+        elif pc == BASE+0xdd6dd0:
             assert m.reg(0) == OWNER+0x6000 and m.reg(1) in jobs[1:]
             events.append('worker_slot_18')
-            m.ret(0)
         elif pc in (BASE+0xce478, BASE+0xe075b0):
             m.ret(0)
         elif pc == BASE+0xc520:
             m.write(m.reg(0), 'Q', 0x12345678)
             m.ret(0)
         elif pc == BASE+0xdf8f38:
-            raise AssertionError(('unexpected vendor assertion', hex(m.reg(30)-BASE), previous, count))
+            # The original callback compares a u16 descriptor id with a u32
+            # job sequence. Preserve the existing high-sequence fixture, but
+            # expose its diagnostic and explicitly model a returning assert.
+            assert m.reg(30) == BASE+0xdd6e00 and previous == 0x7fffffff and count == 3
+            vendor_assertions.append('descriptor_u16_vs_job_u32')
+            m.ret(0)
 
     def read(_, access, address, size, value, user):
         bank_reads.append((address-DESCRIPTOR, size))
@@ -120,6 +142,10 @@ def replay(pe, previous=0, count=1, reject=False, flags=0):
     result = m.call(0xe183b0, ARGS)
     status, = m.read(ARGS+0x30, 'I')
     assert not bank_writes
+    expected_assertions = (sum(m.read(address+0x2c, 'I')[0] > 0xffff
+                               for address in jobs[1:]) if not reject else 0)
+    assert vendor_assertions == ['descriptor_u16_vs_job_u32']*expected_assertions
+    assert bytes(m.u.mem_read(TASK_RING, 0x10000)) == expected_ring
     assert m.read(DESCRIPTOR+entry_offset, 'I') == (entry,)
     assert m.read(DESCRIPTOR+completion_offset, 'I') == (previous,)
     assert m.read(CONTEXT+0x6c, 'I') == (int(bool(count) and not reject),)
@@ -151,6 +177,8 @@ def replay(pe, previous=0, count=1, reject=False, flags=0):
             'software_completed': m.read(PARENT+0x137c+4*q, 'I')[0],
             'device_bank_unchanged': True, 'bank_reads': bank_reads,
             'original_context_counter': m.read(CONTEXT+0x6c, 'I')[0],
+            'original_descriptor_rewrites': max(count-1, 0) if not reject else 0,
+            'modeled_returning_vendor_assertions': vendor_assertions,
             'events': events}
 
 
@@ -169,7 +197,8 @@ def main():
                       'kmd_sha256': KMD_SHA256, 'helper_rva': '0xe183b0',
                       'cases': cases, 'limitations': [
                           'Constructed queues, contexts and mapped semaphore banks',
-                          'Context slot 0x98 executes original 0x92c30; worker callback, IRQL, timestamps and logging modeled',
+                          'Original context/descriptor callbacks execute; IRQL, timestamps and logging modeled',
+                          'High-u32 sequence case models returning descriptor-id assertion handler',
                           'Caller gate, OS synchronization and surrounding recovery not executed',
                           'No reset, MMIO, engine stop, firmware execution or DMA release',
                           'Software sequence advancement is not physical task-completion evidence']}, indent=2))

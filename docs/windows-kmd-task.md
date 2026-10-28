@@ -628,8 +628,9 @@ with the capability-bit-clear selection's constructed queue/context state.
 It uses the original entry-bank accessors `0xdd1548`, `0xdd1428`, `0xdd7708`,
 the concrete adapter predicates `0x5bf0`/`0x5be0`, and worker wrapper
 `0xdd6440`. The context callback now executes its original implementation
-`0x92c30`, resolved below. IRQL, timestamps, logging and the final worker
-callback remain modeled. The original helper requires IRQL above 2; the
+`0x92c30`, resolved below. The descriptor callback now also executes original
+`0xdd6dd0`; IRQL, timestamps and logging remain modeled. The original helper
+requires IRQL above 2; the
 test supplies 3, rather than claiming an actual Windows scheduler context.
 
 For outstanding records with nonzero submission timestamps, job type 1 and
@@ -641,7 +642,8 @@ the tested context mode `+0x8c = 2`, the helper:
 3. Calls the first selected context's virtual slot `0x98` with argument zero,
    sets context `+0x234` bit 2 and records the selected job. Later selected
    records go through the worker callback. The context callback increments
-   only context `+0x6c`; the worker's hardware effects remain unestablished.
+   only context `+0x6c`; the worker rewrites the queued descriptor as described
+   below, without waiting for hardware completion.
 4. Advances software `scheduler+0x137c+4*q` and `+0x1b3c+4*q` to the submitted
    sequence, clears the outstanding counter at `+0xbb8+4*q`, clears the byte
    at `+0x3754+q`, and copies `+0x384c+4*q` to `+0x3c2c+4*q`.
@@ -661,12 +663,19 @@ and that rejection. Read/write hooks verify that no semaphore-bank write is
 performed and that the completion bank is not read; the return/output counters
 are checked against the original code's writes.
 
+Replacing the worker stub exposed a previously hidden diagnostic in the
+`previous=0x7fffffff, count=3` fixture: the original callback compares a u16
+descriptor sequence with a full u32 job sequence. That case now explicitly
+records two vendor assertions and models their return before continuing.
+It does not establish that such a high sequence is a valid live reset state.
+The remaining cases require no returning vendor assertion.
+
 ```sh
 venv/bin/python scripts/inspect_kmd_recovery.py > results/windows-kmd-recovery.json
 ```
 
 The result does not show that Windows frees live DMA unsafely: the caller's
-gate and synchronization, the alternative helper, modeled worker callback
+gate and synchronization, the alternative helper, descriptor-fetch races
 and surrounding recovery still matter. It does show why copying software
 counter advancement from this path into Linux cannot establish device
 completion or authorize buffer reuse. The normal device-semaphore reader and
@@ -720,11 +729,73 @@ including the null-handle rejection, instead of a synthetic virtual return.
 These are deliberately constructor **prefixes**, not completed Windows DDI
 creation. Pool allocation, OS primitive initialization, memset, timestamps
 and logging remain modeled at documented boundaries. No physical reset,
-live Windows process or DMA quiescence is established. The remaining unknown
-worker callback and surrounding scheduler/reset sequence must still be traced.
+live Windows process or DMA quiescence is established. The surrounding
+scheduler/reset sequence must still be traced. The worker callback
+is resolved in the following section.
 
 ```sh
 venv/bin/python scripts/inspect_kmd_context_reset.py > results/windows-kmd-context-reset.json
+```
+
+## Recovery rewrites a queued descriptor; it does not drain DMA
+
+`scripts/inspect_kmd_recovery_descriptor.py` executes scheduler initialization
+`0x19e1580` through factory `0x19e28b0`, the original constructors and ring
+initializer `0x19e2750`. Adapter node getters are original; allocation, address
+translation and memset are modeled. With the constructed single node of type
+`0x33`, the selector at adapter `+0x4648` chooses:
+
+| Selector | Constructor | Vtable | Ring allocation |
+| --- | --- | --- | --- |
+| `0xe0000023` | `0x19e2a00` | `0xe9cb00` | `0xa000` bytes |
+| `0xe0000025` / `0xe0000026` | `0x19e2a40` | `0xe9cb68` | `0xd000` bytes |
+
+These are fixture selector values, not newly identified physical chip IDs.
+All three cases store the manager at scheduler `+0x8680`, use a descriptor
+stride of `0x500`, and install virtual slot `+0x18 = 0xdd6dd0`. Consequently
+the already traced `0xdd6440` invokes a descriptor-rewrite callback, not a
+generic worker with unknown implementation.
+
+Original `0xdd6638` finds the host ring slot using `sequence & 31`. After the
+sequence comparison, `0xdd6dd0` performs only these descriptor changes:
+
+| Offset | Original operation |
+| --- | --- |
+| `0x1d` | Clear u16 command count |
+| `0x29` | Set bit 0 in u16 flags, preserving other bits |
+| `0x15` | Replace u64 command-list pointer with `0xdeadf000` |
+
+It then issues `dmb st` and returns success. There is no completion-bank read,
+poll, MMIO access or engine-stop call in this callback. Tests compare the
+complete ring before/after for five sequences on each constructor variant,
+including ring wrap and `0xffff`, and repeat every rewrite to check idempotence.
+Two negative cases stop at the original assertion before any rewrite: a
+mismatching sequence and a u32 sequence `0x10000` whose descriptor stores only
+its low 16 bits. The integrated 16-case recovery test now executes the concrete
+callback, checks its ring writes and records the high-sequence diagnostic.
+
+The original HAL-1 RISC-V firmware consumes an actual KMD-built v3 descriptor
+after the original Windows callback has rewritten it. With RAM-only DMA/MMIO:
+
+- **Rewrite before submission:** the firmware executes the outer actions,
+  writes entry/completion words, emits one task interrupt and retires the queue.
+  It neither requests the command-list pointer nor dispatches arithmetic.
+- **Rewrite after the execution-header DMA:** a hook at `0x1016b6` first checks
+  that firmware-local memory contains the original 60-byte header, then changes
+  only host backing to the rewritten descriptor. The firmware still reaches
+  original DMA helper `0x104ed8` requesting the **old command-list address**.
+  The test stops there, before performing that DMA or executing any command;
+  no completion or task interrupt has occurred.
+
+The firmware code remains byte-identical in both tests. The late rewrite is
+an explicit modeled host interleaving, not an observed physical race. It proves
+why descriptor rewriting alone cannot supply cancellation/reclamation semantics:
+already fetched state can survive the update. The surrounding Windows reset
+ordering may address that race; it has not yet been fully reconstructed.
+Do not add a native cancel ioctl or release DMA based on this callback alone.
+
+```sh
+venv/bin/python scripts/inspect_kmd_recovery_descriptor.py > results/windows-kmd-recovery-descriptor.json
 ```
 
 ## Identifying the Windows reset entry points
