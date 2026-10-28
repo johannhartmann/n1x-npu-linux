@@ -58,6 +58,7 @@ __u32 job_field(unsigned field) {
  case 4:return job.verified;case 5:return job.preempt_completed;case 6:return job.polls;
  case 7:return job.fence_value;case 8:return queue.last_fence;case 9:return job.preempt_sequence;
  case 10:return result.outcome;case 11:return result.attempted;case 12:return job.signal_seen;
+ case 13:return job.restore_pending;
  default:return 0;}}
 ''')
     lib = library(directory, (ROOT/'driver/n1x_dla_job.c', ROOT/'driver/n1x_dla_job_control.c', shim))
@@ -70,8 +71,11 @@ __u32 job_field(unsigned field) {
 
 def execute(lib, firmware, model, mode, irq):
     state = {'active': False, 'paused': False, 'method': None, 'events': [],
-             'starts': 0, 'published': 0, 'restore_calls': 0, 'injected': False}
-    errors, trace, executor = [], [], []
+             'starts': 0, 'published': 0, 'restore_calls': 0, 'save_calls': 0, 'injected': False}
+    errors, trace, executor, transitions, deferrals = [], [], [], [], []
+    restore_modes = ('resume_accept', 'restore_first', 'restore_second')
+    resume_faults = ('resume_marker_corrupt', 'resume_snapshot_failure', 'resume_both')
+    repeat = mode == 'twice' or mode in (*restore_modes, *resume_faults)
 
     def response(u):
         if not state['active']:
@@ -97,6 +101,8 @@ def execute(lib, firmware, model, mode, irq):
     def observe(_, pc, size, data):
         if pc == 0x105a6a:
             state['restore_calls'] += 1
+        if pc == 0x105a08:
+            state['save_calls'] += 1
         if pc == 0x101b1c:
             v = u.reg_read(rv.UC_RISCV_REG_A0)
             executor.append(v if v < 1 << 31 else v-(1 << 32))
@@ -104,6 +110,8 @@ def execute(lib, firmware, model, mode, irq):
     u.hook_add(UC_HOOK_CODE, observe)
 
     def interrupt(bits):
+        before = word(0x1862a4)
+        writes_before = len(f['result']['scheduler_mmio_writes'])
         assert u.reg_read(rv.UC_RISCV_REG_PC) == 0x102194
         assert word(MMIO+0xd28) & bits
         u.mem_write(MMIO+8, struct.pack('<I', word(MMIO+8) | bits))
@@ -114,6 +122,11 @@ def execute(lib, firmware, model, mode, irq):
         u.reg_write(rv.UC_RISCV_REG_MEPC, u.reg_read(rv.UC_RISCV_REG_RA))
         u.emu_start(u.reg_read(rv.UC_RISCV_REG_MTVEC), 0x40000000, count=200000)
         assert state['paused'] or u.reg_read(rv.UC_RISCV_REG_PC) == 0x102194
+        transitions.append({'irq': hex(bits), 'before': before, 'after': word(0x1862a4)})
+        if bits == 4 and before == 4:
+            # Unlike state 1, the original handler requests no engine preempt IL.
+            assert not any(w[0] in (0x3018, 0x25058)
+                           for w in f['result']['scheduler_mmio_writes'][writes_before:])
 
     def advance():
         if word(MMIO+8) & 128:
@@ -131,6 +144,11 @@ def execute(lib, firmware, model, mode, irq):
                     interrupt(irq)
                 state['events'] = {'save_fail': [4], 'finished': [1],
                                    'finished_before': [], 'disabled': [], 'timeout': []}.get(mode, [4, 0, 0])
+                if mode in restore_modes and state['starts'] > 1:
+                    assert word(0x1862a4) == 4
+                    # State 5 waits only for the already-issued restore record.
+                    # It does not launch a new two-record engine save operation.
+                    state['events'] = [0]
             else:
                 assert method == 0x307
                 state['starts'] += 1
@@ -214,6 +232,8 @@ def execute(lib, firmware, model, mode, irq):
     @SNAPSHOT
     def snapshot(_, out):
         try:
+            if mode == 'resume_snapshot_failure' and state['starts'] > 1:
+                return -errno.EIO
             out[0] = Snapshot(int.from_bytes(u.mem_read(f['context_buffer']+24, 8), 'little'),
                               word(HOST+0x6060), word(HOST+f['fence']))
             return 0
@@ -234,7 +254,7 @@ def execute(lib, firmware, model, mode, irq):
     before = len(trace)
     assert lib.job_wrong(0) == lib.job_wrong(1) == -errno.ENOENT and len(trace) == before
     stages = []
-    for cycle in range(2 if mode == 'twice' else 1):
+    for cycle in range(2 if repeat else 1):
         sequence = 8*(cycle+1)
         if cycle:
             before = len(trace)
@@ -245,16 +265,35 @@ def execute(lib, firmware, model, mode, irq):
                                                     HOST+f['fence'], sequence-3, sequence) == 0
             u.mem_write(HOST+f['header'], request.raw)
             u.mem_write(HOST+f['fence'], struct.pack('<I', 0xa5a5a5a5))
+            if mode == 'resume_marker_corrupt':
+                u.mem_write(f['context_buffer']+24, struct.pack('<Q', 2))
+            elif mode == 'resume_both':
+                u.mem_write(HOST+0x6060, struct.pack('<I', 1))
         status = lib.job_preempt(HOST+f['header'], sequence)
+        if mode == 'resume_accept' and cycle == 1:
+            assert status == -errno.EBUSY and not lib.job_field(11)
+            assert lib.job_field(0) and not lib.job_field(1) and lib.job_field(13)
+            assert lib.job_field(9) == 8  # The deferred request consumed no sequence.
+            deferrals.append({'status': status, 'firmware_state': word(0x1862a4),
+                              'marker': bytes(u.mem_read(f['context_buffer']+24, 8)).hex(),
+                              'preempt_sequence': lib.job_field(9)})
+            assert lib.job_poll() == -errno.EINPROGRESS  # Firmware consumes resume ACK/marker.
+            assert word(0x1862a4) == 4 and state['restore_calls'] == 1
+            assert bytes(u.mem_read(f['context_buffer']+24, 8)) == bytes(8)
+            status = lib.job_preempt(HOST+f['header'], sequence)
+            assert not lib.job_field(13)
         assert not errors, errors
         if mode == 'not_resumable':
             assert status == -errno.EOPNOTSUPP and lib.job_field(0) and not lib.job_field(1)
             assert lib.job_fail() == -errno.ECANCELED
             break
-        if mode in ('save_fail', 'disabled', 'timeout', 'late_error', 'drain_read_failure'):
+        if mode in ('save_fail', 'disabled', 'timeout', 'late_error', 'drain_read_failure') or (cycle and mode in resume_faults):
             assert status == (-errno.ETIMEDOUT if mode == 'timeout' else
-                              -errno.EIO if mode == 'drain_read_failure' else -errno.EREMOTEIO)
+                              -errno.EIO if mode in ('drain_read_failure', 'resume_snapshot_failure') else
+                              -errno.ESTALE if mode in ('resume_marker_corrupt', 'resume_both') else -errno.EREMOTEIO)
             assert lib.job_field(1) and not lib.job_field(0) and not lib.job_field(4)
+            if mode in resume_faults:
+                assert not lib.job_field(11) and lib.job_field(9) == 8
             assert lib.job_resume() == -errno.ENOTRECOVERABLE
             break
         assert status == 0
@@ -298,7 +337,12 @@ def execute(lib, firmware, model, mode, irq):
         for _ in range(20):
             status = lib.job_poll()
             assert not errors, errors
-            if mode == 'twice' and cycle == 0 and word(0x1862a4) == 1 and lib.job_field(2):
+            stop_for_next = ((mode == 'twice' and word(0x1862a4) == 1) or
+                             mode in ('resume_accept', *resume_faults) or
+                             (mode in ('restore_first', 'restore_second') and
+                              word(0x1862a4) == 4 and state['restore_calls'] ==
+                              (1 if mode == 'restore_first' else 2)))
+            if repeat and cycle == 0 and lib.job_field(2) and stop_for_next:
                 assert status == -errno.EINPROGRESS
                 state['events'] = []
                 break
@@ -313,16 +357,23 @@ def execute(lib, firmware, model, mode, irq):
     assert bytes(u.mem_read(0x100000, 36864)) == firmware[512:512+36864]
     assert bytes(u.mem_read(f['layout'][1]['address'], 3136)) == f['input']
     assert bytes(u.mem_read(f['layout'][2]['address'], 3136)) == b'\xa5'*3136
-    if mode in ('save', 'twice', 'idle_after'):
-        count = 2 if mode == 'twice' else 1
+    if mode in ('save', 'twice', 'idle_after', *restore_modes):
+        count = 2 if repeat else 1
         assert lib.job_field(4) and not lib.job_field(5) and not lib.job_field(0)
         assert not lib.job_field(1) and lib.job_field(12)
-        assert state['restore_calls'] == count*2 and executor == [0]*(count+1)
+        restores = (4 if mode == 'restore_second' else 3) if mode in restore_modes else count*2
+        assert state['restore_calls'] == restores and executor == [0]*(count+1)
+        assert state['save_calls'] == (2 if mode in restore_modes else count*2)
+        assert not lib.job_field(13)
         assert bytes(u.mem_read(f['context_buffer']+24, 8)) == bytes(8)
+        if mode in restore_modes:
+            assert {'irq': '0x4', 'before': 4, 'after': 5} in transitions
+            assert {'irq': hex(irq), 'before': 5, 'after': 0} in transitions
     return {'mode': mode, 'engine_irq': hex(irq), 'status': status, 'published': state['published'],
             'stages': stages, 'polls': lib.job_field(6), 'verified_protocol': bool(lib.job_field(4)),
             'poisoned': bool(lib.job_field(1)), 'executor_status': executor,
             'restore_calls': state['restore_calls'], 'method_writes': [t for t in trace if t[0] == 0x68],
+            'save_calls': state['save_calls'], 'transitions': transitions, 'deferrals': deferrals,
             'notifications': f['notifications'], 'output_still_poisoned': True}
 
 
@@ -337,7 +388,9 @@ def main():
                  for mode in ('save', 'twice', 'save_fail', 'finished', 'finished_before', 'disabled', 'timeout',
                               'late_error', 'idle_after', 'drain_read_failure', 'not_resumable',
                               'stale_marker', 'stale_sequence', 'stale_task', 'resume_irq',
-                              'resume_send_failure', 'budget', 'abandon')]
+                              'resume_send_failure', 'budget', 'abandon',
+                              'resume_accept', 'restore_first', 'restore_second',
+                              'resume_marker_corrupt', 'resume_snapshot_failure', 'resume_both')]
     print(json.dumps({'passed': True, 'cases': cases, 'hardware_access': False,
                       'firmware_sha256': PROFILE1_HASH, 'loadable_sha256': hashlib.sha256(model).hexdigest(),
                       'limitations': ['Original firmware with synthetic MMIO/engine IRQs and synchronous RAM DMA',

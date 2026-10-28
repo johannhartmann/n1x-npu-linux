@@ -27,6 +27,7 @@ struct n1x_dla_job {
     /* Caller asserts the immutable descriptor has context+restore flags and
      * valid retained checkpoint/engine-context backing before first start. */
     bool resumable, suspended, preempt_completed;
+    bool restore_pending; /* Resume submitted; saved marker may not be consumed yet. */
     __u32 preempt_sequence;
 };
 struct n1x_dla_job_ops {

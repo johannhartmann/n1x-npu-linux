@@ -180,7 +180,7 @@ EBUSY/EALREADY with no preemption attempt leaves the running job available for
 ordinary polling. Other invalid API/ownership calls perform no device I/O.
 
 `scripts/test_job_preemption.py` drives the actual C start/poll/preempt/resume
-functions against the original firmware in 36 scenarios. It covers both engine
+functions against the original firmware in 48 scenarios. It covers both engine
 IRQ bits, two save/restore cycles on one job, completion races, failed saves,
 disabled preemption, timeouts, late-error/idle transport injections, stale
 checkpoint/sequence/task-fence values, resume delivery failure, exhausted poll
@@ -188,9 +188,24 @@ budget and caller abandonment. The native publication callback executes once;
 descriptor bytes, input data and unique task fence remain unchanged across
 resume, and both original restore IL records execute. Arithmetic and physical
 engine-context transfers are unmodeled; output remains poisoned deliberately.
-The repeated-cycle test schedules the next preemption after modeled restore
-completion. Arbitrary preemption during restore and physical recovery still
-need qualification.
+The repeated-cycle coverage now includes a second request during either restore
+record. The original firmware transitions from restore state 4 to state 5,
+waits for the issued restore record's completion, republishes a checkpoint and
+finishes preemption without running another engine-save sequence. Subsequent
+resume executes both restore records again. These tests inject one completion
+IRQ for the already-issued record, not the three-IRQ sequence used for saving
+an active arithmetic task. Engine-context DMA remains unmodeled.
+
+The acceptance reply precedes consumption of the resume checkpoint. The native
+controller tracks that known window with `restore_pending`: marker 1 with an
+unsignaled task fence returns EBUSY without a preemption command, sequence
+advance or queue poisoning. Normal polling continues under the original host
+deadline. Once the marker is consumed, preemption can proceed even while a
+restore record is in flight. Corrupt markers, contradictory task completion and
+snapshot errors still quarantine the queue. This replaces the earlier false
+ESTALE classification immediately after resume acceptance; it does not make
+arbitrary stale markers on a newly submitted task acceptable. Physical engine
+recovery and numerical correctness across these interruptions remain unqualified.
 
 The [Windows release investigation](windows-buffer-lifetime.md) now traces
 cuDLA unregister through error gating and last-reference D3DKMT destruction.

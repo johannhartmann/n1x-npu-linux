@@ -21,8 +21,12 @@
  * uses job_fail(), not retries or resetting the queue.
  *
  * EBUSY/EALREADY from preemption preflight with result.attempted==0 leave the
- * job running: poll its pending response/completion first. Other execution
- * failures quarantine the queue. Invalid arguments/ownership do no I/O.
+ * job running: poll its pending response/completion first. This includes a
+ * known resume whose marker is still 1 after acceptance: firmware has not yet
+ * consumed it. No request is sent or sequence consumed in that window. A
+ * different nonzero marker or simultaneous task fence remains an error.
+ * Other execution failures quarantine the queue. Invalid arguments/ownership
+ * do no I/O.
  * Resume returns zero on submission, not acceptance or inference completion.
  */
 int n1x_dla_job_preempt(struct n1x_dla_job_queue *queue,

@@ -1385,12 +1385,43 @@ the latter is now a negative test. See
 [native runtime](native-runtime.md#lifetime-and-failures) for ownership and wait
 bounds. The [private job controller](native-runtime.md#private-job-preemption-and-resume-controller)
 now connects that primitive to native queue ownership, checkpoint validation
-and same-descriptor resubmission. Its 36 original-firmware scenarios include
+and same-descriptor resubmission. Its 48 original-firmware scenarios include
 two save/restore cycles without re-publication or a new task fence, completion
 races and explicit host/DMA-state failures. A completed preemption is recorded
 as a separate completion protocol when SWGEN0 is suppressed; a checkpoint keeps
-the queue reserved. Public EXEC integration, arbitrary preemption during restore,
-physical engine-context transfer and safe reclamation remain separate work.
+the queue reserved. Public EXEC integration, physical engine-context transfer
+and safe reclamation remain separate work.
+
+### Preemption while restoring a checkpoint
+
+The original command-18 handler at `0x105cd0` recognizes restore state 4 and
+requests transition 2 without invoking the active-arithmetic preempt IL path.
+The transition helper at `0x106020..0x10602e` maps state 4 plus request 2 to
+state 5. On the next modeled restore completion IRQ, the state-5 branch at
+`0x102792..0x1027a6` calls `0x1025d2`, decrementing the remaining restore count
+without issuing the next restore record. The executor then retires through the
+checkpoint/preemption-notification path. These are pinned firmware-local
+addresses, not registers for Linux to read or write.
+
+The native job test requests preemption while the first or second restore record
+is in flight, on both tested IRQ bits. It observes `4 -> 5 -> 0`, a new sequence
+fence and `0x120b/data=0`, with the task fence still unsignaled. No extra engine
+preempt writes to `0x3018/0x25058` occur during that method, and no second
+engine-save IL sequence runs: only the first preemption's two save records have
+executed. Re-submission consumes the checkpoint and executes two restore records
+again, eventually completing with the original task fence. The successful native
+executor statuses are `[0,0,0]`; input/descriptor bytes remain unchanged and the
+output remains poisoned because engine arithmetic is not emulated.
+
+A separate timing case stops at the resume acceptance ACK before firmware
+consumes the marker. Marker 1 is still valid here. The host now returns **EBUSY
+(-16)** with no preemption attempt and no poisoned queue, then succeeds after
+ordinary polling lets the original firmware consume that marker. This host busy
+status is distinct from the original executor's **-16 save-assertion failure**
+documented above. Corrupt marker 2, marker 1 plus a signaled task fence, and a
+snapshot read failure are negative controls that still quarantine the queue.
+No numerical engine-context preservation or physical quiescence follows from
+these original-firmware control-flow observations.
 
 ## HAL-1 firmware rearms each mailbox response
 

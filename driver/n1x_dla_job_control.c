@@ -57,6 +57,7 @@ int n1x_dla_job_preempt(struct n1x_dla_job_queue *queue,
                         struct n1x_dla_job *job, __u64 request_dma, __u32 sequence,
                         struct n1x_dla_preempt_result *result)
 {
+    struct n1x_dla_preempt_snapshot snapshot;
     int err;
     if (!result)
         return -EINVAL;
@@ -70,6 +71,19 @@ int n1x_dla_job_preempt(struct n1x_dla_job_queue *queue,
         request_dma > ((__u64)1 << 36) - N1X_DLA_PREEMPT_REQUEST_BYTES ||
         !sequence || sequence <= job->preempt_sequence)
         return -EINVAL;
+    if (job->restore_pending) {
+        err = ops->snapshot(ops->context, &snapshot);
+        if (err)
+            return fail(queue, job, err);
+        result->snapshot = snapshot;
+        /* Acceptance ACK precedes restore-marker consumption. An untouched
+         * marker in this known resume window is busy, not a failed context. */
+        if (snapshot.checkpoint == 1 && snapshot.task_fence != job->fence_value)
+            return -EBUSY;
+        if (snapshot.checkpoint)
+            return fail(queue, job, -ESTALE);
+        job->restore_pending = false;
+    }
     err = n1x_dla_preempt(io, ops, request_dma, job->fence_value, sequence, result);
     if (result->attempted)
         job->preempt_sequence = sequence;
@@ -128,6 +142,7 @@ int n1x_dla_job_resume(struct n1x_dla_job_queue *queue,
     if (err)
         return fail(queue, job, err);
     job->suspended = job->accepted = job->response_valid = job->signal_seen = false;
+    job->restore_pending = true;
     job->response = (struct n1x_dla_response){0};
     /* Immutable descriptor already has restore permission. Firmware consumes
      * and clears the saved marker; the host must not clear it or republish. */

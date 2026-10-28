@@ -6,6 +6,8 @@
 static int finish(struct n1x_dla_job_queue *queue, struct n1x_dla_job *job, int err)
 {
     job->error = err;
+    if (!err)
+        job->restore_pending = false;
     if (err && job->attempted)
         queue->poisoned = true;
     queue->active = false;
@@ -107,7 +109,7 @@ int n1x_dla_job_start(struct n1x_dla_job_queue *queue,
         return -EBUSY;
     if (job->attempted || job->fence_value || job->accepted || job->verified ||
         job->signal_seen || job->response_valid || job->polls || job->suspended ||
-        job->preempt_completed || job->preempt_sequence)
+        job->preempt_completed || job->preempt_sequence || job->restore_pending)
         return -EALREADY;
     if (queue->last_fence == (__u32)~0U)
         return -EOVERFLOW;
