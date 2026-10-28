@@ -79,3 +79,37 @@ int n1x_dla_prepare_default_config(__u8 *buffer, size_t buffer_size)
     buffer[0x32] = 1;
     return 0;
 }
+
+int n1x_dla_build_preempt_request(__u8 *out, size_t out_size, __u64 dma,
+                                  __u64 fence, __u32 submitted, __u32 sequence)
+{
+    __u8 request[N1X_DLA_PREEMPT_REQUEST_BYTES] = {0};
+    __u64 post;
+    unsigned int i;
+
+    if (!out || out_size < sizeof(request) || !dma || (dma & 255) ||
+        dma > ((__u64)1 << 36) - sizeof(request) || !fence || (fence & 3) ||
+        fence > ((__u64)1 << 36) - 4 ||
+        (fence < dma + sizeof(request) && fence + 4 > dma))
+        return -EINVAL;
+    post = dma + 256;
+    request[0] = 1;
+    /* Preserve Windows' sequence at packed +3 despite zero preaction length. */
+    for (i = 0; i < 4; i++)
+        request[3 + i] = sequence >> (8 * i);
+    request[11] = 27;
+    request[256] = request[269] = 0x80; /* WRITE_SEM */
+    for (i = 0; i < 8; i++) {
+        request[13 + i] = post >> (8 * i);
+        request[257 + i] = fence >> (8 * i);
+        request[270 + i] = fence >> (8 * i);
+    }
+    for (i = 0; i < 4; i++) {
+        request[265 + i] = submitted >> (8 * i);
+        request[278 + i] = sequence >> (8 * i);
+    }
+    /* Byte 282 is TERM. Both cache blocks belong to this allocation. */
+    for (i = 0; i < sizeof(request); i++)
+        out[i] = request[i];
+    return 0;
+}

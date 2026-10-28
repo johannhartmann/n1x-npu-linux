@@ -50,4 +50,22 @@ int n1x_dla_build_command23(__u8 *out, size_t out_size, __u8 context_47d,
  */
 int n1x_dla_prepare_default_config(__u8 *buffer, size_t buffer_size);
 
+#define N1X_DLA_PREEMPT_REQUEST_BYTES 512U
+/* HAL-1 method-18 payload: 32-byte packed header at offset 0, no preactions,
+ * and a 27-byte postaction list at offset 256. The actions write submitted
+ * then sequence to the same four-byte fence. Remaining bytes are zero cache
+ * padding. Matches the recovered Windows request with relocated postactions.
+ * Linux policy: dma is nonzero/256-aligned; all 512 bytes and the aligned,
+ * nonzero fence fit 36 bits; fence does not overlap this request allocation.
+ * Caller maps/publishes both, initializes its fence, owns sequence uniqueness,
+ * and retains them through recovery. Equal values are serialized literally.
+ * A fence/message can occur after context-save failure; neither proves a saved
+ * context, successful inference, physical stop or DMA reclamation safety.
+ * This only serializes. It does not enable preemption, issue method 0x212,
+ * send an ACK, modify the checkpoint, or change the Linux execution policy.
+ * On failure output is unchanged; bytes after 512 are untouched.
+ */
+int n1x_dla_build_preempt_request(__u8 *out, size_t out_size, __u64 dma,
+                                  __u64 fence, __u32 submitted, __u32 sequence);
+
 #endif

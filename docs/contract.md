@@ -1283,9 +1283,10 @@ venv/bin/python scripts/test_profile1_context_save.py > results/context-save.jso
 ### Native version-2 context transport
 
 `test_native_context.py` replaces the Windows UMD/v3 task path with the compiled
-Linux C v2 task/address-list serializers and a native context-header serializer.
-The preemption request remains the checked original Windows-built request.
-The same original firmware save/restore tests pass with native task version 2.
+Linux C v2 task/address-list, context-header and preemption serializers.
+Windows code is now used only for byte comparisons, not to generate the requests
+submitted in the native firmware cases. The same original firmware save/restore
+tests pass with native task version 2.
 
 The additional transport requirement is **descriptor flag bit 2**. At
 `0x1046ee`, the original firmware reads the flags at packed offset 0x29; bit 2
@@ -1335,6 +1336,40 @@ remain necessary before enabling this path on the machine.
 ```sh
 venv/bin/python scripts/test_native_context.py > results/native-context.json
 ```
+
+### Native preemption request serialization
+
+`n1x_dla_build_preempt_request` in `driver/n1x_dla_command.c` builds a
+self-contained **512-byte** allocation: the 32-byte packed request at offset
+zero, a 27-byte postaction list at offset 256, and zeroed cache padding. The
+header has leading byte 1, zero preaction length, the zero-extended sequence
+at +3 (preserving the Windows initializer), postaction length 27 at +11 and
+its device pointer at +13. The postactions write the submitted and preemption
+sequence values to the same fence, followed by TERM. The two values are not
+required to differ by this serializer; unique sequence selection and initial
+fence poisoning remain caller responsibilities.
+
+The builder rejects null/short output, zero/unaligned/out-of-aperture addresses,
+an allocation extending past 36 bits and a fence overlapping either request
+cache block. It changes no output on failure and leaves trailing output bytes
+untouched on success. These are explicit Linux allocation policies; the helper
+does not map, publish or release DMA, enable firmware preemption, send method
+18 or process its responses.
+
+`test_native_context.py` adds **23 preemption-builder cases**, including six
+comparisons with original Windows KMD output (wraparound sequences and several
+fence-provider nodes). The request header is compared after relocating only
+its postaction pointer; the actual 27 action bytes match exactly. Further
+cases cover adjacent but non-overlapping fences, the upper aperture boundary,
+five overlapping fence positions and unchanged-output failure behavior.
+
+All **20 native firmware cases** now consume only C-generated task, address
+list, context header and preemption packets. Their original-firmware save,
+restore, failure and completion checks are unchanged. In particular, the
+failed-save case still writes the preemption fence and sends `0x120b`; generating
+correct request bytes does not turn that message into evidence of successful
+context saving or safe reclamation. The native execution/cancellation state
+machine and physical engine qualification remain separate work.
 
 ## HAL-1 firmware rearms each mailbox response
 

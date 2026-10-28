@@ -92,6 +92,11 @@ restore, a 32-byte checkpoint and the compiler's engine-context backing. These
 helpers are not yet used by EXEC and do not change its retention policy or add
 a cancellation API. Native v2 checkpoint bookkeeping also differs from the
 Windows v3 UMD path; host deadlines must remain independent of that checkpoint.
+The [native preemption request builder](contract.md#native-preemption-request-serialization)
+also emits the complete padded method-18 payload in C. The native firmware
+tests no longer depend on Windows code to generate submitted control packets;
+the Windows builders remain comparison oracles. Submission/ACK handling,
+cancellation state and physical verification are not enabled by serialization.
 
 The [Windows release investigation](windows-buffer-lifetime.md) now traces
 cuDLA unregister through error gating and last-reference D3DKMT destruction.
