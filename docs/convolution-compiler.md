@@ -8,7 +8,8 @@ serialization. It is not a general ONNX compiler or a physical inference
 result. The native loader now materializes its global DRAM constants, checked
 against the original Windows allocation/content path. The actual Linux ioctl
 serializer and original firmware scheduler accept its task offline; engine
-arithmetic and physical execution remain unverified.
+arithmetic was initially unverified. The later [cuDLA qualification](cudla-backend.md#physical-result-2026-10-28)
+physically verifies both convolution graphs on three inputs each.
 
 ## Fixture and recovered API
 
@@ -215,7 +216,8 @@ second result, changed input, changed constants, submit timeout, read failure
 and insufficient retained budget. Seven invalid-input cases and a later
 invalid input verify rejection before device opening. These are CLI acceptance
 tests with modeled reads, not physical convolution results. The hardware run
-above remains pending; the current boot still has the old module without accel.
+above is distinct from the later successful cuDLA hardware run. That run uses
+the same loadables with the native C++ materializer and corrected accel module.
 
 ## Convolution followed by ReLU
 
@@ -301,7 +303,8 @@ pkexec /usr/bin/python3 "$PWD/runtime/run_conv.py" \
   --output-dir "$PWD/results/NEW-accel-conv-relu"
 ```
 
-Physical numerical execution and safe memory reclamation remain pending.
+Physical numerical execution now passes through cuDLA; safe memory reclamation
+remains pending.
 
 ## Reproduce
 

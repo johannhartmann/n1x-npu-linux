@@ -241,6 +241,7 @@ static void postclose(struct drm_device *drm, struct drm_file *file)
 }
 /* No GEM mmap: all device-visible bytes are immutable after EXEC's snapshot. */
 static const struct file_operations accel_fops = {
+    .fop_flags = FOP_UNSIGNED_OFFSET,
     .owner = THIS_MODULE, .open = accel_open, .release = drm_release,
     .unlocked_ioctl = drm_ioctl, .compat_ioctl = drm_compat_ioctl,
     .llseek = noop_llseek,

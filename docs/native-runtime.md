@@ -1,9 +1,9 @@
 # Experimental native DLA runtime
 
 The module now contains an optional Linux DRM accel interface, a small native
-C client and a Python binding. These components build and pass offline tests;
-**the accel interface has not yet run on the physical P16**. The recorded
-physical ReLU success still belongs to the earlier sysfs probe build.
+C client and a Python binding. **The accel interface now executes physical
+ReLU, convolution and Conv -> ReLU through the cuDLA backend.** Eight jobs
+with changing inputs passed on 2026-10-28; see [the qualification](cudla-backend.md#physical-result-2026-10-28).
 
 This is a step from the manual probe toward a reusable driver, not a completed
 production runtime or NVIDIA cuDLA/TensorRT compatibility layer. It accepts a
@@ -292,7 +292,11 @@ is not emulated. The native execution loop and error behavior are separately
 covered by the existing original-firmware integration test. Tests pass with
 UBSan as well.
 
-## First hardware qualification (not yet performed)
+## Original native-client qualification procedure
+
+The following procedure predates the successful [cuDLA qualification](cudla-backend.md#physical-result-2026-10-28).
+That later run qualifies the shared accel transport through the cuDLA application;
+it does not imply that every separate Python CLI below was run physically.
 
 Use a fresh boot of the audited `npu2` kernel. The already-loaded bootstrap
 cannot be replaced in place. Preserve the prior working boot/module artifacts.
@@ -341,4 +345,5 @@ Once this changing-input ReLU qualification passes, the separate
 tests a second compiled graph through the native loadable path. It includes
 three independently CPU-checked input/output pairs, exact output comparison,
 input/constant integrity checks and stop-on-error behavior. That hardware
-qualification is also pending; its modeled-device tests do not qualify the NPU.
+procedure remains separate from the successful cuDLA run; modeled-device tests
+alone do not qualify the NPU.

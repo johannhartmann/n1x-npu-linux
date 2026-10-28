@@ -1,0 +1,114 @@
+{
+  "date": "2026-10-28",
+  "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+  "boot_id": "81aeb5b0-5475-4a34-99db-a12c0195ba54",
+  "module_srcversion": "A867C2D035B190C79E9E143",
+  "profile": "performance",
+  "path": [
+    "cuDLA application",
+    "original NVIDIA libcudla.so.1",
+    "N1X libnvcudla.so",
+    "Linux N1X accel driver",
+    "extracted NVIDIA firmware",
+    "physical DLA"
+  ],
+  "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+  "backend_sha256": "4a371a4c2d829558aba189062bfd273a65cb98d21bdf9e522c0049163d03165f",
+  "application_sha256": "a6fa42428beafd579c9430bad6c82b7bc7786959a84fee5c819e409ab8dd83df",
+  "transport_sha256": "bafe0b43a8c9ceaffef849acc94715ca913efcd4eb7e076113cbd956de7e12e5",
+  "firmware_sha256": "0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4",
+  "retained_jobs_before": 0,
+  "retained_jobs_after": 8,
+  "retained_bytes_after": 22953984,
+  "queue_poisoned": false,
+  "jobs": [
+    {
+      "index": 0,
+      "model": "relu.nvda",
+      "model_sha256": "561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942",
+      "input_sha256": "7ea89f37c689058bbbc140489c1641ead51162e8133c8a23ed0f201cfcd6e46a",
+      "output_sha256": "6d9126f3ab2a863366f018b07abb09de923ac78bced4214092f5ba94ceca5a5d",
+      "bytes": 3136,
+      "numerical_match": true,
+      "input_unchanged": true
+    },
+    {
+      "index": 1,
+      "model": "relu.nvda",
+      "model_sha256": "561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942",
+      "input_sha256": "f7aae780c073eed536bb40257658d255afbdd9be43e1fedd7823c4876ea5d272",
+      "output_sha256": "9a3ddf0411f8bd6ba1d0d25c3bf35a05ab57c939cc24813b879e43bf53e682e2",
+      "bytes": 3136,
+      "numerical_match": true,
+      "input_unchanged": true
+    },
+    {
+      "index": 2,
+      "model": "conv1x1.nvda",
+      "model_sha256": "717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b",
+      "input_sha256": "ca887ad5dae490a52eb6beabaff4e38cb59f19bff4c6787914dccbb348e01b88",
+      "output_sha256": "1b8ab6517db15213734dc9ea3c048cbcc5359826eca67d91e244d5103d9312db",
+      "bytes": 3136,
+      "numerical_match": true,
+      "input_unchanged": true
+    },
+    {
+      "index": 3,
+      "model": "conv1x1.nvda",
+      "model_sha256": "717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b",
+      "input_sha256": "5422e6c119d779f7c7b333d1c2c69cc62dbde1a4c4dc55a3e9bf6da9db57de79",
+      "output_sha256": "f42e96808cd27a5dacd146a092a1d3d64de81f745b745ff9ea5c54511dafe317",
+      "bytes": 3136,
+      "numerical_match": true,
+      "input_unchanged": true
+    },
+    {
+      "index": 4,
+      "model": "conv1x1.nvda",
+      "model_sha256": "717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b",
+      "input_sha256": "be62e6e17f5c1e6a1eee4ae46527519d1e4f27ff4731895022d70c052d4e5d3f",
+      "output_sha256": "68a6590f6dc0ec06e7b1f5e7911151aeff305ae7e18d8d272d5b9153bf589aa8",
+      "bytes": 3136,
+      "numerical_match": true,
+      "input_unchanged": true
+    },
+    {
+      "index": 5,
+      "model": "conv1x1_relu.nvda",
+      "model_sha256": "fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536",
+      "input_sha256": "ca887ad5dae490a52eb6beabaff4e38cb59f19bff4c6787914dccbb348e01b88",
+      "output_sha256": "b86c13218f8fb19dd3c404607aca8d751cf13840184298a13fb1db5000ed63e4",
+      "bytes": 3136,
+      "numerical_match": true,
+      "input_unchanged": true
+    },
+    {
+      "index": 6,
+      "model": "conv1x1_relu.nvda",
+      "model_sha256": "fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536",
+      "input_sha256": "5422e6c119d779f7c7b333d1c2c69cc62dbde1a4c4dc55a3e9bf6da9db57de79",
+      "output_sha256": "f61c4a2ddb8fa0e75a19e69b1712fc0b3337e87fb70fba1d26ecdad123c33aa0",
+      "bytes": 3136,
+      "numerical_match": true,
+      "input_unchanged": true
+    },
+    {
+      "index": 7,
+      "model": "conv1x1_relu.nvda",
+      "model_sha256": "fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536",
+      "input_sha256": "be62e6e17f5c1e6a1eee4ae46527519d1e4f27ff4731895022d70c052d4e5d3f",
+      "output_sha256": "6e40cd6e7a69c010f906358024de5f31e3e6d344c21156c589af60d2c2788032",
+      "bytes": 3136,
+      "numerical_match": true,
+      "input_unchanged": true
+    }
+  ],
+  "limits": [
+    "three pinned loadables",
+    "blocking CUDA staging",
+    "CAP_SYS_RAWIO required",
+    "attempted kernel DMA retained until reboot",
+    "no recovery or safe reclamation qualification"
+  ],
+  "evidence_directory": "results/cudla-hardware-81aeb5b0"
+}

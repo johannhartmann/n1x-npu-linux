@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import sys
 
 from npu_trigger import trigger, TRIGGERS
 from select_npu_dma_domains import plan, apply
@@ -35,6 +36,19 @@ def fields(status):
 
 def phase_status_file(phase):
     return {'prepare_hfrp': 'hfrp_status', 'relu_probe': 'relu_status'}.get(phase, 'status')
+
+
+def preflight_accel(dev, record, accel_class=Path('/sys/class/accel')):
+    # Exercise open, DRM VERSION and INFO before any firmware trigger.
+    # Registration alone does not prove that the node can be opened.
+    sys.path.insert(0, str(ROOT/'runtime'))
+    from n1x_dla import Device
+    nodes = [entry for entry in accel_class.glob('accel*')
+             if (entry/'device').resolve() == dev.resolve()]
+    if len(nodes) != 1:
+        raise RuntimeError('expected one accel node for the N1X endpoint')
+    with Device('/dev/accel/'+nodes[0].name) as device:
+        record(action='accel ABI preflight', info=device.info())
 
 
 def run_phases(dev, through, record, after_hfrp=False):
@@ -155,6 +169,8 @@ def main():
         dev = Path('/sys/bus/platform/devices/NVDA200A:00')
         if (dev/'driver').resolve().name != 'n1x-npu-bootstrap':
             raise RuntimeError('DLA did not bind to the bootstrap')
+        if args.enable_accel:
+            preflight_accel(dev, record)
         run_phases(dev, args.through, record)
         record(completed_through=args.through, retained_until_reboot=True,
                relu_numerical_verified=args.through == 'relu_probe', general_inference_verified=False,

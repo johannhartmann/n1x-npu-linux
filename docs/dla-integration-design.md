@@ -7,7 +7,22 @@ was changed during this investigation.
 
 ## Decision
 
-Build a native standalone runtime over a Linux DRM accel driver. Preserve the
+The [implemented cuDLA backend](cudla-backend.md) now completes the public
+NVIDIA library -> N1X backend -> Linux driver -> firmware -> DLA path, with
+eight physically verified numerical jobs. The architectural investigation
+below retains its original bring-up context; current implementation limits
+and evidence are tracked in that backend document.
+
+**Updated compatibility target:** subsequent [cuDLA call-path research](cudla-call-path.md)
+executes NVIDIA's actual Linux SBSA frontend against a temporary backend and
+establishes its 18-function `libnvcudla.so` boundary. Preserve the vendor public
+frontend and target that backend for application compatibility. The native
+runtime below remains bring-up infrastructure, not the final application API.
+The inspected Windows driver rejects standalone mode; Windows-equivalent
+CUDA integration must be traced rather than inferred from Jetson NvSci samples.
+
+The original bring-up decision was to build a native standalone runtime over
+a Linux DRM accel driver. Its design preserves the
 cuDLA programming concepts: device, loadable module, tensor descriptions,
 registered buffers, submission, completion and explicit asynchronous errors.
 Use a small C API and CLI first, followed by a thin Python binding. Treat
@@ -272,14 +287,16 @@ features and arbitrary-model compilation remain open.
 The convolution fixture now also has a checked native-loading path: original
 Windows allocation/content execution confirms its 8-KiB constant allocation,
 and the actual ioctl serializer plus original firmware scheduler accept the
-prepared task offline. Physical convolution arithmetic, broader graph support
-and safe memory reclamation remain open; see [the evidence](convolution-compiler.md).
+prepared task offline. Physical convolution arithmetic subsequently passed
+through cuDLA. Broader graph support and safe memory reclamation remain open;
+see [the evidence](convolution-compiler.md).
 
 The `Conv -> ReLU` fixture now exercises two source layers and an intermediate
 DRAM tensor in one task. Original compiler output, original Windows allocation
 decisions, native loading and Linux serialization reach the firmware's engine
 wait offline. Independent ONNX and integer references agree on all three test
-inputs; physical numerical execution of this combined graph is still pending.
+inputs; physical numerical execution subsequently passed through cuDLA on all
+three inputs.
 
 1. **Reusable device lifecycle:** extend the proven startup path to repeated
    jobs, distinct completion IDs, bounded failures and demonstrably safe buffer

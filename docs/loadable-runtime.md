@@ -7,10 +7,10 @@ to the native C/Python accel client. It does not require the preassembled ReLU
 template and does not contain a loadable-hash allowlist.
 
 This implements one more userspace layer of the Linux driver. Compilation of
-arbitrary ONNX graphs, broader model qualification and physical execution via
-the accel API remain open. Kernel instructions, firmware and boot artifacts
-were not changed for this step; the previously prepared accel module remains
-the pending hardware-test build.
+arbitrary ONNX graphs and broader model qualification remain open. The native
+C++ counterpart now materializes the same checked subset for the cuDLA backend;
+eight physical jobs through the accel API passed on 2026-10-28. See
+[the qualification](cudla-backend.md#physical-result-2026-10-28).
 
 ## Newly traced modern fields
 
@@ -143,9 +143,9 @@ venv/bin/python scripts/test_native_loadable.py
 venv/bin/python scripts/test_linux_accel.py
 ```
 
-No new physical inference result is claimed. The remaining hardware test must
-compare actual NPU-written outputs with an independent reference, including
-multiple jobs and the new loadable-generated layout.
+The original loader-only work claimed no physical result. The subsequent
+cuDLA run compares actual NPU-written outputs with independent references for
+multiple jobs and the loadable-generated layouts.
 
 The separate [convolution compiler fixture](convolution-compiler.md) now
 produces a complete loadable with two constants in an 8-KiB allocation and a

@@ -5,16 +5,16 @@ Experimental Linux support for the NVIDIA NPU in the ASUS ProArt P16 H7607BA
 reconstructed from the pinned NVIDIA 617.42 Windows ARM64 driver, checked
 against original-code emulation and NVIDIA's public Jetson sources.
 
-**Firmware startup, a bypass task and one numerical FP16 ReLU graph work on
-the physical P16 under Linux. An experimental `/dev/accel` interface now
-builds and passes offline tests; it has not yet been hardware-qualified.**
+**The physical P16 executes ReLU, convolution and Conv -> ReLU through NVIDIA's
+original Linux cuDLA library, our backend, the Linux driver and the extracted
+firmware. Eight changing-input jobs matched independent references.**
 This is a manual research driver, not a production replacement for a vendor SDK.
 
 ## What this project does
 
 The goal is to make the N1X's dedicated neural-network accelerator usable from
-Linux. This work targets the NPU/DLA path, independently of the GPU's CUDA
-stack. It is separate from the broader
+Linux. This work targets NPU/DLA execution, with CUDA buffer and stream
+integration for cuDLA applications. It is separate from the broader
 [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux)
 and the [spark_hwmon telemetry driver](https://github.com/johannhartmann/spark_hwmon).
 
@@ -26,6 +26,14 @@ test itself runs entirely on Linux and does not require a Windows installation.
 The repository contains the Linux module, protocol serializers, analysis tools,
 regression tests and the evidence behind the reconstructed interfaces.
 
+The [cuDLA integration research](docs/cudla-call-path.md) identifies a reusable
+NVIDIA Linux frontend and its 18-function `libnvcudla.so` backend boundary.
+An [experimental N1X backend](docs/cudla-backend.md) now loads supported models
+and stages real CUDA buffers through the Linux transport. Physical qualification
+covers eight numerical jobs. Additional tests use a modeled NPU boundary for
+error injection. Submission currently blocks and attempted kernel DMA backing
+remains retained until reboot.
+
 On the tested P16, the Linux module reads the verified board policy, performs
 the power/configuration handshake, uploads the extracted firmware, establishes
 DMA communication and submits a compiler-produced task. The numerical test
@@ -33,12 +41,12 @@ runs ReLU, `output = max(input, 0)`, on 1,568 FP16 values. The device-written
 output matches the complete CPU-reference hash. This demonstrates arithmetic
 execution beyond device enumeration, a firmware response or a bypass task.
 
-The current scope is one board/BIOS/kernel combination and one fixed graph.
+The current scope is one board/BIOS/kernel combination and three checked graphs.
 An optional RAWIO-only `/dev/accel` interface and C/Python runtime can submit
 prepared images with changing tensors; see [native runtime](docs/native-runtime.md)
 for its offline evidence and current limits. The [native loadable loader](docs/loadable-runtime.md)
 reads a checked NVDA 0.9.0 subset directly. Broader model compilation/loading
-and framework integration remain unfinished. Physical repeated execution,
+and framework integration remain unfinished. Sustained execution,
 interrupt-driven operation, safe resource release, recovery and suspend/resume still need implementation or qualification.
 The hardware path is deliberately manual and guarded for the tested machine;
 it is not an installer for arbitrary N1X systems. Vendor binaries, firmware,
@@ -141,7 +149,7 @@ This is one successful execution, not a throughput or sustained-stability benchm
 - [Windows KMD task submission and completion semaphore construction](docs/windows-kmd-task.md).
 - [Model/compiler probe](docs/model-probe.md), [boot logging](docs/boot-logging.md).
 - [Convolution and Conv → ReLU compiler/runtime support](docs/convolution-compiler.md)
-  (constant and intermediate-memory loading pass offline; physical execution of both graphs is pending).
+  (constant and intermediate-memory loading and numerical execution of both graphs are physically verified through cuDLA).
 
 Detailed research documents retain earlier unsuccessful experiments and their
 limitations. The physical result above supersedes their earlier boot-status

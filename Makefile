@@ -19,6 +19,7 @@ test-p16-start:
 	venv/bin/python scripts/test_native_loadable.py
 	venv/bin/python scripts/test_dla_runtime.py
 	venv/bin/python scripts/test_linux_accel_backend.py
+	venv/bin/python scripts/test_linux_accel_open.py
 	venv/bin/python scripts/test_linux_accel.py
 	venv/bin/python scripts/test_linux_bypass_task.py
 	venv/bin/python scripts/test_linux_bypass_firmware.py
@@ -232,3 +233,20 @@ module:
 runtime: runtime/libn1x_dla.so
 runtime/libn1x_dla.so: runtime/n1x_dla.c runtime/n1x_dla.h include/uapi/n1x_dla_accel.h
 	$(CC) $(CFLAGS) -fPIC -shared -Iinclude runtime/n1x_dla.c -o $@
+
+# Locally acquired official headers/library; never installs a replacement for
+# NVIDIA's public libcudla. The backend stays in this isolated directory.
+CUDLA_PACKAGE ?= $(CURDIR)/sources/cudla-13.4.92/libcudla-linux-sbsa-13.4.92-archive
+CUDA_ROOT ?= /opt/cuda
+.PHONY: cudla
+cudla: runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke
+.PHONY: test-cudla
+test-cudla: cudla
+	venv/bin/python scripts/test_cudla_model.py
+	venv/bin/python scripts/test_cudla_cuda_transport.py
+runtime/cudla/libnvcudla.so: runtime/cudla_backend.cpp runtime/cudla_model.cpp runtime/cudla_model.hpp runtime/libn1x_dla.so
+	mkdir -p runtime/cudla
+	$(CXX) -std=c++17 $(CFLAGS) -fPIC -shared -Iinclude -I$(CUDLA_PACKAGE)/include -I$(CUDA_ROOT)/include runtime/cudla_backend.cpp runtime/cudla_model.cpp -Lruntime -ln1x_dla -L$(CUDA_ROOT)/lib64/stubs -lcuda -Wl,-rpath,'$$ORIGIN/..' -Wl,-soname,libnvcudla.so -Wl,-z,defs -o $@
+runtime/cudla/cudla-smoke: runtime/cudla_smoke.cpp
+	mkdir -p runtime/cudla
+	$(CXX) -std=c++17 $(CFLAGS) -I$(CUDLA_PACKAGE)/include -I$(CUDA_ROOT)/include $< -L$(CUDLA_PACKAGE)/lib -lcudla -L$(CUDA_ROOT)/lib64/stubs -lcuda -Wl,-rpath,$(CUDLA_PACKAGE)/lib -o $@

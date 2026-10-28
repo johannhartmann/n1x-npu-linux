@@ -5,7 +5,10 @@ from pathlib import Path
 import tempfile
 from unittest.mock import patch
 
-from qualify_p16_start import PHASES, TRIGGERS, run_phases, phase_status_file
+from qualify_p16_start import PHASES, TRIGGERS, ROOT, run_phases, phase_status_file, preflight_accel
+import sys
+sys.path.insert(0, str(ROOT/'runtime'))
+import n1x_dla
 
 
 def main():
@@ -72,6 +75,29 @@ def main():
                 send.assert_not_called()
                 sync.assert_not_called()
             cases += 1
+        accel_class=dev/'class'; accel_class.mkdir()
+        node=accel_class/'accel9';node.mkdir();(node/'device').symlink_to(dev)
+        for fail in (False,True):
+            records=[]
+            class Device:
+                def __init__(self,path):
+                    assert path=='/dev/accel/accel9'
+                    if fail:raise OSError(errno.EINVAL,'modeled DRM open failure')
+                def __enter__(self):return self
+                def __exit__(self,*_):pass
+                def info(self):return {'abi_version':1}
+            with patch.object(n1x_dla,'Device',Device):
+                try:preflight_accel(dev,lambda **row:records.append(row),accel_class)
+                except OSError:assert fail and not records
+                else:assert not fail and records==[{'action':'accel ABI preflight','info':{'abi_version':1}}]
+            cases+=1
+        (node/'device').unlink()
+        with patch.object(n1x_dla,'Device') as opened:
+            try:preflight_accel(dev,lambda **_:None,accel_class)
+            except RuntimeError:pass
+            else:raise AssertionError('accepted missing endpoint')
+            opened.assert_not_called()
+        cases+=1
     print(f'{cases} startup prefix/failure cases passed; no root, sysfs or hardware access')
 
 
