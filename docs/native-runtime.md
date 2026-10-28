@@ -98,6 +98,34 @@ tests no longer depend on Windows code to generate submitted control packets;
 the Windows builders remain comparison oracles. Submission/ACK handling,
 cancellation state and physical verification are not enabled by serialization.
 
+The private `n1x_dla_preempt()` helper now adds bounded method-18 submission and
+response consumption around those packets. It rejects stale checkpoint/fence
+state and pending task/response IRQs before submission, sends once, and checks
+both the acknowledged `0x120b/data=0` message and the acquired DMA snapshot.
+Checkpoint-only and task-fence-only observations are distinct outcomes; neither,
+both, an invalid marker or a mismatched preemption fence fail closed. Firmware
+errors and transport/ACK errors propagate without retry. Each of the method
+availability and response phases permits at most 5001 polls with 1000-us delay
+intervals (at most ten seconds of requested delays combined, excluding I/O).
+
+`scripts/test_native_preempt.py` drives this compiled C helper against the
+original HAL-1 firmware with synthetic engine IRQ/status and RAM DMA. Fourteen
+cases cover checkpoint save, save failure, completion with status 1/5, completion
+between preflight and command delivery, disabled preemption and missing engine
+events across both tested engine IRQ bits. Another 51 cases cover stale values,
+malformed responses, every transport/snapshot failure edge and bounded waits.
+The original arithmetic executor reports -16 in the save-failure fixture while
+still emitting `0x120b`; the native host correctly returns an error rather than
+claiming a checkpoint. No numerical computation or physical engine-context
+transfer is modeled.
+
+This helper is built as an independent kernel component, not linked into the
+bootstrap module or called by EXEC. Its caller must own a single accepted task,
+its context and request allocations, serialize response consumption, and
+quarantine uncertain execution. Even a successful observation does not permit
+freeing DMA or automatic resume. Physical qualification and integration with
+the job lifecycle remain necessary before exposing cancellation to applications.
+
 The [Windows release investigation](windows-buffer-lifetime.md) now traces
 cuDLA unregister through error gating and last-reference D3DKMT destruction.
 Its zero destruction flags explicitly allow Windows to defer reclamation.

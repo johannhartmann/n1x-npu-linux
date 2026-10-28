@@ -1368,8 +1368,19 @@ list, context header and preemption packets. Their original-firmware save,
 restore, failure and completion checks are unchanged. In particular, the
 failed-save case still writes the preemption fence and sends `0x120b`; generating
 correct request bytes does not turn that message into evidence of successful
-context saving or safe reclamation. The native execution/cancellation state
-machine and physical engine qualification remain separate work.
+context saving or safe reclamation.
+
+The private host primitive in `driver/n1x_dla_preempt.c` now sends method
+`0x212` once, consumes/ACKs the original mailbox response and acquires the
+checkpoint/task/preemption-fence snapshot. It requires a fresh initial marker
+and fences; after exact `0x120b/data=0` and matching sequence, checkpoint-only
+and task-fence-only observations are distinct. Missing or contradictory terminal
+evidence, firmware/transport failures and timeouts return errors. It neither
+releases memory nor resumes work. `test_native_preempt.py` covers 14 original
+firmware executions, including save failure and completion races on either side
+of command delivery, plus 51 fault cases. See
+[native runtime](native-runtime.md#lifetime-and-failures) for ownership and wait
+bounds. EXEC integration and physical engine qualification remain separate work.
 
 ## HAL-1 firmware rearms each mailbox response
 

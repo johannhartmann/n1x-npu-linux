@@ -111,7 +111,8 @@ def check_preemption_builder(lib, pe):
     return cases+1
 
 
-def start_native(lib, pe, firmware, model, *, job_flags=0, save_context=True):
+def start_native(lib, pe, firmware, model, *, job_flags=0, save_context=True,
+                 response_handler=None, enabled=True):
     backing, addresses, layout = build_relu(model, HOST+0x10000)
     payload = bytearray(0x10000)+backing
     descriptor = ctypes.create_string_buffer(256)
@@ -144,7 +145,7 @@ def start_native(lib, pe, firmware, model, *, job_flags=0, save_context=True):
         return int.from_bytes(u.mem_read(address, 4), 'little')
 
     def submit(u):
-        method, data = ((0x31c, 1), (0x307, HOST >> 8))[len(live)]
+        method, data = ((0x31c, int(enabled)), (0x307, HOST >> 8))[len(live)]
         live.append(u)
         u.mem_write(MMIO+0x68, struct.pack('<II', method, data))
 
@@ -153,6 +154,8 @@ def start_native(lib, pe, firmware, model, *, job_flags=0, save_context=True):
                               'state': word(u, 0x1862a4),
                               'outstanding': int.from_bytes(u.mem_read(0x183720, 1), 'little'),
                               'preempt_fence': word(u, HOST+fence), 'task_done': word(u, HOST+0x6060)})
+        if response_handler is not None and response_handler(u):
+            return
         for offset in (8, 0xd28):
             u.mem_write(MMIO+offset, struct.pack('<I', word(u, MMIO+offset) & ~128))
         u.mem_write(MMIO+0x40, struct.pack('<I', ACK))
