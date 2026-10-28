@@ -926,8 +926,9 @@ static int n1x_boot_publish_job(void *context, u32 value)
 static int n1x_boot_read_job_fence(void *context, u32 *value)
 {
     struct n1x_dla_job *task = context;
-    dma_rmb();
     *value = le32_to_cpu(READ_ONCE(*(__le32 *)(task->buffer + 768)));
+    /* Acquire result reads after the device's completion word. */
+    dma_rmb();
     return 0;
 }
 

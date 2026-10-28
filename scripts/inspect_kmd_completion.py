@@ -85,9 +85,24 @@ def complete(pe, *, sequence, os_fence, flags=0, node=0, engine=0, callback=Fals
         if selection == 'blocked':
             m.write(job + 0x1e8, 'I', flags | (1 << 10))
         m.write(PRIMARY + 0x4000, 'QII', OBJECT, node, engine)
-    events = []
+    events, ordering = [], []
+    # These are real ARM64 instructions on the normal selector path, not
+    # synthetic acquire operations supplied by the memory model.
+    for pc in (0xe22628, 0xe226ec):
+        assert pe.get_data(pc, 4) == bytes.fromhex('bf3b03d5')  # dmb ish
+    assert pe.get_data(0xe22580, 4) == bytes.fromhex('b55a60b8')  # ldr w21,[x21,w0,uxtw #2]
 
     def hook(_, pc, size, user):
+        if pc == BASE + 0xe22580:
+            assert selection is not None and selection not in ('missing', 'fallback')
+            address = m.reg(21) + ((m.reg(0) & 0xffffffff) << 2)
+            assert address == DESCRIPTOR + 4 * index
+            ordering.append({'operation': 'read_device_completion', 'rva': hex(pc-BASE),
+                             'value': m.read(address, 'I')[0]})
+        elif pc in (BASE + 0xe22628, BASE + 0xe226ec):
+            ordering.append({'operation': 'dmb_ish', 'rva': hex(pc-BASE)})
+        elif pc == BASE + 0xe218b8:
+            ordering.append({'operation': 'selected_job', 'rva': hex(pc-BASE)})
         if pc == STUB + 4:
             m.ret(3)  # KeGetCurrentIrql: constructed interrupt-level context.
         elif pc == STUB + 8:
@@ -104,6 +119,7 @@ def complete(pe, *, sequence, os_fence, flags=0, node=0, engine=0, callback=Fals
             assert m.reg(0) == OWNER + 0x6000
             m.ret(OWNER + 0x5000)  # Constructed DXGKRNL_INTERFACE.
         elif pc == STUB + 24:
+            ordering.append({'operation': 'notify_windows'})
             assert m.reg(0) == 0x87654321
             event = m.reg(1)
             assert m.read(event, 'I') == (1,)  # DXGK_INTERRUPT_DMA_COMPLETED.
@@ -151,7 +167,14 @@ def complete(pe, *, sequence, os_fence, flags=0, node=0, engine=0, callback=Fals
         expected.append({'event': 'notify_interrupt', 'type': 1,
                          'os_fence': os_fence, 'node': node, 'engine': engine})
     assert events == expected
+    operations = [v['operation'] for v in ordering]
+    if selection == 'ready':
+        assert operations == ['read_device_completion', 'dmb_ish', 'dmb_ish',
+                              'selected_job'] + (['notify_windows'] if notified else [])
+    elif selection == 'pending':
+        assert operations == ['read_device_completion']
     return {'selected': selected, 'notified': notified, 'events': events,
+            'tracked_completion_order': ordering,
             'outstanding_after': int(not selected),
             'job_record_still_present': True}
 

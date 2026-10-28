@@ -69,6 +69,24 @@ The runtime does not retry EINTR or any other error. READ requires successful
 acceptance/fence/SWGEN0 verification and can only return the caller's payload,
 not the kernel prefix or allocation padding.
 
+Both Linux fence callbacks now load the coherent completion word with
+`READ_ONCE`, then execute `dma_rmb()` before returning. The barrier must follow
+the observation to order subsequent result reads; a barrier placed only before
+the load does not provide that acquire contract. The existing READ ioctl and
+fixed ReLU checker retain their separate barriers before consuming output, so
+this change corrects the shared callback contract rather than demonstrating
+that previous output copies were unprotected. This follows the
+[Linux DMA barrier example](https://docs.kernel.org/core-api/wrappers/memory-barriers.html).
+The native ARM64 module build emits `ldr`, `str` to the observation output,
+then `dmb oshld` in both callbacks. The Windows normal-completion replay
+independently observes [barriers after its completion load](windows-kmd-task.md).
+
+`scripts/test_linux_fence_order.py` compiles the actual two callbacks and checks
+load-before-barrier order for four fence values. Its mocked accesses do not
+simulate CPU speculation or DMA coherency. The bypass lifecycle test models
+coherent fence visibility at the read, not as a side effect of a barrier.
+None of these checks establishes engine quiescence or permits freeing backing.
+
 Safe reclamation, reset/recovery, asynchronous scheduling and suspend/resume
 remain open requirements. The existing driver still rejects suspend after
 startup. No service or autostart is installed by this change.

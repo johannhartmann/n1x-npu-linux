@@ -36,7 +36,9 @@ struct n1x_dla_job_ops {
     /* Write the unique terminal postaction value, initialize a different
      * coherent fence value and publish all prepared DMA backing. No device I/O. */
     int (*publish)(void *context, __u32 fence_value);
-    /* Acquire device writes before reading the caller-owned fence. */
+    /* Read the caller-owned coherent fence once, then issue a DMA read
+     * barrier before returning so later result reads follow this observation.
+     * This CPU ordering does not establish device-side DMA quiescence. */
     int (*read_fence)(void *context, __u32 *value);
 };
 /* Execute one already prepared, fresh job on a caller-serialized queue.

@@ -1159,10 +1159,16 @@ through the original trap and supplies a RAM value for engine offset 0x3054:
 
 | Modeled status | Observed result in running state 1 |
 | ---: | --- |
-| 0 or 4 | Remains waiting, record count 1, original fence unchanged, no task IRQ |
+| 0, 2, 3, 4, 6 or 7 | Remains waiting, record count 1, original fence unchanged, no task IRQ |
 | 1 or 5 | Record count 0, engine/queue idle, original postaction writes fence `0x12345678`, task IRQ bit 0x40 asserted |
+| `0xfffffff8` through `0xfffffffb` | Only `0xfffffff9` completes; the other three remain pending |
 
-All eight cases return through original trap code. Completion uses the
+The expanded matrix has 48 cases: twelve status words, two IRQ sources and
+two DMA timings. All return through original trap code. In running state 1,
+the original ISR at `0x1026f0..0x1026fe` requires **`(status & 3) == 1`**;
+testing bit 0 alone would incorrectly accept 3 and 7. This is not a general
+decode of every status bit or of other firmware execution states.
+Completion uses the
 original scheduler, postaction and DMA code; no engine counter, firmware code,
 fence or queue state is patched to manufacture that result. The injected IRQ
 and status are explicit simulated hardware inputs. The actual firmware code
@@ -1195,7 +1201,7 @@ observed boundary is PC `0x10222a` after the store at `0x102228`:
 
 The test unmaps **all** device-visible model/task backing at that point and
 resumes the original firmware tail. It reaches scheduler WFI without another
-DMA command or access to the revoked memory. Status variants 0 and 4 still
+DMA command or access to the revoked memory. The noncompletion status variants
 remain incomplete: no SWGEN0, no retirement boundary and no release.
 
 The emulator still supplies engine status/IRQ and synthetic DMA completion;
@@ -1208,10 +1214,13 @@ Local records: `results/relu-retirement-boundary.json` and
 `results/relu-retirement-ubsan.json`.
 
 The same matrix now runs with both instantaneous DMA and a 17-status-read
-delay before each modeled copy (16 cases total). Completion records prove
+delay before each modeled copy (48 cases after the full status matrix expansion).
+Completion records prove
 that all 24 original firmware DMA commands have completed at SWGEN0, including
 the final postaction-fence write. Each transfer must incur the requested
 delay. Revoking the backing after that signal still permits the firmware tail
 to return without further DMA. Noncompletion engine statuses remain pending
 under both DMA timings. This exercises original firmware waiting behavior,
 not real device memory ordering. Result: `results/relu-delayed-dma.json`.
+The expanded status matrix is recorded in
+`results/relu-retirement-status-matrix.json`.

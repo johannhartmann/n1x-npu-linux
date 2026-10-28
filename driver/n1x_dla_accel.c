@@ -58,8 +58,9 @@ static int publish(void *context, u32 value)
 static int read_fence(void *context, u32 *value)
 {
     struct n1x_accel_job *job = context;
-    dma_rmb();
     *value = le32_to_cpu(READ_ONCE(*(__le32 *)(job->task.buffer + N1X_JOB_FENCE)));
+    /* Acquire result reads after the device's completion word. */
+    dma_rmb();
     return 0;
 }
 static int info_ioctl(struct drm_device *drm, void *data, struct drm_file *file)

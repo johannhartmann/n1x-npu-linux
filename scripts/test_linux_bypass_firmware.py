@@ -37,7 +37,7 @@ typedef __u8 u8;typedef __u32 u32;typedef __u64 u64;typedef __u64 dma_addr_t;typ
 #define DMA_BIT_MASK(n) ((1ULL<<(n))-1)
 #define GFP_KERNEL 0
 #define WRITE_ONCE(x,v) ((x)=(v))
-#define READ_ONCE(x) (x)
+#define READ_ONCE(x) (synchronize(), (x))
 #define cpu_to_le32(x) (x)
 #define le32_to_cpu(x) (x)
 struct device {int unused;};struct n1x_boot_endpoint {struct device *dev;};
@@ -67,7 +67,9 @@ static int n1x_boot_write(void *ctx,u32 offset,u32 value)
 static void n1x_boot_delay(void *ctx,u32 delay)
 {(void)ctx;transport.delay_us(transport.context,delay);}
 static void dma_wmb(void) {}
-static void dma_rmb(void) {synchronize();}
+/* Model coherent visibility when reading shared memory. A CPU barrier does
+ * not perform DMA; callback ordering is covered by test_linux_fence_order. */
+static void dma_rmb(void) {}
 static int native_dispatch(struct n1x_dla_job_queue *queue,const struct n1x_dla_io *io,
                            const struct n1x_dla_job_ops *ops,struct n1x_dla_job *job)
 {return split_mode?n1x_dla_job_start(queue,io,ops,job):n1x_dla_job_execute(queue,io,ops,job);}

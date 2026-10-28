@@ -49,7 +49,11 @@ def main():
     address_list.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.POINTER(ctypes.c_uint64),ctypes.c_uint16]
     cases=[]
     for irq in (0x400,0x800):
-        for engine_status,dma_delay_reads in product((0,1,4,5),(0,17)):
+        # The original ISR compares (status & 3) with 1, rather than testing
+        # bit 0 alone. Include 3/7 and unrelated upper bits explicitly.
+        statuses=tuple(range(8))+(0xfffffff8,0xfffffff9,0xfffffffa,0xfffffffb)
+        for engine_status,dma_delay_reads in product(statuses,(0,17)):
+            completed=(engine_status&3)==1
             reference,addresses,layout=build_relu(data,HOST)
             payload=initialize_relu(lib,data,layout)
             assert payload==reference
@@ -125,7 +129,7 @@ def main():
             u.reg_write(regs.UC_RISCV_REG_MCAUSE,0x8000000b)
             u.reg_write(regs.UC_RISCV_REG_MEPC,0x101424)
             u.emu_start(u.reg_read(regs.UC_RISCV_REG_MTVEC),0x40000000,count=200000)
-            if engine_status&1:
+            if completed:
                 assert len(retirement)==1 and u.reg_read(regs.UC_RISCV_REG_PC)==0x10222a
                 snapshot=retirement[0]
                 assert snapshot['queue_count']==snapshot['slot_in_use']==0
@@ -146,7 +150,6 @@ def main():
             assert entered==[0x1025e6] and len(result['trap_returns'])==before_returns+1
             assert u.reg_read(regs.UC_RISCV_REG_PC)==0x102194 and not word(MMIO+8)&irq
             assert status_reads[:2]==[engine_status,engine_status]
-            completed=bool(engine_status&1)
             assert word(internal+40)==(0 if completed else 1)
             assert word(0x1862a4)==(0 if completed else 1)
             assert word(HOST+768)==(0x12345678 if completed else 0xdeadbeef)

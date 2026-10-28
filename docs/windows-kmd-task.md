@@ -328,6 +328,24 @@ Only the actual OS callback, getters, clocks and logging are synthetic. The
 wrapper sets `object+0x4b48` after the callback with a release store/barrier.
 Neither the notification nor the tested counter update frees the job record.
 
+The completion replay also traces the original memory-ordering instructions.
+For the normal ready-bank path, the observed sequence is:
+
+1. `0xe22580`: ordinary `ldr w21, [x21, w0, uxtw #2]` reads the device-written
+   completion word from the CPU mapping.
+2. `0xe22628`: `dmb ish` follows the selector's atomic scheduling gate.
+3. `0xe226ec`: a second `dmb ish` follows its atomic completion-cache update.
+4. `0xe218b8`: the selected-job callback runs, followed by the modeled Windows
+   notification unless flags suppress it.
+
+The script pins the instruction bytes and checks their execution order for
+every ready-selector case. An unchanged pending fence takes only the first
+step, without selection or notification. These barriers execute in the
+original KMD, but the CPU mapping and device writes remain RAM fixtures;
+Windows mapping attributes, physical coherency and device-side write ordering
+are not derived from this trace. In particular, a CPU barrier cannot stop a
+still-running engine. Result: `results/windows-completion-order.json`.
+
 The 166 passing cases comprise 48 selected-job notifications, 70 selector
 cases, 32 additional class `(5,2)` cases and 16 linked producer/firmware/reader
 cases. Class `(5,2)` is checked by the DLA dispatcher `dd5ab0`; the additional

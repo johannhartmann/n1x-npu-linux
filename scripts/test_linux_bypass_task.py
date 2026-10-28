@@ -33,7 +33,8 @@ typedef uint32_t __le32;
 #define DMA_BIT_MASK(n) ((1ULL << (n))-1)
 #define GFP_KERNEL 0
 #define WRITE_ONCE(x,v) ((x)=(v))
-#define READ_ONCE(x) (x)
+static u32 modeled_read_once(u32 *p);
+#define READ_ONCE(x) modeled_read_once(&(x))
 #define cpu_to_le32(x) (x)
 #define le32_to_cpu(x) (x)
 struct device {int unused;};
@@ -107,9 +108,13 @@ static int n1x_boot_write(void *context,u32 offset,u32 value)
 static void n1x_boot_delay(void *context,u32 interval)
 {assert(context==&endpoint && interval==1000);delays++;}
 static void dma_wmb(void) {barriers++;}
-static void dma_rmb(void)
+/* Coherent device writes are visible when the word is loaded. A CPU barrier
+ * orders observations; it does not perform device DMA or refresh a cache. */
+static u32 modeled_read_once(u32 *p)
 {if(sent && (stage||behavior==COALESCED) && behavior!=NO_FENCE)
- *(u32 *)(allocation+768)=behavior==STALE_FENCE ? boot_task.fence_value-1 : boot_task.fence_value;}
+ *(u32 *)(allocation+768)=behavior==STALE_FENCE ? boot_task.fence_value-1 : boot_task.fence_value;
+ return *p;}
+static void dma_rmb(void) {}
 '''
     harness += function
     harness += r'''

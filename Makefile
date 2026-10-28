@@ -9,6 +9,7 @@ test-p16-start:
 	venv/bin/python scripts/verify_p16_board_policy.py results/p16-bios300-physical.rom
 	venv/bin/python scripts/test_linux_hfrp_prepare.py
 	venv/bin/python scripts/test_linux_hfrp_state.py
+	venv/bin/python scripts/test_linux_fence_order.py
 	venv/bin/python scripts/test_linux_bootstrap.py
 	venv/bin/python scripts/test_linux_bootstrap_guards.py
 	venv/bin/python scripts/test_hfrp_setup.py
@@ -67,6 +68,7 @@ test-vendor: test
 	venv/bin/python scripts/inspect_kmd_task_submission.py
 	venv/bin/python scripts/inspect_kmd_virtual_submit.py
 	venv/bin/python scripts/inspect_kmd_completion.py
+	venv/bin/python scripts/test_linux_fence_order.py
 	venv/bin/python scripts/inspect_kmd_cleanup.py
 	venv/bin/python scripts/inspect_kmd_recovery.py
 	venv/bin/python scripts/inspect_kmd_context_reset.py
