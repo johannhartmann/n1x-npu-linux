@@ -114,6 +114,10 @@ static struct {
 	struct n1x_dla_vbios_policy policy;
 	struct n1x_dla_gating_policy gating;
 	struct n1x_dla_vbios_location location;
+	struct n1x_hfrp_power_state power_state;
+	struct n1x_hfrp_exchange_result state_exchange;
+	bool state_attempted;
+	int state_error;
 	bool attempted, powered;
 	u32 phase;
 	int error;
@@ -1229,12 +1233,51 @@ static ssize_t prepare_hfrp_store(struct device *dev, struct device_attribute *a
 }
 static DEVICE_ATTR_WO(prepare_hfrp);
 
+/* Explicit diagnostic only. Successful preparation already pins runtime PM
+ * and module lifetime. Serialize with startup, inference and other queries.
+ * Reading hfrp_status never sends a command or consumes a mailbox response.
+ */
+static ssize_t query_power_state_store(struct device *dev, struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct n1x_dla_io io;
+	int err;
+	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "query"))
+		return -EPERM;
+	mutex_lock(&boot_lock);
+	if (!enable_hfrp || !n1x_boot_machine())
+		err = -EPERM;
+	else if (!boot_dla || boot_dla->dev != dev || !boot_dla->hfrp || !boot_sroot)
+		err = -ENODEV;
+	else if (!boot_hfrp.attempted || !boot_hfrp.powered || boot_hfrp.error)
+		err = -EHOSTDOWN;
+	else if (boot_hfrp.channel.state != N1X_HFRP_READY)
+		err = boot_hfrp.channel.state == N1X_HFRP_FAILED ? -ENOTRECOVERABLE : -EBUSY;
+	else {
+		io = (struct n1x_dla_io){boot_dla, n1x_boot_hfrp_write,
+				       n1x_boot_hfrp_read, n1x_boot_delay};
+		boot_hfrp.state_attempted = true;
+		memset(&boot_hfrp.power_state, 0, sizeof(boot_hfrp.power_state));
+		memset(&boot_hfrp.state_exchange, 0, sizeof(boot_hfrp.state_exchange));
+		err = n1x_hfrp_query_power_state(&io, &boot_hfrp.channel, &boot_hfrp.version,
+				5001, 1000, &boot_hfrp.power_state, &boot_hfrp.state_exchange);
+		boot_hfrp.state_error = err;
+		dev_info(dev, "HFRP state query error=%d valid=%u raw=%#x reply=%#x length=%u channel=%u; no idle guarantee\n",
+			 err, boot_hfrp.power_state.valid, boot_hfrp.power_state.raw,
+			 boot_hfrp.state_exchange.reply.header, boot_hfrp.state_exchange.reply.length,
+			 boot_hfrp.channel.state);
+	}
+	mutex_unlock(&boot_lock);
+	return err ? err : (ssize_t)count;
+}
+static DEVICE_ATTR_WO(query_power_state);
+
 static ssize_t hfrp_status_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	ssize_t size;
 	mutex_lock(&boot_lock);
 	size = sysfs_emit(buf,
-		"enabled=%u attempted=%u phase=%u error=%d state=%u pending=%u stamp=%#x version=%u.%u configured=%u command=%u completed=%u setup_reply=%#x setup_length=%u setup_payload=%*phN final_reply=%#x final_length=%u final_payload=%*phN power_accepted=%u frequency_khz=%u gating=%#x\n",
+		"enabled=%u attempted=%u phase=%u error=%d state=%u pending=%u stamp=%#x version=%u.%u configured=%u command=%u completed=%u setup_reply=%#x setup_length=%u setup_payload=%*phN final_reply=%#x final_length=%u final_payload=%*phN power_accepted=%u frequency_khz=%u gating=%#x query_attempted=%u query_error=%d query_valid=%u query_raw=%#x query_reply=%#x query_length=%u query_payload=%*phN\n",
 		enable_hfrp, boot_hfrp.attempted, boot_hfrp.phase, boot_hfrp.error,
 		boot_hfrp.channel.state, boot_hfrp.channel.pending_sequence,
 		boot_hfrp.version.stamp, boot_hfrp.version.major, boot_hfrp.version.minor,
@@ -1243,7 +1286,11 @@ static ssize_t hfrp_status_show(struct device *dev, struct device_attribute *att
 		(int)boot_hfrp.setup.exchange.reply.length, boot_hfrp.setup.exchange.reply.payload,
 		boot_hfrp.exchange.reply.header, boot_hfrp.exchange.reply.length,
 		(int)boot_hfrp.exchange.reply.length, boot_hfrp.exchange.reply.payload,
-		boot_hfrp.powered, boot_hfrp.policy.frequency_khz, boot_hfrp.gating.request_mask);
+		boot_hfrp.powered, boot_hfrp.policy.frequency_khz, boot_hfrp.gating.request_mask,
+		boot_hfrp.state_attempted, boot_hfrp.state_error, boot_hfrp.power_state.valid,
+		boot_hfrp.power_state.raw, boot_hfrp.state_exchange.reply.header,
+		boot_hfrp.state_exchange.reply.length, (int)boot_hfrp.state_exchange.reply.length,
+		boot_hfrp.state_exchange.reply.payload);
 	mutex_unlock(&boot_lock);
 	return size;
 }
@@ -1278,7 +1325,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 }
 static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_show, NULL);
 static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
-	&dev_attr_prepare_hfrp.attr, &dev_attr_hfrp_status.attr,
+	&dev_attr_prepare_hfrp.attr, &dev_attr_hfrp_status.attr, &dev_attr_query_power_state.attr,
 	&dev_attr_relu_probe.attr, &dev_attr_relu_status.attr,
 	&dev_attr_config_snapshot.attr, &dev_attr_init_region5.attr,
 	&dev_attr_apply_config.attr, &dev_attr_apply_lpwr.attr, &dev_attr_bypass_task.attr, &dev_attr_status.attr, NULL};

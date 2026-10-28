@@ -8,6 +8,7 @@ KERNEL_RELEASE ?= $(shell uname -r)
 test-p16-start:
 	venv/bin/python scripts/verify_p16_board_policy.py results/p16-bios300-physical.rom
 	venv/bin/python scripts/test_linux_hfrp_prepare.py
+	venv/bin/python scripts/test_linux_hfrp_state.py
 	venv/bin/python scripts/test_linux_bootstrap.py
 	venv/bin/python scripts/test_linux_bootstrap_guards.py
 	venv/bin/python scripts/test_hfrp_setup.py
@@ -112,6 +113,7 @@ test-vendor: test
 	venv/bin/python scripts/test_hfrp_version.py
 	venv/bin/python scripts/test_hfrp_startup.py
 	venv/bin/python scripts/test_hfrp_power_state.py
+	venv/bin/python scripts/test_linux_hfrp_state.py
 	venv/bin/python scripts/test_hfrp_config.py
 	venv/bin/python scripts/test_hfrp_setup.py
 	venv/bin/python scripts/test_cold_start_dispatch.py

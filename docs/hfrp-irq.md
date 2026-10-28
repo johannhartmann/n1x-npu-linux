@@ -525,10 +525,39 @@ is checked explicitly. Native tests use the real C transport with a synthetic
 RAM peer; original-code tests model the Windows sender. No physical state
 transition or DMA retirement is established.
 
-The component compiles into the bootstrap module, but startup and recovery do
-not call it yet. A snapshot is neither proof of engine idle nor authorization
-to free task buffers. Physical query qualification and the secure-firmware
-reset/drain contract remain separate work.
+The bootstrap module exposes an explicit diagnostic `query_power_state` sysfs
+write. It requires `CAP_SYS_RAWIO`, `enable_hfrp=1`, the supported machine,
+the DLA endpoint, successful HFRP preparation and a READY channel. It shares
+`boot_lock` with startup and inference and uses the PM/module lifetime already
+retained by preparation. Startup, recovery and the qualification runner do not
+invoke it automatically.
+
+After loading the updated module and completing the documented preparation,
+request one sample explicitly:
+
+```sh
+printf 'query\n' | sudo tee /sys/bus/platform/devices/NVDA200A:00/query_power_state
+sudo cat /sys/bus/platform/devices/NVDA200A:00/hfrp_status
+```
+
+`query_attempted`, `query_error`, `query_valid`, `query_raw`, `query_reply`,
+`query_length` and `query_payload` describe the last accepted diagnostic
+attempt. Reading status only returns cached data; it never sends a command.
+The query has separate result storage, preserving the original preparation
+and power-command evidence. Errors invalidate the query snapshot; a failed
+channel rejects further attempts without I/O. Do not clear that channel in
+software to retry. The module logs each accepted attempt with its result.
+An older loaded module does not gain this attribute when the source is rebuilt.
+
+`scripts/test_linux_hfrp_state.py` compiles the actual store/show handlers with
+mocked OS and transport boundaries. It checks privilege, endpoint, preparation
+and channel gates, serialization, successful/repeated explicit requests,
+errors, preservation of preparation evidence, and cached status reads. The
+native transport test above covers packet and version validation separately.
+
+A snapshot is neither proof of engine idle nor authorization to free task
+buffers. Physical query qualification and the secure-firmware reset/drain
+contract remain separate work.
 
 ## HFRP version discovery before power commands
 
