@@ -73,6 +73,15 @@ Safe reclamation, reset/recovery, asynchronous scheduling and suspend/resume
 remain open requirements. The existing driver still rejects suspend after
 startup. No service or autostart is installed by this change.
 
+The [delayed original-firmware DMA tests](contract.md#original-dma-completion-with-delayed-transfers)
+distinguish issue readiness from completion: clearing DMA status bit 0 does
+not let the final wait return while bit 1 remains clear. Both read and write
+wrappers can remain polling after the host's observation budget expires.
+This concerns the firmware's DMEM DMA channel, not all arithmetic-engine
+transfers. Neither a host timeout nor a single readiness bit authorizes buffer
+reuse; the retained-allocation policy remains necessary pending physical
+retirement/recovery qualification.
+
 The shared internal job executor now has separate `n1x_dla_job_start()` and
 `n1x_dla_job_poll()` operations. Start publishes and submits once, then reserves
 the queue for the exact job object. Poll consumes at most one mailbox response
@@ -119,8 +128,12 @@ preemption.
 The [engine register-context map](contract.md#engine-register-context-commands-and-bank-accounting)
 now accounts for the first `0x1cb00` context bytes: 137 range commands across
 67 bank visits have matching save/restore layouts in the original compiler.
-This narrows the remaining analysis to the separate `0x280000`-byte component
-and actual engine transfer behavior; it does not establish safe reclamation.
+The [second component trace](contract.md#t254-memory-context-component-and-indirect-engine-addresses)
+also resolves the `0x280000` size to T254DeviceInfo and matches both 705-word
+programs to the original compiler. Their indirect addresses bind slot 5 at
+offset `0x1cb00`, separately from the surrounding firmware IL's empty-range
+end pointer. Actual engine transfer behavior, physical context preservation
+and safe reclamation are still unqualified.
 
 The [native v2 context transport](contract.md#native-version-2-context-transport)
 now has C serializers and original-firmware save/restore control-flow coverage.

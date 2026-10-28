@@ -84,6 +84,8 @@ test-vendor: test
 	venv/bin/python scripts/inspect_engine_context.py
 	venv/bin/python scripts/inspect_compiler_context.py
 	venv/bin/python scripts/inspect_engine_register_context.py
+	venv/bin/python scripts/inspect_engine_memory_context.py
+	venv/bin/python scripts/inspect_firmware_dma_completion.py
 	venv/bin/python scripts/test_native_context.py
 	venv/bin/python scripts/test_native_preempt.py
 	venv/bin/python scripts/test_job_preemption.py

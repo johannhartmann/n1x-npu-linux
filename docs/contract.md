@@ -1471,12 +1471,91 @@ the last restore program; it does not change the previously recovered ordering
 of the two save/restore stages.
 
 This resolves the compiler's register-context allocation and bank sequencing.
-The separate **`0x280000`-byte component** and engine-side memory-copy behavior
-remain open, as do physical context integrity and DMA quiescence. These compiler
+The separate **`0x280000`-byte component** is traced below. Engine-side copy
+behavior, physical context integrity and DMA quiescence remain open. These compiler
 commands are not a host MMIO recipe and are not enabled through public EXEC.
 
 ```sh
 venv/bin/python scripts/inspect_engine_register_context.py > results/engine-register-context.json
+```
+
+### T254 memory-context component and indirect engine addresses
+
+`inspect_engine_memory_context.py` traces the second component through the
+original Windows compiler. At `0xcbe8b0`, immediately after the device-info
+getter, its vtable is `0x11a5f50`; the PE RTTI identifies it as
+**`T254DeviceInfo`**. The u32 field at +0x28 is `0x280000` (2,621,440 bytes).
+The initializer at `0x9ab994..0x9ab9a0` installs that value. This establishes
+the compiler target/configuration source of the size, not a physical capacity
+measurement or the identity of the internal memory technology.
+
+Original generator `0xcbc6e0` produces the save program at instruction-blob
+offset `0x1500`; `0xcbb0c0` produces restore at `0x2c00`. Each receives the
+same size `0x280000`, context offset `0x1cb00`, and task-local address slot 5.
+The extra per-program input vectors are empty in this fixture. The combined
+declared context layout is therefore:
+
+```text
+[0,        0x1cb00)  register-context accounting
+[0x1cb00, 0x29cb00)  second component from T254DeviceInfo
+[0x29cb00,0x29cb00)  empty additional ranges
+```
+
+Both programs have **705 eight-byte words**: 703 immediate register-write
+commands and two indirect address commands. Read-only hooks observe every
+original instruction constructor and its returned word. Reassembling those
+words, including the original two-word prefix, must exactly match the live
+output vector and then the final compiler blob. The observer resolves the
+current vector storage after generation to account for original reallocations.
+
+The size appears in an immediate write to `0x238fc` for save and `0x2391c`
+for restore. The final command writes 1 to `0x23080` in both programs. The
+complete nonzero register-write lists are recorded in the result JSON. These
+are compiler observations; the field names, dimensional interpretation and
+physical transfer effects of all engine registers are not yet established.
+
+Original indirect-address constructor `0xcb0808` takes a destination register,
+address slot, offset in eight-byte units and a selector. The callers at
+`0xcbdc08..0xcbdc6c` and `0xcbc5e8..0xcbc64c` obtain the slot from the network
+binding and shift the context byte offset right by three. In the observed
+domain (slot <64, register offset <2^23, eight-byte-aligned u32 byte offset,
+selector 0 or 1), the returned command is:
+
+```text
+(register << 2) | (slot << 26) | 0x02000001
+    | (((byte_offset / 8) * 2 | selector) << 32)
+```
+
+The four actual address words are:
+
+| Phase | Destination register | Slot | Byte offset | Selector | Encoded word |
+| --- | --- | ---: | --- | ---: | --- |
+| Save | `0x238ac` | 5 | `0x1cb00` | 1 | `0x000072c11608e2b1` |
+| Save | `0x238b0` | 5 | `0x1cb00` | 0 | `0x000072c01608e2c1` |
+| Restore | `0x238e4` | 5 | `0x1cb00` | 1 | `0x000072c11608e391` |
+| Restore | `0x238e8` | 5 | `0x1cb00` | 0 | `0x000072c01608e3a1` |
+
+Slot 5 is the existing compiler context allocation, not the one-past pointer
+programmed by the surrounding firmware IL for the empty additional range.
+The engine programs carry their own binding/offset commands for the nonempty
+second component. This resolves that distinction at the producer contract.
+The selectors are retained numerically: no physical low/high-address split
+or engine-address translation is asserted from their order alone.
+
+Twenty-four direct tests execute the unchanged constructor for slots 0, 5
+and 63; offsets 0, 8, `0x1cb00` and `0xfffffff8`; and both selector values.
+All outputs match the recovered encoding. Original executable PE sections
+remain unchanged. Full backend translation still produces the pinned loadable
+blobs; no expected output replaces a compiler stage.
+
+The compiler now accounts for both nonempty context components and supplies
+reproducibly decoded command streams for each. Actual internal-memory contents,
+transfer completion, resumed numerical correctness and DMA quiescence remain
+hardware qualification requirements. No engine-side copy emulator or host
+register-write implementation is introduced from these producer observations.
+
+```sh
+venv/bin/python scripts/inspect_engine_memory_context.py > results/engine-memory-context.json
 ```
 
 ### Native version-2 context transport
@@ -1837,6 +1916,56 @@ budget is not a firmware timeout and the model does not establish recovery.
 The Linux host's ACPI GSI routing, firmware hardware boot, actual DMA status
 behavior, method FIFO and coherent mapping remain unverified. These tests
 establish the firmware's software receive path under explicit model conditions.
+
+### Original DMA completion with delayed transfers
+
+`inspect_firmware_dma_completion.py` exercises the original HAL-1 wrappers
+`0x104ed8` (host-to-DMEM read) and `0x105004` (DMEM-to-host write) after original
+reset initialization. Firmware instructions remain unchanged. Unlike the
+instantaneous RAM-DMA model used in earlier tests, this fixture defers copying
+until an explicit synthetic completion transition. This is a model of the
+firmware's own DMA channel, not the DLA arithmetic engine or physical memory
+ordering.
+
+For each direction, the 516-byte fixture issues three commands of 256, 256
+and 4 bytes. With 0, 1 or 17 incomplete status reads per command, all output
+bytes match and no subsequent command overwrites an unfinished transfer.
+The original firmware reads internal DMA status at MMIO offset `0x118`:
+
+| Consumer | Original PCs | Observed condition |
+| --- | --- | --- |
+| Issue readiness | `0x100128..0x100130`, `0x100198..0x10019e` | Wait while bit 0 is set |
+| Completion | `0x100266..0x10026e` | Wait while bit 1 is clear |
+| Completion error | `0x100270..0x100296` | Bit 20 yields `0xffff`; otherwise status at `0x2e0` bit 2 yields `0x101` and is acknowledged |
+
+The last row records return values of the low-level completion helper, as
+read from its original instructions. The executed higher-level wrappers map
+either injected completion error to **-18 for read** and **-4 for write**.
+The fixture injects these errors only after commands have been issued;
+the test's synthetic data can already match while the wrapper returns an
+error. Numerical output alone is therefore not a completion-status check.
+
+Negative controls hold either the first or final transfer incomplete. Holding
+the first transfer busy leaves execution at the next issue-readiness loop.
+Holding the final four-byte transfer incomplete leaves execution in the
+completion loop, both with status 1 and with status 0. In the latter case,
+bit 0 is already clear but bit 1 is still clear: **issue readiness is not
+completion**. The final four bytes retain their poison value and neither
+wrapper returns within the 30,000-instruction observation budget. Inspection
+of those loop instructions finds no timeout counter or deadline check in the
+loops themselves. Budget exhaustion is not a firmware timeout or cancellation.
+
+Sixteen cases cover both directions, the three finite delays, first-transfer
+stall, final-transfer stall with each status, and both completion-error sources.
+The test verifies the original firmware text remains byte-identical. It does
+not establish when actual DMA writes become globally visible, whether engine
+IRQs drain arithmetic DMA, or whether reset cancels outstanding transfers.
+Linux must still retain uncertain allocations and refuse further work after
+an execution timeout; this result does not authorize reclamation.
+
+```sh
+venv/bin/python scripts/inspect_firmware_dma_completion.py > results/firmware-dma-completion.json
+```
 
 ## HAL-1 ping round trips with original DMA functions
 
