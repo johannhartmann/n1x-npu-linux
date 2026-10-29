@@ -1,5 +1,7 @@
 # Experimental N1X super-resolution demo
 
+Also available: [DnCNN denoising and ResNet-18 classification](vision.md).
+
 This example applies the ONNX Model Zoo sub-pixel CNN to a complete image,
 producing a 3x larger result through NVIDIA's original Linux cuDLA frontend
 and this repository's N1X backend. Internal 64x64 windows use a five-pixel

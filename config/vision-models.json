@@ -1,0 +1,86 @@
+{
+  "prepared": {
+    "weights.npz": "d38260f83582bbcc891c38f4f2ee0de9f9aec8ed9889b325dfe043a2269484ac",
+    "graphs.json": "f7cf5ea3299bb293e47ee4dbf3c6e8ae3d21ac997c3a670b8f5847ff8ac11206",
+    "dncnn-noise.onnx": "72f78c62a5604ee9d780f5e9e1769d4ee208bbcd5a0fd9a7ba1c55300fa82dda",
+    "resnet18.onnx": "d4c37a3cc0032bade883e9e9efd8f4a5b46aff852e5a449171fcac855400ce0a",
+    "imagenet_classes.txt": "1f386e0d1cb6e28b9c2dac651c3dea6801e98ad1b41a14ce6bb1a093d72069f5"
+  },
+  "models": {
+    "denoise-0": {
+      "sha256": "8903df5e6b6d2690d9262f4f5658c87b78097b74736273cf5f1d95fb2e86df19",
+      "image_bytes": 8347648,
+      "retained_bytes": 8355840
+    },
+    "denoise-1": {
+      "sha256": "507406ab7dab80d2d711e6a5ab9f6f73a3abde81d87be6c8db4bf31f9e449763",
+      "image_bytes": 9281536,
+      "retained_bytes": 9289728
+    },
+    "denoise-2": {
+      "sha256": "db417e42410253f209b2a53be220a69d97a3fc3f76a2c799c074edf3131d6669",
+      "image_bytes": 8163328,
+      "retained_bytes": 8171520
+    },
+    "resnet18-stem": {
+      "sha256": "d777f873197d0fcf12d49983b4b99ea733358605e134fb59315a3ce67a25df79",
+      "image_bytes": 3358720,
+      "retained_bytes": 3366912
+    },
+    "resnet18-b0": {
+      "sha256": "69c63d02e1c3d2baf9a35374a7c147799067a32a4109278c17361aba01c745bf",
+      "image_bytes": 4788224,
+      "retained_bytes": 4796416
+    },
+    "resnet18-b1": {
+      "sha256": "a47399106daff445fb4c187516cdde4336d0529785a0c2d7f5952671bad45c7c",
+      "image_bytes": 4788224,
+      "retained_bytes": 4796416
+    },
+    "resnet18-b2": {
+      "sha256": "942ea33cfe1ac9a733175229db19ce233fee6a2f8038097bc328943679bdf923",
+      "image_bytes": 4939776,
+      "retained_bytes": 4947968
+    },
+    "resnet18-b3": {
+      "sha256": "f0204fa1a4bd6e77cc7a9f71d7f53999168149404520175bfbc400d9cebb856e",
+      "image_bytes": 4362240,
+      "retained_bytes": 4370432
+    },
+    "resnet18-b4": {
+      "sha256": "33e5370c326c05499d88cc2a7d6b4042c2e61cda67c55d629489f8f48a4888a2",
+      "image_bytes": 5480448,
+      "retained_bytes": 5488640
+    },
+    "resnet18-b5": {
+      "sha256": "1891e6c627d7038bd2684e6f277fb2d4edb570c6aa9463048fb25c40cca3da6e",
+      "image_bytes": 5705728,
+      "retained_bytes": 5713920
+    },
+    "resnet18-b6": {
+      "sha256": "32b05b09249396df531c9372c4998d22a0074151bfbc442dc6871f038e6c4c5a",
+      "image_bytes": 10366976,
+      "retained_bytes": 10375168
+    },
+    "resnet18-b7": {
+      "sha256": "636a0dcf1847f4e89d34d82cd4749b14b27d9639f874d5867df39dc1856aeef7",
+      "image_bytes": 12513280,
+      "retained_bytes": 12521472
+    },
+    "resnet18-down2": {
+      "sha256": "9e8bcac16862fcee10eff41983eb07d7d42e9e3d58c6fb64119ff90b0d8f5316",
+      "image_bytes": 3158016,
+      "retained_bytes": 3166208
+    },
+    "resnet18-down4": {
+      "sha256": "8edb2150a8cd572a9d882ebc738e8d01efdb66f8b250f328c86c366e63a263ba",
+      "image_bytes": 3059712,
+      "retained_bytes": 3067904
+    },
+    "resnet18-down6": {
+      "sha256": "7477badbe3b1893b890f887da0963fa413ffda868b2804725b3854b30f8a4144",
+      "image_bytes": 3158016,
+      "retained_bytes": 3166208
+    }
+  }
+}

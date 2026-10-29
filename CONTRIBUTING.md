@@ -31,6 +31,7 @@ ARM64 host and the [pinned inputs and dependencies](docs/setup.md).
 | Original-driver comparisons | `make test-p16-start`, `make test-p16-stop` with their pinned fixtures |
 | cuDLA loader/backend | `make test-cudla` with the CUDA driver and acquired cuDLA package; NPU transport is modeled |
 | Image preparation and stitching | `sources/superres-venv/bin/python scripts/test_superres_image.py` |
+| DnCNN/ResNet partitioning and image operations | `sources/vision-venv/bin/python scripts/test_vision_examples.py` |
 
 Builds and portable tests never install a module or start NPU firmware. Real
 hardware qualification is a separate manual workflow described in

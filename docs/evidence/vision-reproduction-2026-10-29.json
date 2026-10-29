@@ -1,0 +1,90 @@
+{
+  "date": "2026-10-29",
+  "hardware_access": false,
+  "scope": "Fresh source export, fresh compiler outputs; pinned acquired inputs and baseline ReLU capture supplied locally",
+  "environment": {
+    "python": "3.15.1",
+    "architecture": "aarch64",
+    "compiler": "Pinned native graph frontend in device-free bubblewrap/GDB sandbox; original Windows backend in Unicorn"
+  },
+  "model_manifest_sha256": "b5a218fb8d9c09108cf8f3fc8c5445e1dfa37aaa10e9be25555f04f1db387c00",
+  "models": {
+    "denoise-0": {
+      "sha256": "8903df5e6b6d2690d9262f4f5658c87b78097b74736273cf5f1d95fb2e86df19",
+      "file_bytes": 3553452
+    },
+    "denoise-1": {
+      "sha256": "507406ab7dab80d2d711e6a5ab9f6f73a3abde81d87be6c8db4bf31f9e449763",
+      "file_bytes": 3602604
+    },
+    "denoise-2": {
+      "sha256": "db417e42410253f209b2a53be220a69d97a3fc3f76a2c799c074edf3131d6669",
+      "file_bytes": 3370268
+    },
+    "resnet18-stem": {
+      "sha256": "d777f873197d0fcf12d49983b4b99ea733358605e134fb59315a3ce67a25df79",
+      "file_bytes": 2873308
+    },
+    "resnet18-b0": {
+      "sha256": "69c63d02e1c3d2baf9a35374a7c147799067a32a4109278c17361aba01c745bf",
+      "file_bytes": 3031148
+    },
+    "resnet18-b1": {
+      "sha256": "a47399106daff445fb4c187516cdde4336d0529785a0c2d7f5952671bad45c7c",
+      "file_bytes": 3031148
+    },
+    "resnet18-b2": {
+      "sha256": "942ea33cfe1ac9a733175229db19ce233fee6a2f8038097bc328943679bdf923",
+      "file_bytes": 3343724
+    },
+    "resnet18-b3": {
+      "sha256": "f0204fa1a4bd6e77cc7a9f71d7f53999168149404520175bfbc400d9cebb856e",
+      "file_bytes": 3471212
+    },
+    "resnet18-b4": {
+      "sha256": "33e5370c326c05499d88cc2a7d6b4042c2e61cda67c55d629489f8f48a4888a2",
+      "file_bytes": 4662380
+    },
+    "resnet18-b5": {
+      "sha256": "1891e6c627d7038bd2684e6f277fb2d4edb570c6aa9463048fb25c40cca3da6e",
+      "file_bytes": 5241452
+    },
+    "resnet18-b6": {
+      "sha256": "32b05b09249396df531c9372c4998d22a0074151bfbc442dc6871f038e6c4c5a",
+      "file_bytes": 9943660
+    },
+    "resnet18-b7": {
+      "sha256": "636a0dcf1847f4e89d34d82cd4749b14b27d9639f874d5867df39dc1856aeef7",
+      "file_bytes": 12263788
+    },
+    "resnet18-down2": {
+      "sha256": "9e8bcac16862fcee10eff41983eb07d7d42e9e3d58c6fb64119ff90b0d8f5316",
+      "file_bytes": 2832032
+    },
+    "resnet18-down4": {
+      "sha256": "8edb2150a8cd572a9d882ebc738e8d01efdb66f8b250f328c86c366e63a263ba",
+      "file_bytes": 2881440
+    },
+    "resnet18-down6": {
+      "sha256": "7477badbe3b1893b890f887da0963fa413ffda868b2804725b3854b30f8a4144",
+      "file_bytes": 3054240
+    }
+  },
+  "existing_superres_sha256": "c1ffde5d1eb9c7486a08ecc1470a1b633a11c7a71411f8fb36064d16dbcfc1c0",
+  "results": {
+    "new_vision_loadables": 15,
+    "all_hashes_match_physical_artifacts": true,
+    "existing_superres_unchanged": true
+  },
+  "tests": [
+    "make check",
+    "Independent CPU DnCNN tiling/edge checks",
+    "Original checkpoint PyTorch vs ONNX vs partitioned ResNet",
+    "FP16 partition-boundary simulation",
+    "im2col and pooling vs PyTorch",
+    "Separable SSIM vs independent 2D convolution",
+    "Existing full-image super-resolution CPU regression",
+    "148 Markdown shell blocks parsed with bash -n",
+    "Existing compilation outputs/logs/receipts refused without mutation"
+  ]
+}

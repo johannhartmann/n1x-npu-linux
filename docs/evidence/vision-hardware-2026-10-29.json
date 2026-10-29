@@ -1,0 +1,941 @@
+{
+  "date": "2026-10-29",
+  "scope": "Physical N1X P16 vision examples; bounded synchronous inference, not a general model importer or sustained benchmark",
+  "hardware": {
+    "board": "ASUS ProArt P16 H7607BA",
+    "bios": "H7607BA.300",
+    "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+    "boot_id": "dfa2cb44-dcfd-424a-a884-71a107503e69",
+    "module_srcversion": "1ED6855E6645BEEF8DA3534"
+  },
+  "runs": [
+    {
+      "example": "denoise",
+      "input": "/home/johann/n1x-lab/npu/demo/assets/astronaut-input.png",
+      "input_sha256": "88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5",
+      "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+      "boot_id": "dfa2cb44-dcfd-424a-a884-71a107503e69",
+      "module_srcversion": "1ED6855E6645BEEF8DA3534",
+      "platform_profile": "quiet",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "models": {
+        "denoise-0": {
+          "sha256": "8903df5e6b6d2690d9262f4f5658c87b78097b74736273cf5f1d95fb2e86df19",
+          "image_bytes": 8347648,
+          "retained_bytes": 8355840,
+          "hardware_access": false
+        },
+        "denoise-1": {
+          "sha256": "507406ab7dab80d2d711e6a5ab9f6f73a3abde81d87be6c8db4bf31f9e449763",
+          "image_bytes": 9281536,
+          "retained_bytes": 9289728,
+          "hardware_access": false
+        },
+        "denoise-2": {
+          "sha256": "db417e42410253f209b2a53be220a69d97a3fc3f76a2c799c074edf3131d6669",
+          "image_bytes": 8163328,
+          "retained_bytes": 8171520,
+          "hardware_access": false
+        }
+      },
+      "prepared": {
+        "weights.npz": "d38260f83582bbcc891c38f4f2ee0de9f9aec8ed9889b325dfe043a2269484ac",
+        "graphs.json": "f7cf5ea3299bb293e47ee4dbf3c6e8ae3d21ac997c3a670b8f5847ff8ac11206",
+        "dncnn-noise.onnx": "72f78c62a5604ee9d780f5e9e1769d4ee208bbcd5a0fd9a7ba1c55300fa82dda",
+        "resnet18.onnx": "d4c37a3cc0032bade883e9e9efd8f4a5b46aff852e5a449171fcac855400ce0a",
+        "imagenet_classes.txt": "1f386e0d1cb6e28b9c2dac651c3dea6801e98ad1b41a14ce6bb1a093d72069f5"
+      },
+      "transport_before": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 40652800,
+        "retain_limit": 67108864,
+        "retained_jobs": 13,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "planned_retained_bytes": 25817088,
+      "automatic_retry": false,
+      "learned_convolutions": "physical N1X DLA via original NVIDIA cuDLA",
+      "input_shape": [
+        512,
+        512
+      ],
+      "dla_pipeline_seconds": 2.2857497619988862,
+      "submissions": 192,
+      "transport_after": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 66469888,
+        "retain_limit": 67108864,
+        "retained_jobs": 16,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "windows": 64,
+      "noise_model_sigma": 25,
+      "synthetic_noise": true,
+      "synthetic_seed": 0,
+      "host_operations": [
+        "grayscale conversion",
+        "tiling/stitching",
+        "noise subtraction"
+      ],
+      "acceptance": {
+        "max_abs": 0.01,
+        "rmse": 0.001
+      },
+      "quality": {
+        "noisy_psnr_db": 20.7296099117937,
+        "denoised_psnr_db": 31.834153585232787,
+        "noisy_ssim": 0.3283996880054474,
+        "denoised_ssim": 0.8469926714897156
+      },
+      "reference_seconds": 1.0657014839962358,
+      "maximum_absolute_error": 0.0010863840579986572,
+      "rmse": 0.0001751766546448164,
+      "reference_passed": true,
+      "local_result": "results/denoise-physical-512-01/result.json",
+      "local_result_sha256": "ed9eee56d75a4b99ff0fe7d1bbc5bec1b7479b13ae6cb983485403a76044fa1a",
+      "raw_output_sha256": "d296447d919aa426ec1caa7bfb0a8cbd6512cb71c520b2bb6dd249f2f4163b98"
+    },
+    {
+      "example": "classify",
+      "input": "/home/johann/n1x-lab/npu/demo/assets/astronaut-input.png",
+      "input_sha256": "88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5",
+      "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+      "boot_id": "dfa2cb44-dcfd-424a-a884-71a107503e69",
+      "module_srcversion": "1ED6855E6645BEEF8DA3534",
+      "platform_profile": "quiet",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "models": {
+        "resnet18-stem": {
+          "sha256": "d777f873197d0fcf12d49983b4b99ea733358605e134fb59315a3ce67a25df79",
+          "image_bytes": 3358720,
+          "retained_bytes": 3366912
+        },
+        "resnet18-b0": {
+          "sha256": "69c63d02e1c3d2baf9a35374a7c147799067a32a4109278c17361aba01c745bf",
+          "image_bytes": 4788224,
+          "retained_bytes": 4796416
+        },
+        "resnet18-b1": {
+          "sha256": "a47399106daff445fb4c187516cdde4336d0529785a0c2d7f5952671bad45c7c",
+          "image_bytes": 4788224,
+          "retained_bytes": 4796416
+        },
+        "resnet18-b2": {
+          "sha256": "942ea33cfe1ac9a733175229db19ce233fee6a2f8038097bc328943679bdf923",
+          "image_bytes": 4939776,
+          "retained_bytes": 4947968
+        },
+        "resnet18-b3": {
+          "sha256": "f0204fa1a4bd6e77cc7a9f71d7f53999168149404520175bfbc400d9cebb856e",
+          "image_bytes": 4362240,
+          "retained_bytes": 4370432
+        },
+        "resnet18-b4": {
+          "sha256": "33e5370c326c05499d88cc2a7d6b4042c2e61cda67c55d629489f8f48a4888a2",
+          "image_bytes": 5480448,
+          "retained_bytes": 5488640
+        },
+        "resnet18-b5": {
+          "sha256": "1891e6c627d7038bd2684e6f277fb2d4edb570c6aa9463048fb25c40cca3da6e",
+          "image_bytes": 5705728,
+          "retained_bytes": 5713920
+        },
+        "resnet18-b6": {
+          "sha256": "32b05b09249396df531c9372c4998d22a0074151bfbc442dc6871f038e6c4c5a",
+          "image_bytes": 10366976,
+          "retained_bytes": 10375168
+        },
+        "resnet18-b7": {
+          "sha256": "636a0dcf1847f4e89d34d82cd4749b14b27d9639f874d5867df39dc1856aeef7",
+          "image_bytes": 12513280,
+          "retained_bytes": 12521472
+        },
+        "resnet18-down2": {
+          "sha256": "9e8bcac16862fcee10eff41983eb07d7d42e9e3d58c6fb64119ff90b0d8f5316",
+          "image_bytes": 3158016,
+          "retained_bytes": 3166208
+        },
+        "resnet18-down4": {
+          "sha256": "8edb2150a8cd572a9d882ebc738e8d01efdb66f8b250f328c86c366e63a263ba",
+          "image_bytes": 3059712,
+          "retained_bytes": 3067904
+        },
+        "resnet18-down6": {
+          "sha256": "7477badbe3b1893b890f887da0963fa413ffda868b2804725b3854b30f8a4144",
+          "image_bytes": 3158016,
+          "retained_bytes": 3166208
+        }
+      },
+      "prepared": {
+        "weights.npz": "d38260f83582bbcc891c38f4f2ee0de9f9aec8ed9889b325dfe043a2269484ac",
+        "graphs.json": "f7cf5ea3299bb293e47ee4dbf3c6e8ae3d21ac997c3a670b8f5847ff8ac11206",
+        "dncnn-noise.onnx": "72f78c62a5604ee9d780f5e9e1769d4ee208bbcd5a0fd9a7ba1c55300fa82dda",
+        "resnet18.onnx": "d4c37a3cc0032bade883e9e9efd8f4a5b46aff852e5a449171fcac855400ce0a",
+        "imagenet_classes.txt": "1f386e0d1cb6e28b9c2dac651c3dea6801e98ad1b41a14ce6bb1a093d72069f5"
+      },
+      "transport_before": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 0,
+        "retain_limit": 67108864,
+        "retained_jobs": 0,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "planned_retained_bytes": 65777664,
+      "automatic_retry": false,
+      "learned_convolutions": "physical N1X DLA via original NVIDIA cuDLA",
+      "input_shape": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "dla_pipeline_seconds": 0.5663653950032312,
+      "submissions": 27,
+      "transport_after": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 65777664,
+        "retain_limit": 67108864,
+        "retained_jobs": 12,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "top5": [
+        {
+          "index": 758,
+          "label": "reel",
+          "probability": 0.11258372664451599
+        },
+        {
+          "index": 823,
+          "label": "stethoscope",
+          "probability": 0.1083439439535141
+        },
+        {
+          "index": 542,
+          "label": "drumstick",
+          "probability": 0.03198297694325447
+        },
+        {
+          "index": 560,
+          "label": "football helmet",
+          "probability": 0.031338177621364594
+        },
+        {
+          "index": 570,
+          "label": "gasmask",
+          "probability": 0.03132854029536247
+        }
+      ],
+      "reference_top1": 758,
+      "top1_agrees": true,
+      "host_operations": [
+        "resize/center crop/normalization",
+        "im2col gather",
+        "max/average pooling",
+        "residual add/ReLU",
+        "fully connected head",
+        "softmax"
+      ],
+      "acceptance": {
+        "max_abs": 0.25,
+        "rmse": 0.05,
+        "top1_agrees": true
+      },
+      "reference_seconds": 0.06299589899572311,
+      "maximum_absolute_error": 0.013783931732177734,
+      "rmse": 0.003636789660772237,
+      "reference_passed": true,
+      "local_result": "results/classify-physical-astronaut-02/result.json",
+      "local_result_sha256": "252618ea321a0f066b49a6252018d0dda9297766753844c7300f3757a13eafd8",
+      "raw_output_sha256": "37bd444ec84f570287f3ac6c688004d335870750d15ef5eb248fc5f2b8ed7d6e"
+    },
+    {
+      "example": "classify",
+      "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+      "boot_id": "dfa2cb44-dcfd-424a-a884-71a107503e69",
+      "module_srcversion": "1ED6855E6645BEEF8DA3534",
+      "platform_profile": "quiet",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "models": {
+        "resnet18-stem": {
+          "sha256": "d777f873197d0fcf12d49983b4b99ea733358605e134fb59315a3ce67a25df79",
+          "image_bytes": 3358720,
+          "retained_bytes": 3366912
+        },
+        "resnet18-b0": {
+          "sha256": "69c63d02e1c3d2baf9a35374a7c147799067a32a4109278c17361aba01c745bf",
+          "image_bytes": 4788224,
+          "retained_bytes": 4796416
+        },
+        "resnet18-b1": {
+          "sha256": "a47399106daff445fb4c187516cdde4336d0529785a0c2d7f5952671bad45c7c",
+          "image_bytes": 4788224,
+          "retained_bytes": 4796416
+        },
+        "resnet18-b2": {
+          "sha256": "942ea33cfe1ac9a733175229db19ce233fee6a2f8038097bc328943679bdf923",
+          "image_bytes": 4939776,
+          "retained_bytes": 4947968
+        },
+        "resnet18-b3": {
+          "sha256": "f0204fa1a4bd6e77cc7a9f71d7f53999168149404520175bfbc400d9cebb856e",
+          "image_bytes": 4362240,
+          "retained_bytes": 4370432
+        },
+        "resnet18-b4": {
+          "sha256": "33e5370c326c05499d88cc2a7d6b4042c2e61cda67c55d629489f8f48a4888a2",
+          "image_bytes": 5480448,
+          "retained_bytes": 5488640
+        },
+        "resnet18-b5": {
+          "sha256": "1891e6c627d7038bd2684e6f277fb2d4edb570c6aa9463048fb25c40cca3da6e",
+          "image_bytes": 5705728,
+          "retained_bytes": 5713920
+        },
+        "resnet18-b6": {
+          "sha256": "32b05b09249396df531c9372c4998d22a0074151bfbc442dc6871f038e6c4c5a",
+          "image_bytes": 10366976,
+          "retained_bytes": 10375168
+        },
+        "resnet18-b7": {
+          "sha256": "636a0dcf1847f4e89d34d82cd4749b14b27d9639f874d5867df39dc1856aeef7",
+          "image_bytes": 12513280,
+          "retained_bytes": 12521472
+        },
+        "resnet18-down2": {
+          "sha256": "9e8bcac16862fcee10eff41983eb07d7d42e9e3d58c6fb64119ff90b0d8f5316",
+          "image_bytes": 3158016,
+          "retained_bytes": 3166208
+        },
+        "resnet18-down4": {
+          "sha256": "8edb2150a8cd572a9d882ebc738e8d01efdb66f8b250f328c86c366e63a263ba",
+          "image_bytes": 3059712,
+          "retained_bytes": 3067904
+        },
+        "resnet18-down6": {
+          "sha256": "7477badbe3b1893b890f887da0963fa413ffda868b2804725b3854b30f8a4144",
+          "image_bytes": 3158016,
+          "retained_bytes": 3166208
+        }
+      },
+      "prepared": {
+        "weights.npz": "d38260f83582bbcc891c38f4f2ee0de9f9aec8ed9889b325dfe043a2269484ac",
+        "graphs.json": "f7cf5ea3299bb293e47ee4dbf3c6e8ae3d21ac997c3a670b8f5847ff8ac11206",
+        "dncnn-noise.onnx": "72f78c62a5604ee9d780f5e9e1769d4ee208bbcd5a0fd9a7ba1c55300fa82dda",
+        "resnet18.onnx": "d4c37a3cc0032bade883e9e9efd8f4a5b46aff852e5a449171fcac855400ce0a",
+        "imagenet_classes.txt": "1f386e0d1cb6e28b9c2dac651c3dea6801e98ad1b41a14ce6bb1a093d72069f5"
+      },
+      "total_required_retained_bytes": 65777664,
+      "automatic_retry": false,
+      "learned_convolutions": "physical N1X DLA via original NVIDIA cuDLA",
+      "input": "/home/johann/n1x-lab/npu/sources/vision/dog.jpg",
+      "input_sha256": "f3f87bb8ab3c26c7ecfd3ac60421d7f32b0503d1d6c5baf8bac42ed93d86351a",
+      "input_shape": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "transport_before": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 0,
+        "retain_limit": 67108864,
+        "retained_jobs": 0,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "planned_retained_growth_bytes": 65777664,
+      "dla_pipeline_seconds": 0.2048102119952091,
+      "submissions": 27,
+      "transport_after": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 65777664,
+        "retain_limit": 67108864,
+        "retained_jobs": 12,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "top5": [
+        {
+          "index": 258,
+          "label": "Samoyed",
+          "probability": 0.8841861486434937
+        },
+        {
+          "index": 279,
+          "label": "Arctic fox",
+          "probability": 0.04618198052048683
+        },
+        {
+          "index": 270,
+          "label": "white wolf",
+          "probability": 0.044416673481464386
+        },
+        {
+          "index": 259,
+          "label": "Pomeranian",
+          "probability": 0.0055971695110201836
+        },
+        {
+          "index": 257,
+          "label": "Great Pyrenees",
+          "probability": 0.004648104775696993
+        }
+      ],
+      "reference_top1": 258,
+      "top1_agrees": true,
+      "host_operations": [
+        "resize/center crop/normalization",
+        "im2col gather",
+        "max/average pooling",
+        "residual add/ReLU",
+        "fully connected head",
+        "softmax"
+      ],
+      "acceptance": {
+        "max_abs": 0.25,
+        "rmse": 0.05,
+        "top1_agrees": true
+      },
+      "reference_seconds": 0.08948795200558379,
+      "maximum_absolute_error": 0.014133453369140625,
+      "rmse": 0.0031530918179845935,
+      "reference_passed": true,
+      "local_result": "results/classify-physical-batch-01/0001/result.json",
+      "local_result_sha256": "15ae484352ee9c4fae98c848432116c1dcc058fe860e7168fcda4422494d77c1",
+      "raw_output_sha256": "88ac8fc2d06868bff95069ab177f44f3f42ac0de6c276d4efb5da9505a1231ae"
+    },
+    {
+      "example": "classify",
+      "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+      "boot_id": "dfa2cb44-dcfd-424a-a884-71a107503e69",
+      "module_srcversion": "1ED6855E6645BEEF8DA3534",
+      "platform_profile": "quiet",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "models": {
+        "resnet18-stem": {
+          "sha256": "d777f873197d0fcf12d49983b4b99ea733358605e134fb59315a3ce67a25df79",
+          "image_bytes": 3358720,
+          "retained_bytes": 3366912
+        },
+        "resnet18-b0": {
+          "sha256": "69c63d02e1c3d2baf9a35374a7c147799067a32a4109278c17361aba01c745bf",
+          "image_bytes": 4788224,
+          "retained_bytes": 4796416
+        },
+        "resnet18-b1": {
+          "sha256": "a47399106daff445fb4c187516cdde4336d0529785a0c2d7f5952671bad45c7c",
+          "image_bytes": 4788224,
+          "retained_bytes": 4796416
+        },
+        "resnet18-b2": {
+          "sha256": "942ea33cfe1ac9a733175229db19ce233fee6a2f8038097bc328943679bdf923",
+          "image_bytes": 4939776,
+          "retained_bytes": 4947968
+        },
+        "resnet18-b3": {
+          "sha256": "f0204fa1a4bd6e77cc7a9f71d7f53999168149404520175bfbc400d9cebb856e",
+          "image_bytes": 4362240,
+          "retained_bytes": 4370432
+        },
+        "resnet18-b4": {
+          "sha256": "33e5370c326c05499d88cc2a7d6b4042c2e61cda67c55d629489f8f48a4888a2",
+          "image_bytes": 5480448,
+          "retained_bytes": 5488640
+        },
+        "resnet18-b5": {
+          "sha256": "1891e6c627d7038bd2684e6f277fb2d4edb570c6aa9463048fb25c40cca3da6e",
+          "image_bytes": 5705728,
+          "retained_bytes": 5713920
+        },
+        "resnet18-b6": {
+          "sha256": "32b05b09249396df531c9372c4998d22a0074151bfbc442dc6871f038e6c4c5a",
+          "image_bytes": 10366976,
+          "retained_bytes": 10375168
+        },
+        "resnet18-b7": {
+          "sha256": "636a0dcf1847f4e89d34d82cd4749b14b27d9639f874d5867df39dc1856aeef7",
+          "image_bytes": 12513280,
+          "retained_bytes": 12521472
+        },
+        "resnet18-down2": {
+          "sha256": "9e8bcac16862fcee10eff41983eb07d7d42e9e3d58c6fb64119ff90b0d8f5316",
+          "image_bytes": 3158016,
+          "retained_bytes": 3166208
+        },
+        "resnet18-down4": {
+          "sha256": "8edb2150a8cd572a9d882ebc738e8d01efdb66f8b250f328c86c366e63a263ba",
+          "image_bytes": 3059712,
+          "retained_bytes": 3067904
+        },
+        "resnet18-down6": {
+          "sha256": "7477badbe3b1893b890f887da0963fa413ffda868b2804725b3854b30f8a4144",
+          "image_bytes": 3158016,
+          "retained_bytes": 3166208
+        }
+      },
+      "prepared": {
+        "weights.npz": "d38260f83582bbcc891c38f4f2ee0de9f9aec8ed9889b325dfe043a2269484ac",
+        "graphs.json": "f7cf5ea3299bb293e47ee4dbf3c6e8ae3d21ac997c3a670b8f5847ff8ac11206",
+        "dncnn-noise.onnx": "72f78c62a5604ee9d780f5e9e1769d4ee208bbcd5a0fd9a7ba1c55300fa82dda",
+        "resnet18.onnx": "d4c37a3cc0032bade883e9e9efd8f4a5b46aff852e5a449171fcac855400ce0a",
+        "imagenet_classes.txt": "1f386e0d1cb6e28b9c2dac651c3dea6801e98ad1b41a14ce6bb1a093d72069f5"
+      },
+      "total_required_retained_bytes": 65777664,
+      "automatic_retry": false,
+      "learned_convolutions": "physical N1X DLA via original NVIDIA cuDLA",
+      "input": "/home/johann/n1x-lab/npu/demo/assets/astronaut-input.png",
+      "input_sha256": "88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5",
+      "input_shape": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "transport_before": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 65777664,
+        "retain_limit": 67108864,
+        "retained_jobs": 12,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "planned_retained_growth_bytes": 0,
+      "dla_pipeline_seconds": 0.1850358250012505,
+      "submissions": 27,
+      "transport_after": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 65777664,
+        "retain_limit": 67108864,
+        "retained_jobs": 12,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "top5": [
+        {
+          "index": 758,
+          "label": "reel",
+          "probability": 0.11258372664451599
+        },
+        {
+          "index": 823,
+          "label": "stethoscope",
+          "probability": 0.1083439439535141
+        },
+        {
+          "index": 542,
+          "label": "drumstick",
+          "probability": 0.03198297694325447
+        },
+        {
+          "index": 560,
+          "label": "football helmet",
+          "probability": 0.031338177621364594
+        },
+        {
+          "index": 570,
+          "label": "gasmask",
+          "probability": 0.03132854029536247
+        }
+      ],
+      "reference_top1": 758,
+      "top1_agrees": true,
+      "host_operations": [
+        "resize/center crop/normalization",
+        "im2col gather",
+        "max/average pooling",
+        "residual add/ReLU",
+        "fully connected head",
+        "softmax"
+      ],
+      "acceptance": {
+        "max_abs": 0.25,
+        "rmse": 0.05,
+        "top1_agrees": true
+      },
+      "reference_seconds": 0.05880274600349367,
+      "maximum_absolute_error": 0.013783931732177734,
+      "rmse": 0.003636789660772237,
+      "reference_passed": true,
+      "local_result": "results/classify-physical-batch-01/0002/result.json",
+      "local_result_sha256": "0fbbfea3bb03ac905fc7aa425fd3313e4bf54a894dd7f24bfb5773733e472070",
+      "raw_output_sha256": "37bd444ec84f570287f3ac6c688004d335870750d15ef5eb248fc5f2b8ed7d6e"
+    },
+    {
+      "example": "denoise",
+      "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+      "boot_id": "dfa2cb44-dcfd-424a-a884-71a107503e69",
+      "module_srcversion": "1ED6855E6645BEEF8DA3534",
+      "platform_profile": "quiet",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "models": {
+        "denoise-0": {
+          "sha256": "8903df5e6b6d2690d9262f4f5658c87b78097b74736273cf5f1d95fb2e86df19",
+          "image_bytes": 8347648,
+          "retained_bytes": 8355840
+        },
+        "denoise-1": {
+          "sha256": "507406ab7dab80d2d711e6a5ab9f6f73a3abde81d87be6c8db4bf31f9e449763",
+          "image_bytes": 9281536,
+          "retained_bytes": 9289728
+        },
+        "denoise-2": {
+          "sha256": "db417e42410253f209b2a53be220a69d97a3fc3f76a2c799c074edf3131d6669",
+          "image_bytes": 8163328,
+          "retained_bytes": 8171520
+        }
+      },
+      "prepared": {
+        "weights.npz": "d38260f83582bbcc891c38f4f2ee0de9f9aec8ed9889b325dfe043a2269484ac",
+        "graphs.json": "f7cf5ea3299bb293e47ee4dbf3c6e8ae3d21ac997c3a670b8f5847ff8ac11206",
+        "dncnn-noise.onnx": "72f78c62a5604ee9d780f5e9e1769d4ee208bbcd5a0fd9a7ba1c55300fa82dda",
+        "resnet18.onnx": "d4c37a3cc0032bade883e9e9efd8f4a5b46aff852e5a449171fcac855400ce0a",
+        "imagenet_classes.txt": "1f386e0d1cb6e28b9c2dac651c3dea6801e98ad1b41a14ce6bb1a093d72069f5"
+      },
+      "total_required_retained_bytes": 25817088,
+      "automatic_retry": false,
+      "learned_convolutions": "physical N1X DLA via original NVIDIA cuDLA",
+      "input": "/home/johann/n1x-lab/npu/demo/assets/astronaut-input.png",
+      "input_sha256": "88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5",
+      "input_shape": [
+        512,
+        512
+      ],
+      "transport_before": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 0,
+        "retain_limit": 67108864,
+        "retained_jobs": 0,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "planned_retained_growth_bytes": 25817088,
+      "dla_pipeline_seconds": 2.0270202940009767,
+      "submissions": 192,
+      "transport_after": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 25817088,
+        "retain_limit": 67108864,
+        "retained_jobs": 3,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "windows": 64,
+      "noise_model_sigma": 25,
+      "synthetic_noise": true,
+      "synthetic_seed": 0,
+      "host_operations": [
+        "grayscale conversion",
+        "tiling/stitching",
+        "noise subtraction"
+      ],
+      "acceptance": {
+        "max_abs": 0.01,
+        "rmse": 0.001
+      },
+      "quality": {
+        "noisy_psnr_db": 20.7296099117937,
+        "denoised_psnr_db": 31.834153585232787,
+        "noisy_ssim": 0.3283996880054474,
+        "denoised_ssim": 0.8469926714897156
+      },
+      "reference_seconds": 1.1083508360025007,
+      "maximum_absolute_error": 0.0010863840579986572,
+      "rmse": 0.0001751766546448164,
+      "reference_passed": true,
+      "local_result": "results/denoise-physical-batch-01/0001/result.json",
+      "local_result_sha256": "92b0c6c885fdafd7092626abdb877d1428cf1e7ce5e5d9db6a3a4047a583dbf7",
+      "raw_output_sha256": "d296447d919aa426ec1caa7bfb0a8cbd6512cb71c520b2bb6dd249f2f4163b98"
+    },
+    {
+      "example": "denoise",
+      "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+      "boot_id": "dfa2cb44-dcfd-424a-a884-71a107503e69",
+      "module_srcversion": "1ED6855E6645BEEF8DA3534",
+      "platform_profile": "quiet",
+      "frontend_sha256": "89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9",
+      "backend_sha256": "466002fc5045fc899a3baf1cd3ae2d4ecf7d30f4d65b34f190e6cf2f1bd29ce0",
+      "models": {
+        "denoise-0": {
+          "sha256": "8903df5e6b6d2690d9262f4f5658c87b78097b74736273cf5f1d95fb2e86df19",
+          "image_bytes": 8347648,
+          "retained_bytes": 8355840
+        },
+        "denoise-1": {
+          "sha256": "507406ab7dab80d2d711e6a5ab9f6f73a3abde81d87be6c8db4bf31f9e449763",
+          "image_bytes": 9281536,
+          "retained_bytes": 9289728
+        },
+        "denoise-2": {
+          "sha256": "db417e42410253f209b2a53be220a69d97a3fc3f76a2c799c074edf3131d6669",
+          "image_bytes": 8163328,
+          "retained_bytes": 8171520
+        }
+      },
+      "prepared": {
+        "weights.npz": "d38260f83582bbcc891c38f4f2ee0de9f9aec8ed9889b325dfe043a2269484ac",
+        "graphs.json": "f7cf5ea3299bb293e47ee4dbf3c6e8ae3d21ac997c3a670b8f5847ff8ac11206",
+        "dncnn-noise.onnx": "72f78c62a5604ee9d780f5e9e1769d4ee208bbcd5a0fd9a7ba1c55300fa82dda",
+        "resnet18.onnx": "d4c37a3cc0032bade883e9e9efd8f4a5b46aff852e5a449171fcac855400ce0a",
+        "imagenet_classes.txt": "1f386e0d1cb6e28b9c2dac651c3dea6801e98ad1b41a14ce6bb1a093d72069f5"
+      },
+      "total_required_retained_bytes": 25817088,
+      "automatic_retry": false,
+      "learned_convolutions": "physical N1X DLA via original NVIDIA cuDLA",
+      "input": "/home/johann/n1x-lab/npu/demo/assets/astronaut-input.png",
+      "input_sha256": "88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5",
+      "input_shape": [
+        512,
+        512
+      ],
+      "transport_before": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 25817088,
+        "retain_limit": 67108864,
+        "retained_jobs": 3,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "planned_retained_growth_bytes": 0,
+      "dla_pipeline_seconds": 1.9659687949970248,
+      "submissions": 192,
+      "transport_after": {
+        "abi_version": 1,
+        "capabilities": 15,
+        "max_image_bytes": 33554432,
+        "max_addresses": 512,
+        "retained_bytes": 25817088,
+        "retain_limit": 67108864,
+        "retained_jobs": 3,
+        "max_jobs": 128,
+        "reserved": 0
+      },
+      "windows": 64,
+      "noise_model_sigma": 25,
+      "synthetic_noise": true,
+      "synthetic_seed": 0,
+      "host_operations": [
+        "grayscale conversion",
+        "tiling/stitching",
+        "noise subtraction"
+      ],
+      "acceptance": {
+        "max_abs": 0.01,
+        "rmse": 0.001
+      },
+      "quality": {
+        "noisy_psnr_db": 20.7296099117937,
+        "denoised_psnr_db": 31.834153585232787,
+        "noisy_ssim": 0.3283996880054474,
+        "denoised_ssim": 0.8469926714897156
+      },
+      "reference_seconds": 0.991756367002381,
+      "maximum_absolute_error": 0.0010863840579986572,
+      "rmse": 0.0001751766546448164,
+      "reference_passed": true,
+      "local_result": "results/denoise-physical-batch-01/0002/result.json",
+      "local_result_sha256": "a2792742d26cddbc27df1052480571d64e0079cf3d243f71f121aa19dc0aac09",
+      "raw_output_sha256": "d296447d919aa426ec1caa7bfb0a8cbd6512cb71c520b2bb6dd249f2f4163b98"
+    }
+  ],
+  "successful_application_submissions": 657,
+  "batch_lifecycle": {
+    "healthy_stops": [
+      {
+        "action": "stopped",
+        "shutdown": {
+          "attempted": "1",
+          "stage": "released",
+          "error": "0",
+          "accepted": "1",
+          "state_valid": "1",
+          "state": "0x7",
+          "hardware_off": "1",
+          "released": "1",
+          "hfrp_held": "0",
+          "upload_held": "0",
+          "irq_owned": "0x10801d0",
+          "irq_before": "0x1001e45",
+          "irq_after": "0x1001e05",
+          "irq_readback": "1",
+          "power_attempted": "1",
+          "power_head_attempted": "1",
+          "power_reply_valid": "1",
+          "power_reply": "0xb06",
+          "power_length": "2",
+          "power_payload": "4300",
+          "query_head_attempted": "1",
+          "query_reply_valid": "1",
+          "query_reply": "0xc05",
+          "query_length": "1",
+          "query_payload": "07",
+          "channel": "1",
+          "pending": "65535"
+        },
+        "info": {
+          "abi_version": 1,
+          "capabilities": 15,
+          "max_image_bytes": 33554432,
+          "max_addresses": 512,
+          "retained_bytes": 0,
+          "retain_limit": 67108864,
+          "retained_jobs": 0,
+          "max_jobs": 128,
+          "reserved": 0
+        },
+        "exec_after_stop": "ENODEV",
+        "open_client_prevents_unload": true
+      },
+      {
+        "action": "stopped",
+        "shutdown": {
+          "attempted": "1",
+          "stage": "released",
+          "error": "0",
+          "accepted": "1",
+          "state_valid": "1",
+          "state": "0x7",
+          "hardware_off": "1",
+          "released": "1",
+          "hfrp_held": "0",
+          "upload_held": "0",
+          "irq_owned": "0x10801d0",
+          "irq_before": "0x1001e45",
+          "irq_after": "0x1001e05",
+          "irq_readback": "1",
+          "power_attempted": "1",
+          "power_head_attempted": "1",
+          "power_reply_valid": "1",
+          "power_reply": "0xb06",
+          "power_length": "2",
+          "power_payload": "4300",
+          "query_head_attempted": "1",
+          "query_reply_valid": "1",
+          "query_reply": "0xc05",
+          "query_length": "1",
+          "query_payload": "07",
+          "channel": "1",
+          "pending": "65535"
+        },
+        "info": {
+          "abi_version": 1,
+          "capabilities": 15,
+          "max_image_bytes": 33554432,
+          "max_addresses": 512,
+          "retained_bytes": 0,
+          "retain_limit": 67108864,
+          "retained_jobs": 0,
+          "max_jobs": 128,
+          "reserved": 0
+        },
+        "exec_after_stop": "ENODEV",
+        "open_client_prevents_unload": true
+      },
+      {
+        "action": "stopped",
+        "shutdown": {
+          "attempted": "1",
+          "stage": "released",
+          "error": "0",
+          "accepted": "1",
+          "state_valid": "1",
+          "state": "0x7",
+          "hardware_off": "1",
+          "released": "1",
+          "hfrp_held": "0",
+          "upload_held": "0",
+          "irq_owned": "0x10801d0",
+          "irq_before": "0x1001e45",
+          "irq_after": "0x1001e05",
+          "irq_readback": "1",
+          "power_attempted": "1",
+          "power_head_attempted": "1",
+          "power_reply_valid": "1",
+          "power_reply": "0xb06",
+          "power_length": "2",
+          "power_payload": "4300",
+          "query_head_attempted": "1",
+          "query_reply_valid": "1",
+          "query_reply": "0xc05",
+          "query_length": "1",
+          "query_payload": "07",
+          "channel": "1",
+          "pending": "65535"
+        },
+        "info": {
+          "abi_version": 1,
+          "capabilities": 15,
+          "max_image_bytes": 33554432,
+          "max_addresses": 512,
+          "retained_bytes": 0,
+          "retain_limit": 67108864,
+          "retained_jobs": 0,
+          "max_jobs": 128,
+          "reserved": 0
+        },
+        "exec_after_stop": "ENODEV",
+        "open_client_prevents_unload": true
+      }
+    ],
+    "complete": {
+      "complete": true,
+      "profile_unchanged": true,
+      "final_device_running": true
+    },
+    "kernel_log_new_lines": 27,
+    "new_kernel_faults": []
+  },
+  "limitations": [
+    "Classifier first crop is 224x224; all 20 convolutions use NPU, pooling/residual/head are CPU.",
+    "Denoiser is grayscale Gaussian sigma 25, not arbitrary camera-noise removal.",
+    "Batch denoising repeats the same image/noise to check reuse; its 64 windows supply changing inputs.",
+    "Second classifier batch image is deliberately ambiguous; matching CPU top-1 is a numerical check, not classification ground truth.",
+    "Timings exclude offline compilation and independent CPU validation; batch timings also exclude initial CUDA/device/module setup.",
+    "Previous single-image timings include CUDA/device/module setup and are not directly comparable to batch timings."
+  ],
+  "published_assets": {
+    "astronaut-noisy-gray.png": "7c5e85d4a542c74d6227a15972e58796e53b6f476c11e69bd46544588e93d4f3",
+    "astronaut-denoised-dla.png": "0806ffc3bd55925c0456b22e5884c8626eb2a2c2ec19b9813d444b57d1e7b280"
+  }
+}

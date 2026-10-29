@@ -37,19 +37,19 @@ def tiles(height,width,core=128):
                        min(width,x+w+HALO),min(height,y+h+HALO))
 
 
-def fixed_tiles(height,width,size=64):
+def fixed_tiles(height,width,size=64,halo=HALO):
     """Cover a full image with one static network shape, preserving real edges.
 
     Shift the last window to touch the global edge instead of padding its
     source outside the image. Adjacent core boundaries divide any overlap.
     """
-    if size<=2*HALO or min(height,width)<size:raise ValueError('image smaller than fixed tile')
+    if halo<0 or size<=2*halo or min(height,width)<size:raise ValueError('image smaller than fixed tile or invalid halo')
     def axis(length):
-        origins=list(range(0,length-size+1,size-2*HALO))
+        origins=list(range(0,length-size+1,size-2*halo))
         if origins[-1]!=length-size:origins.append(length-size)
         previous=0
         for i,origin in enumerate(origins):
-            end=origins[i+1]+HALO if i+1<len(origins) else length
+            end=origins[i+1]+halo if i+1<len(origins) else length
             yield origin,previous,end
             previous=end
     for top,y,end_y in axis(height):

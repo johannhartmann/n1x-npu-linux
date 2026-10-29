@@ -18,6 +18,7 @@ import signal
 import faulthandler
 import struct
 from inspect_dla_compiler import NATIVE_HASH
+from vision_graph import MODELS as VISION_MODELS, description as vision_description
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -25,7 +26,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target',choices=('t234','t254','t256'),help='Attempt an offline compile for this explicit candidate target')
-    parser.add_argument('--model',choices=('relu','conv1x1','conv1x1_relu','superres'),default='relu',help='Graph fixture to construct')
+    parser.add_argument('--model',choices=('relu','conv1x1','conv1x1_relu','superres',*VISION_MODELS),default='relu',help='Graph fixture to construct')
     parser.add_argument('--capture-mtl',action='store_true',help='Stop under GDB and save intermediate MTL buffers without translation')
     parser.add_argument('--capture-translation-input',action='store_true',
                         help='Replay verified Windows pretranslation outputs and capture the next frontend handoff')
@@ -90,13 +91,17 @@ def main():
     network,tensor,layer,output=H(),H(),H(),H()
     invoke('NvDlaCreateNetwork',[PH],C.byref(network));assert network.value
     try:
-        dims=Dims(1,1,64,64) if args.model=='superres' else Dims(1,32,7,7)
+        vision=vision_description(ROOT,args.model) if args.model in VISION_MODELS else None
+        dims=Dims(*vision['input']) if vision else Dims(1,1,64,64) if args.model=='superres' else Dims(1,32,7,7)
         invoke('NvDlaNetworkAddInput',[H,C.c_char_p,Dims,PH],network,b'input',dims,C.byref(tensor));assert tensor.value
         observed=Dims()
         invoke('NvDlaTensorGetDimensions',[H,C.POINTER(Dims)],tensor,C.byref(observed))
         assert bytes(observed)==bytes(dims)
         graph_tensors=[]
-        if args.model=='superres':
+        if vision:
+            from vision_graph import build
+            layer,output,graph_tensors,constant_backing=build(ROOT,invoke,network,tensor,H,PH,Dims2,Weights,outdir,args.model)
+        elif args.model=='superres':
             from superres_graph import build
             layer,output,graph_tensors,constant_backing=build(ROOT,invoke,network,tensor,H,PH,Dims2,Weights,outdir)
         elif args.model=='relu':
@@ -136,7 +141,7 @@ def main():
             assert linked.value==intermediate.value
         layer_count=C.c_uint32()
         invoke('NvDlaNetworkGetNumLayers',[H,C.POINTER(C.c_uint32)],network,C.byref(layer_count))
-        assert layer_count.value==(7 if args.model=='superres' else 2 if args.model=='conv1x1_relu' else 1)
+        assert layer_count.value==(sum(1+item['relu'] for item in vision['layers']) if vision else 7 if args.model=='superres' else 2 if args.model=='conv1x1_relu' else 1)
         invoke('NvDlaNetworkMarkOutput',[H,H],network,output)
         invoke('NvDlaTensorSetName',[H,C.c_char_p],output,b'output')
         # Numeric definitions from the public NvDlaType.h counterpart:
@@ -155,7 +160,7 @@ def main():
             count=C.c_uint32(0)
             invoke(name,[H,C.POINTER(C.c_uint32)],network,C.byref(count));assert count.value==1
         invoke('NvDlaTensorGetDimensions',[H,C.POINTER(Dims)],output,C.byref(observed))
-        assert bytes(observed)==bytes(Dims(1,9,64,64) if args.model=='superres' else dims)
+        assert bytes(observed)==bytes(Dims(*vision['output']) if vision else Dims(1,9,64,64) if args.model=='superres' else dims)
         compiled=None
         if args.target:
             wisdom,compiler,profiler,profile,target,loadable=H(),H(),H(),H(),H(),H()

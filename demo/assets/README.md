@@ -22,3 +22,20 @@ example, not a general image-quality or sustained-performance claim.
 The source model is ONNX Model Zoo's Apache-2.0 sub-pixel CNN, acquired
 separately as described in [NOTICE](../../NOTICE). No weights, vendor loadable
 or firmware are included with these images.
+
+## Denoising example
+
+| File | Dimensions | SHA-256 |
+| --- | --- | --- |
+| [astronaut-noisy-gray.png](astronaut-noisy-gray.png) | 512x512 | `7c5e85d4a542c74d6227a15972e58796e53b6f476c11e69bd46544588e93d4f3` |
+| [astronaut-denoised-dla.png](astronaut-denoised-dla.png) | 512x512 | `0806ffc3bd55925c0456b22e5884c8626eb2a2c2ec19b9813d444b57d1e7b280` |
+
+Both files are unchanged copies from the first complete physical DnCNN run.
+The same NASA sample was converted to grayscale, perturbed with Gaussian noise
+(sigma 25/255, NumPy seed 0), then quantized to FP16. The noisy PNG is a clipped,
+8-bit rendering; the model consumed the retained numeric noisy input, including
+values outside [0,1]. All 17 convolutions ran on NPU in three partitions and 64
+overlapping windows. CPU work subtracted predicted noise and encoded the output.
+The [vision receipt](../../docs/evidence/vision-hardware-2026-10-29.json) records
+the original input hash, exact outputs, quality scores and independent reference
+comparison. No pretrained weights or vendor instructions are distributed here.

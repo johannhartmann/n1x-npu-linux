@@ -45,7 +45,7 @@ if os.environ.get('N1X_COMPILER_MODEL') in ('conv1x1','conv1x1_relu'):
         (out/name).write_bytes(data)
         constants.append(dict(offset=offset,bytes=size,file=name,sha256=hashlib.sha256(data).hexdigest()))
     (out/'constants.json').write_text(json.dumps(constants,indent=2)+'\n')
-elif os.environ.get('N1X_COMPILER_MODEL')=='superres':
+elif (out/'constants-spec.json').is_file():
     spec=json.loads((out/'constants-spec.json').read_text())
     constants=[]
     for entry in spec['entries']:

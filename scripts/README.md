@@ -13,6 +13,10 @@ reproduction code and regression evidence, not a batch installer.
 | `prepare_inputs.py --fetch` | Acquire public libraries/model/sample | Network; writes ignored inputs; no system install |
 | `prepare_inputs.py --extract-firmware` | Extract firmware from supplied KMD | Analysis venv; writes ignored inputs; no device access |
 | `build_models.py --superres` | Reconstruct four checked loadables | ARM64, vendor inputs, bwrap/GDB/Unicorn; device-free; fresh outputs required |
+| `prepare_vision.py --fetch` | Acquire pinned DnCNN/ResNet checkpoints and create partitions/references | Vision environment; writes ignored files; no NPU |
+| `build_vision_models.py` | Compile denoising/classification partitions | ARM64 analysis environment, baseline ReLU capture, vendor compilers; no device access |
+| `test_vision_examples.py` | Original-checkpoint/reference, partition and image-boundary checks | Vision environment and prepared models; CPU only |
+| `../demo-denoise`, `../demo-classify` | DnCNN restoration and ResNet-18 classification | Explicit RAWIO elevation, initialized NPU; [instructions](../demo/vision.md) |
 | `qualify_p16_start.py` | Explicit bounded firmware-startup prefix | Root, exact board/kernel, ROM and firmware; changes NPU state |
 | `qualify_cudla.py` | Eight physical numerical jobs; `--reuse` keeps each graph loaded and verifies one allocation per graph | Already initialized NPU and CUDA; root; `--prepare-only` only creates references |
 | `qualify_p16_reload.py` | Stop, cleanup, unload, reload and numerical jobs | Root, exact audited setup; two healthy physical cycles verified on P16 |

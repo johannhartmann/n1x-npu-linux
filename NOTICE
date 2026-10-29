@@ -36,3 +36,13 @@ Included demo photograph and measured result:
 
 NVIDIA, CUDA, cuDLA, TensorRT, ASUS and other product names identify the
 respective vendors’ products and do not imply endorsement.
+
+Additional acquired vision checkpoints (not redistributed):
+  KAIR DnCNN dncnn_25.pth, copyright Kai Zhang, upstream MIT license.
+  https://github.com/cszn/KAIR
+  torchvision ResNet-18 resnet18-f37072fd.pth, upstream BSD-3-Clause license.
+  https://github.com/pytorch/vision
+  ImageNet category labels from https://github.com/pytorch/hub
+  Source hashes and derived artifact hashes are recorded in
+  config/vision-models.json and scripts/prepare_vision.py. These software
+  licenses do not grant rights to redistribute the ImageNet training images.

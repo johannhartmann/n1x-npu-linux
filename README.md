@@ -32,6 +32,9 @@ chroma resizing, pixel rearrangement and independent validation.
 
 **[Run the demo →](demo/README.md)**
 
+Additional examples: [full-image DnCNN denoising and ResNet-18 classification](demo/vision.md),
+with physical NPU convolutions, explicit CPU stages and independent numerical checks.
+
 ## Supported platform
 
 Physical support is pinned to **ASUS ProArt P16 H7607BA**, BIOS **H7607BA.300**,
@@ -47,6 +50,7 @@ research tools, not a generic distribution/kernel installer.
 | Completed-task I/O reuse | Changing inputs, 15 fixture REEXECs, one allocation per loaded graph |
 | Healthy shutdown and module reload | Two cycles with zero retained backing, normal unload and successful inference after reload |
 | Complete 3× super-resolution | 512×512 → 1536×1536 and 1024×1024 → 3072×3072; 461 DLA windows and whole-image reference checks |
+| DnCNN denoising and ResNet-18 classification | [Six image runs, 657 NPU submissions](docs/evidence/vision-hardware-2026-10-29.json); independent numerical checks and bounded reuse across images |
 
 [Exact versions, hashes and measurements](docs/evidence/npu-hardware-2026-10-28.json)
 · [Current limits](docs/status.md)
@@ -97,7 +101,7 @@ cuDLA application + CUDA buffers
 | --- | --- |
 | `driver/`, `include/`, `patches/` | Kernel implementation, UAPI and scoped kernel patches |
 | `runtime/` | cuDLA backend, model materialization and application bindings |
-| `demo/` | Runnable image example and measured output |
+| `demo/` | Super-resolution, denoising and classification examples |
 | `scripts/`, `tests/` | Operational commands, research tools and regression harnesses |
 | `docs/` | Maintained setup, architecture and support guides |
 | `docs/evidence/` | Immutable measurement and reproduction receipts |

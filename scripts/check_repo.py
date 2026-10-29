@@ -101,6 +101,11 @@ def main():
         path = ROOT/'demo/assets'/name
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             errors.append(f'{path.relative_to(ROOT)}: differs from the physical qualification receipt')
+    vision = json.loads((ROOT/'docs/evidence/vision-hardware-2026-10-29.json').read_text())
+    for name, expected in vision['published_assets'].items():
+        path = ROOT/'demo/assets'/name
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            errors.append(f'{path.relative_to(ROOT)}: differs from the physical vision receipt')
     if errors:
         raise SystemExit('\n'.join(errors))
     print(f'Repository checks passed: {counts["python"]} Python files, '

@@ -6,6 +6,8 @@
 2. [Super-resolution demo](../demo/README.md): run a complete image and inspect its output and reference metrics.
 3. [Support status](status.md): measured behavior and remaining limits.
 
+Additional applications: [denoising and classification](../demo/vision.md).
+
 ## Understand the implementation
 
 - [cuDLA backend](cudla-backend.md): implemented API, CUDA staging, ownership and allocation behavior.

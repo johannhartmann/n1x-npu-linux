@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run original Windows backend passes for the captured super-resolution graph.
+"""Run original Windows backend passes for captured convolution graph partitions.
 
 Offline only. Uses the existing initialized Windows/CRT emulator; constants
 are relocated explicitly and every handoff is recorded by content hash.
@@ -19,12 +19,14 @@ from unicorn import arm64_const as registers
 def digest(data):return hashlib.sha256(data).hexdigest()
 
 
-def probe(u,pe,base,invoke,allocate,*,translate=False):
-    captured=ROOT/'results/native-compile-t254-superres'
+def probe(u,pe,base,invoke,allocate,*,translate=False,model='superres'):
+    captured=ROOT/('results/native-compile-t254-'+model)
     manifest=json.loads((captured/'mtl-capture.json').read_text())
     constants=json.loads((captured/'constants.json').read_text())
     spec=json.loads((captured/'constants-spec.json').read_text())
-    assert spec['operation_count']==11 and len(constants)==8
+    operations=spec['operation_count']
+    assert 1<=operations<=64 and len(constants)==len(spec['entries'])
+    if model=='superres': assert operations==11 and len(constants)==8
     constant_guards=[]
     translated_constants={}
     def constant_buffer(payload,entry):
@@ -46,7 +48,7 @@ def probe(u,pe,base,invoke,allocate,*,translate=False):
         raw[entry['kind']]=bytes(data)
         pointers[entry['kind']]=allocate(len(data));u.mem_write(pointers[entry['kind']],bytes(data))
     assert set(raw)==set(range(5))
-    assert len(raw[1])==11*4376 and len(raw[2])==11*236 and len(raw[3])==11*34816
+    assert len(raw[1])==operations*4376 and len(raw[2])==operations*236 and len(raw[3])==operations*34816
     for entry in constants:
         payload=(captured/entry['file']).read_bytes()
         assert len(payload)==entry['bytes'] and digest(payload)==entry['sha256']
@@ -54,7 +56,7 @@ def probe(u,pe,base,invoke,allocate,*,translate=False):
         u.mem_write(pointers[3]+entry['offset'],struct.pack('<Q',address))
     common,mtl=allocate(64),allocate(512)
     descriptor=bytearray(64)
-    struct.pack_into('<QI',descriptor,0,pointers[0],11)
+    struct.pack_into('<QI',descriptor,0,pointers[0],operations)
     struct.pack_into('<3Q',descriptor,16,pointers[2],pointers[3],pointers[1])
     struct.pack_into('<Q',descriptor,48,pointers[4])
     u.mem_write(common,bytes(descriptor))
@@ -62,7 +64,7 @@ def probe(u,pe,base,invoke,allocate,*,translate=False):
     status=invoke(0x624630,mtl,common,instruction_limit=200000000)
     assert status==0,hex(status)
     assert bytes(u.mem_read(common,64))==bytes(descriptor)
-    output=ROOT/'results/windows-superres-pretranslation';output.mkdir(exist_ok=True)
+    output=ROOT/('results/windows-'+model+'-pretranslation');output.mkdir(exist_ok=True)
     entries=[]
     for kind,data in raw.items():
         result=bytearray(u.mem_read(pointers[kind],len(data)))
@@ -72,7 +74,7 @@ def probe(u,pe,base,invoke,allocate,*,translate=False):
         entries.append(dict(kind=kind,bytes=len(result),input_sha256=digest(data),sha256=digest(result)))
     windows_sha=digest((ROOT/'sources/tensorrt-11.4/nvdla_compiler.dll').read_bytes())
     record=dict(passed=True,return_value=0,descriptor_unchanged=True,hardware_access=False,
-                native_sha256=NATIVE_HASH,windows_sha256=windows_sha,operation_count=11,
+                native_sha256=NATIVE_HASH,windows_sha256=windows_sha,operation_count=operations,
                 outputs=entries,constants=constants,relocation_offsets={'3':[e['offset'] for e in constants]})
     (output/'manifest.json').write_text(json.dumps(record,indent=2)+'\n')
     if not translate:return record
@@ -135,7 +137,7 @@ def probe(u,pe,base,invoke,allocate,*,translate=False):
     try:
         assert invoke(0x624eb0,mtl,translation_common,instruction_limit=500000000)==0
     except Exception:
-        (ROOT/'results/superres-translation-failure.json').write_text(json.dumps(dict(
+        (ROOT/('results/'+model+'-translation-failure.json')).write_text(json.dumps(dict(
             pc=hex(u.reg_read(registers.UC_ARM64_REG_PC)-base),blob_ids=blob_ids,writes=watched_writes,
             registers=[hex(u.reg_read(getattr(registers,f'UC_ARM64_REG_X{i}'))) for i in range(29)]),indent=2)+'\n')
         raise
@@ -145,7 +147,7 @@ def probe(u,pe,base,invoke,allocate,*,translate=False):
     assert all(bytes(u.mem_read(pointers[kind],len(data)))==data for kind,data in retained.items())
     begin,end,capacity=struct.unpack('<3Q',u.mem_read(mtl+0x58,24))
     assert begin<=end<=capacity and (end-begin)%24==0 and end-begin<=24*16
-    final=ROOT/'results/windows-superres-backend';final.mkdir(exist_ok=True)
+    final=ROOT/('results/windows-'+model+'-backend');final.mkdir(exist_ok=True)
     blobs=[]
     for offset in range(begin,end,24):
         entry=bytes(u.mem_read(offset,24));pointer=struct.unpack_from('<Q',entry)[0]
@@ -164,7 +166,7 @@ def probe(u,pe,base,invoke,allocate,*,translate=False):
     # logical source arrays. Export their original Windows packed contents.
     # A bootstrap serialization supplies the frontend's exact content extents;
     # it is not numerically qualified until this constant replay is applied.
-    serialized=captured/'superres.nvda'
+    serialized=captured/(model+'.nvda')
     if serialized.exists():
         sys.path.insert(0,str(ROOT/'runtime'))
         from loadable import Reader
@@ -186,6 +188,8 @@ def probe(u,pe,base,invoke,allocate,*,translate=False):
 
 
 if __name__=='__main__':
+    from vision_graph import MODELS
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--translate',action='store_true')
+    parser.add_argument('--model',choices=('superres',*MODELS),default='superres')
     args=parser.parse_args()
-    print(json.dumps(collector([],initialized_probe=partial(probe,translate=args.translate)),indent=2))
+    print(json.dumps(collector([],initialized_probe=partial(probe,translate=args.translate,model=args.model)),indent=2))

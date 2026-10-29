@@ -20,7 +20,7 @@ for e in (fm['translation']['outputs'] if conv else fm['outputs']):
     assert e['kind'] not in payloads
     payloads[e['kind']]=data
 assert set(payloads)=={0,1,3,4,5,6,7}
-if model=='superres' and fm.get('constant_outputs'):
+if extended and fm.get('constant_outputs'):
     for entry in fm['constant_outputs']:
         data=(final/entry['file']).read_bytes()
         assert len(data)==entry['bytes'] and hashlib.sha256(data).hexdigest()==entry['sha256']
