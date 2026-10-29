@@ -33,12 +33,14 @@ omarchy hook install post-update config/omarchy-npu-post-update
 The hook runs the read-only readiness check after Omarchy updates and reports
 when the running kernel, board/BIOS, package ownership or loaded module differs.
 It also detects an NVIDIA userspace/module version mismatch for the NPU2 kernel.
-The external NVIDIA and `spbm` modules under `updates/npu-test/` came from the
-isolated test-kernel build; they are not owned by the bootstrap package. A
-future NVIDIA update therefore still requires rebuilding and verifying those
-modules and the UKI before rebooting into NPU2.
+The external NVIDIA, SPBM and CPUID modules are installed via DKMS for the
+audited NPU kernel. The original test modules were backed up under
+`/var/lib/p16-platform/boot-hook-backup/npu-test-modules/`. A future NVIDIA or
+kernel update still requires checking the DKMS builds and the staged UKI before
+rebooting into NPU2.
 Run `python3 scripts/check_update_readiness.py` at any time. The unprivileged
-check cannot verify root-owned boot-menu/EFI files or prove physical inference.
+check requires the audited external modules to be installed and selected from
+DKMS. It cannot verify root-owned boot-menu/EFI files or prove physical inference.
 Verify the current Limine images separately with
 `pkexec /usr/bin/python3 "$PWD/scripts/check_update_readiness.py" --boot`.
 

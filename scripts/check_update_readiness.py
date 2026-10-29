@@ -55,6 +55,14 @@ def check():
         issues.append('NVIDIA userspace or NPU-kernel module is missing')
     elif nvidia_package.split()[1].rsplit('-', 1)[0] != nvidia_module:
         issues.append('NVIDIA userspace and NPU-kernel module versions differ; rebuild external modules before reboot')
+    for name, version in (('nvidia', '615.78.08'),
+                          ('spbm', '0.3.0.rtxspark.5'), ('cpuid', '0.8.2')):
+        selected = command('modinfo', '-k', KERNEL, '-F', 'filename', name)
+        status = command('dkms', 'status', '-m', name, '-v', version, '-k', KERNEL)
+        if not selected or '/updates/dkms/' not in selected or not status or 'installed' not in status:
+            issues.append(f'{name} DKMS module is not installed and selected for {KERNEL}')
+        else:
+            facts.append(f'DKMS {name}: {selected}')
     facts.append('Physical inference requires a separate bounded post-reboot check')
     return facts, issues
 
