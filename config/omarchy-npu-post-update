@@ -1,0 +1,6 @@
+#!/bin/bash
+# Omarchy post-update hook: report drift without starting NPU firmware.
+repo=/home/johann/n1x-lab/npu
+if [[ -f $repo/scripts/check_update_readiness.py ]]; then
+  /usr/bin/python3 "$repo/scripts/check_update_readiness.py" --brief || true
+fi

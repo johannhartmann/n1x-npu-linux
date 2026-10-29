@@ -1,0 +1,31 @@
+# Maintained template. scripts/build_arch_module_package.py pins the source archive.
+pkgname=n1x-npu-bootstrap-p16-asus-23-npu2
+pkgver=0.1.0.rSOURCE_REV
+pkgrel=1
+pkgdesc='Explicit-load N1X NPU research driver for the audited P16 npu2 kernel'
+arch=('aarch64')
+license=('GPL-2.0-only')
+depends=('linux-p16-asus-23-npu2' 'kmod')
+makedepends=('linux-p16-asus-23-npu2-headers' 'make' 'gcc')
+install=n1x-npu-bootstrap.install
+_kernel_release=7.2.8-23-omarchy-p16-asus-npu2
+source=('npu-source.tar.gz')
+sha256sums=('SOURCE_SHA256')
+
+build() {
+  make -C "/usr/lib/modules/${_kernel_release}/build" \
+    M="${srcdir}/npu-source/driver" modules
+  local actual
+  actual=$(modinfo -F vermagic "${srcdir}/npu-source/driver/n1x_npu_bootstrap.ko")
+  [[ ${actual%% *} == "${_kernel_release}" ]] || {
+    printf 'Wrong module release: %s\n' "$actual" >&2
+    return 1
+  }
+}
+
+package() {
+  install -Dm644 "${srcdir}/npu-source/driver/n1x_npu_bootstrap.ko" \
+    "${pkgdir}/usr/lib/modules/${_kernel_release}/updates/n1x-npu-bootstrap/n1x_npu_bootstrap.ko"
+  install -Dm644 "${srcdir}/npu-source/README.md" \
+    "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}
