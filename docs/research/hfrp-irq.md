@@ -989,7 +989,7 @@ setup, power command, common loader and cleanup bodies are explicit recording
 stubs. This complements their separate tests; it is not an integrated boot.
 
 The additional setup body is independently covered by
-[`emulate_region5_setup.py`](../scripts/emulate_region5_setup.py), which executes
+[`emulate_region5_setup.py`](../../scripts/emulate_region5_setup.py), which executes
 `0xd43730` and its actual allocation callbacks. HAL slot `+0x150` resolves to
 `0xd45250` (clear an allocation), `+0x430` to `0xd45390` (prepare the low-power
 configuration page), and `+0xa8` to `0xd45300` (prepare a zeroed configuration

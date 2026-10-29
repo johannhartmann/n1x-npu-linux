@@ -5,6 +5,8 @@ producing a 3x larger result through NVIDIA's original Linux cuDLA frontend
 and this repository's N1X backend. Internal 64x64 windows use a five-pixel
 halo; the output preserves the complete image and its aspect ratio.
 
+[View the actual 1536x1536 DLA result](assets/astronaut-dla-3x.png) · [Image provenance](assets/README.md)
+
 ## Verification status
 
 The complete physical P16 runs passed the independent whole-image ONNX
@@ -17,7 +19,7 @@ reference checks:
 
 Each image used exactly one retained 4,550,656-byte driver allocation, reused
 for all windows. Two healthy unload/reload cycles and changing-input fixture
-jobs passed first. See the [hardware receipt](../docs/npu-hardware-2026-10-28.json).
+jobs passed first. See the [hardware receipt](../docs/evidence/npu-hardware-2026-10-28.json).
 These are one-run staged pipeline timings, not sustained performance figures.
 The 1024 input was enlarged with bicubic interpolation from the pinned NASA
 512 sample to validate a larger inference grid; it is not a native-resolution
@@ -48,7 +50,7 @@ The required source model is `sources/demo-research/super-resolution-10.onnx`,
 SHA-256 `85f36ff88cc504a24af5e0602148bc56a8aa09a58eca8c0da2756f3e8186035e`.
 The compiled artifact is `results/native-compile-t254-superres/superres.nvda`,
 SHA-256 `c1ffde5d1eb9c7486a08ecc1470a1b633a11c7a71411f8fb36064d16dbcfc1c0`.
-See the [model research](../docs/github-demo-research.md) for the model source
+See the [model research](../docs/research/github-demo-research.md) for the model source
 and license. The offline builder orchestrates `scripts/superres_graph.py`,
 `scripts/compile_superres_backend.py` and `probe_native_graph.py` and checks
 the final artifact hash. It performs no NPU submission.

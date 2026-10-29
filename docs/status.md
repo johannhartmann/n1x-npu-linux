@@ -19,7 +19,7 @@ universal N1X support or official NVIDIA Linux DLA support for this laptop.
 
 ## Physical results
 
-The [eight-job cuDLA receipt](cudla-hardware-2026-10-28.json) covers:
+The [eight-job cuDLA receipt](evidence/cudla-hardware-2026-10-28.json) covers:
 
 | Graph | Inputs | Result |
 | --- | --- | --- |
@@ -35,7 +35,7 @@ driver, not physical validation of newer reuse or cleanup code.
 The trained four-convolution super-resolution graph also produced a correct
 physical 64x64 input window. Its nine output planes had maximum absolute error
 `0.0009882450` and RMSE `0.0000607435` against the independent FP32 ONNX reference.
-See [window receipt](superres-tile-2026-10-28.json). A prior compiler artifact
+See [window receipt](evidence/superres-tile-2026-10-28.json). A prior compiler artifact
 produced incorrect numbers; correcting packed-constant replay fixed the window.
 No full image or sustained throughput is established by this result.
 
@@ -69,9 +69,9 @@ sustained benchmark. The 1024 input was a bicubic enlargement of the pinned
 benchmark. The existing `performance` profile was recorded and not changed.
 
 Exact hashes, stop evidence, allocation counters and measured results are in
-the [current hardware receipt](npu-hardware-2026-10-28.json).
-The [first failed attempt](reload-attempt-2026-10-28.json) and
-[offline review](lifecycle-review-2026-10-28.json) remain historical evidence.
+the [current hardware receipt](evidence/npu-hardware-2026-10-28.json).
+The [first failed attempt](evidence/reload-attempt-2026-10-28.json) and
+[offline review](evidence/lifecycle-review-2026-10-28.json) remain historical evidence.
 Their host-mask assertion and state-byte issues are corrected in this tested
 build. No failure recovery or long-term reliability claim follows from two
 healthy reload cycles.
@@ -79,7 +79,7 @@ healthy reload cycles.
 The fresh-checkout compiler pipeline reconstructs the three fixture models and
 the super-resolution loadable with their expected hashes, without loading a
 driver or accessing a device. See [setup](setup.md) and the
-[offline reproduction receipt](offline-reproduction-2026-10-28.json).
+[offline reproduction receipt](evidence/offline-reproduction-2026-10-28.json).
 
 ## Remaining limits
 

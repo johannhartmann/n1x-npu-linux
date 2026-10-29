@@ -10,7 +10,7 @@ This implements one more userspace layer of the Linux driver. Compilation of
 arbitrary ONNX graphs and broader model qualification remain open. The native
 C++ counterpart now materializes the same checked subset for the cuDLA backend;
 eight physical jobs through the accel API passed on 2026-10-28. See
-[the qualification](cudla-backend.md#physical-result-2026-10-28).
+[the qualification](../cudla-backend.md#physical-result-2026-10-28).
 
 ## Newly traced modern fields
 

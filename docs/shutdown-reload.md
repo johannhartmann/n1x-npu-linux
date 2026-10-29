@@ -7,12 +7,12 @@ eight baseline cuDLA jobs and eight changing-input reuse jobs. Both stops
 confirmed power-off, released all retained allocations and balanced lifetime
 references. Open clients blocked unload; closing them allowed ordinary removal,
 then fresh firmware startup and correct inference without rebooting.
-See the [hardware receipt](npu-hardware-2026-10-28.json).
+See the [hardware receipt](evidence/npu-hardware-2026-10-28.json).
 
 Earlier builds without stop support, or any instance with a failed/uncertain
 stop, still need a reboot before replacement. The
-[first failed attempt](reload-attempt-2026-10-28.json) and
-[lifecycle review](lifecycle-review-2026-10-28.json) document the corrected
+[first failed attempt](evidence/reload-attempt-2026-10-28.json) and
+[lifecycle review](evidence/lifecycle-review-2026-10-28.json) document the corrected
 host-side assumptions. Healthy reload qualification is not failed-channel
 recovery or suspend/resume support. No new kernel or boot entry is required.
 

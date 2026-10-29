@@ -20,5 +20,5 @@ jobs:
         run: |
           python -m venv venv
           venv/bin/python -m pip install -r requirements.txt
-      - name: Check fixture-free C and modeled protocol/lifetime paths
-        run: make test-portable
+      - name: Check repository and portable protocol/lifetime paths
+        run: make check

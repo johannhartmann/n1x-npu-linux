@@ -5,7 +5,7 @@ loads this repository's `libnvcudla.so`, which parses supported N1X loadables,
 stages CUDA tensors and submits them through the Linux N1X driver. The backend
 does not calculate tensor outputs on the CPU.
 
-This is an implementation of the [researched backend boundary](cudla-call-path.md),
+This is an implementation of the [researched backend boundary](research/cudla-call-path.md),
 not an official NVIDIA driver or complete cuDLA/TensorRT replacement. Physical
 cuDLA execution passed on 2026-10-28: eight jobs through the full path matched
 independent numerical references. See the result below.
@@ -13,7 +13,7 @@ independent numerical references. See the result below.
 ## Build and local use
 
 Acquire the hash-pinned cuDLA 13.4.92 package using the commands in
-[the call-path investigation](cudla-call-path.md#new-executable-checks). The
+[the call-path investigation](research/cudla-call-path.md#new-executable-checks). The
 installed CUDA toolkit supplies `cuda.h` and its link-time driver stub; the
 running system must supply the actual `libcuda.so.1`.
 
@@ -129,7 +129,7 @@ afterward, consuming 22,953,984 bytes. Its queue remained unpoisoned. Firmware
 startup and the bypass probe completed first, and VERSION/INFO passed before
 the firmware triggers.
 
-The [tracked qualification receipt](cudla-hardware-2026-10-28.json) records the
+The [tracked qualification receipt](evidence/cudla-hardware-2026-10-28.json) records the
 frontend/backend/application/transport/firmware hashes and each model, input
 and output hash. Full local records are under
 `results/cudla-start-81aeb5b0.jsonl` and `results/cudla-hardware-81aeb5b0/`.
@@ -183,7 +183,7 @@ pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_cudla.py" \
 This requires a healthy initialized NPU with the reuse capability. The complete
 reload qualifier now runs both baseline and reuse checks before the first stop
 and after every restart. These checks passed in two physical P16 reload
-cycles; see the [hardware receipt](npu-hardware-2026-10-28.json).
+cycles; see the [hardware receipt](evidence/npu-hardware-2026-10-28.json).
 The production application's multi-input path has passed real-CUDA tests with
 a modeled NPU peer, including changing-input snapshots and stopping on a wrong
 reference without executing subsequent jobs. Those tests do not establish

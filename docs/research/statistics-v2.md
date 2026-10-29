@@ -9,9 +9,9 @@ wrong extent, 3,392 bytes instead of 28,736.
 
 The new Linux helper validates the newer layout without rewriting the blob:
 
-- [Public header](../include/n1x_dla_statistics.h)
-- [C parser](../driver/n1x_dla_statistics.c)
-- [Original-code and C tests](../scripts/test_statistics_v2.py)
+- [Public header](../../include/n1x_dla_statistics.h)
+- [C parser](../../driver/n1x_dla_statistics.c)
+- [Original-code and C tests](../../scripts/test_statistics_v2.py)
 
 It accepts immutable CPU snapshots, returns record counts/offsets/strides,
 and checks their bounds. It does not decode timings, counters, engine fields,

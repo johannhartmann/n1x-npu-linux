@@ -1,14 +1,14 @@
 # Experimental native DLA runtime
 
-> Research record. See [current status](status.md), [setup](setup.md) and
-> [shutdown/reload](shutdown-reload.md) for the current implementation and
+> Research record. See [current status](../status.md), [setup](../setup.md) and
+> [shutdown/reload](../shutdown-reload.md) for the current implementation and
 > pending hardware qualification. Earlier results and limitations below retain
 > their original experimental context.
 
 The module now contains an optional Linux DRM accel interface, a small native
 C client and a Python binding. **The accel interface now executes physical
 ReLU, convolution and Conv -> ReLU through the cuDLA backend.** Eight jobs
-with changing inputs passed on 2026-10-28; see [the qualification](cudla-backend.md#physical-result-2026-10-28).
+with changing inputs passed on 2026-10-28; see [the qualification](../cudla-backend.md#physical-result-2026-10-28).
 
 This is a step from the manual probe toward a reusable driver, not a completed
 production runtime or NVIDIA cuDLA/TensorRT compatibility layer. It accepts a
@@ -299,7 +299,7 @@ UBSan as well.
 
 ## Original native-client qualification procedure
 
-The following procedure predates the successful [cuDLA qualification](cudla-backend.md#physical-result-2026-10-28).
+The following procedure predates the successful [cuDLA qualification](../cudla-backend.md#physical-result-2026-10-28).
 That later run qualifies the shared accel transport through the cuDLA application;
 it does not imply that every separate Python CLI below was run physically.
 

@@ -11,7 +11,7 @@ The physical driver currently requires ASUS ProArt P16 H7607BA, BIOS
 headers. Start with the separate [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux).
 This repository does not supply a generic Omarchy kernel installer or signed
 kernel package. The exact test kernel and scoped noncoherent SROOT DMA patch
-are documented in [Linux backend](linux-backend.md). Earlier kernel-build and
+are documented in [Linux backend](research/linux-backend.md). Earlier kernel-build and
 FRTS/UKI experiments are indexed as historical workflows in [the tool index](../scripts/README.md).
 
 Preserve the known-working boot entry when preparing a test kernel. A different
@@ -33,7 +33,7 @@ cd n1x-npu-linux
 uv venv --python 3.12 venv
 uv pip install --python venv/bin/python -r requirements.txt -r requirements-probe.txt
 mkdir -p sources results
-make test-portable
+make check
 ```
 
 `make test` needs only a C compiler. `make test-portable` additionally uses the
@@ -67,8 +67,8 @@ checks hashes and never downloads or extracts anything.
 
 Public package sources are NVIDIA's [cuDLA SBSA archive index](https://developer.download.nvidia.com/compute/cuda/redist/libcudla/linux-sbsa/)
 and [Debian SBSA package index](https://developer.download.nvidia.com/compute/cuda/repos/debian12/sbsa/).
-The [Windows compiler acquisition](model-probe.md#native-compiler-counterpart-acquired)
-and [model research](github-demo-research.md) record the remaining source context.
+The [Windows compiler acquisition](research/model-probe.md#native-compiler-counterpart-acquired)
+and [model research](research/github-demo-research.md) record the remaining source context.
 
 Supply **NVIDIA 617.42 Windows ARM64** driver files separately. Obtain the
 matching vendor package and unpack it without running its installer, for example:
@@ -114,7 +114,7 @@ sandbox; Windows backend passes execute under Unicorn. Original packed
 constants are replayed before final serialization. Every final loadable hash
 must match the checked artifact. Omit `--superres` for the three small fixtures.
 
-The [offline reproduction receipt](offline-reproduction-2026-10-28.json) records
+The [offline reproduction receipt](evidence/offline-reproduction-2026-10-28.json) records
 a clean source export with no pre-existing model/capture outputs, Python 3.12
 and all four expected loadable hashes. It does not establish physical execution.
 
@@ -140,7 +140,7 @@ reference and likewise makes no claim of physical NPU execution.
 
 ## 5. Board input and module build
 
-Use the [bounded read-only board ROM procedure](p16-board-start.md#reproducible-read-only-acquisition)
+Use the [bounded read-only board ROM procedure](research/p16-board-start.md#reproducible-read-only-acquisition)
 to create `results/p16-bios300-physical.rom`. That explicitly privileged
 acquisition is separate from setup and must match SHA-256
 `a82af14d15effa98a75b19d9135421c7c27f20cca7398d0b0a7ba87547b8b64c`.
@@ -184,6 +184,6 @@ or timer is installed to enforce a profile.
 Only after successful reload and reuse qualification, run the
 [full-image demo](../demo/README.md). Its complete physical 512x512 and
 1024x1024 runs passed on the audited P16; see the
-[hardware receipt](npu-hardware-2026-10-28.json). See [status](status.md)
+[hardware receipt](evidence/npu-hardware-2026-10-28.json). See [status](status.md)
 before making broader hardware claims. Setup, model generation and offline tests do not establish
 successful physical boot, teardown or inference by themselves.

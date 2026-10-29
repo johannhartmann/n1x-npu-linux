@@ -7,7 +7,7 @@ was changed during this investigation.
 
 ## Decision
 
-The [implemented cuDLA backend](cudla-backend.md) now completes the public
+The [implemented cuDLA backend](../cudla-backend.md) now completes the public
 NVIDIA library -> N1X backend -> Linux driver -> firmware -> DLA path, with
 eight physically verified numerical jobs. The architectural investigation
 below retains its original bring-up context; current implementation limits

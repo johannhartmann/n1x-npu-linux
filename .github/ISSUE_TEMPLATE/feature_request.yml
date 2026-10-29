@@ -1,0 +1,20 @@
+name: Feature or hardware support request
+description: Propose a capability, research direction or additional hardware target.
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: What would you like to do, and what currently prevents it?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Hardware, references and available evidence
+      description: Include exact device IDs and software versions for a new hardware target. Links and hashes are useful; do not upload vendor binaries.
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: Optional implementation idea or experiments you can help reproduce.

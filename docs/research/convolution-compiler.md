@@ -8,7 +8,7 @@ serialization. It is not a general ONNX compiler or a physical inference
 result. The native loader now materializes its global DRAM constants, checked
 against the original Windows allocation/content path. The actual Linux ioctl
 serializer and original firmware scheduler accept its task offline; engine
-arithmetic was initially unverified. The later [cuDLA qualification](cudla-backend.md#physical-result-2026-10-28)
+arithmetic was initially unverified. The later [cuDLA qualification](../cudla-backend.md#physical-result-2026-10-28)
 physically verifies both convolution graphs on three inputs each.
 
 ## Fixture and recovered API
@@ -187,7 +187,7 @@ tests bias, channel mixing, the channel-31 wrap and spatial/tensor placement
 without hiding mismatches behind a tolerance. It is not general convolution
 accuracy or performance qualification.
 
-After the separate [native accel startup and ReLU qualification](native-runtime.md#first-hardware-qualification-not-yet-performed),
+After the separate [native accel startup and ReLU qualification](native-runtime.md#original-native-client-qualification-procedure),
 use the actual `n1x-dla` node (the example assumes `accel0`):
 
 ```sh

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Setup and supported hardware
+    url: https://github.com/johannhartmann/n1x-npu-linux/blob/master/docs/setup.md
+    about: Start with the pinned platform requirements and reproducible setup.

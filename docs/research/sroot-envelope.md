@@ -127,7 +127,7 @@ This proves that a vendor-signed, Windows-selectable upload contains the raw
 firmware used by our scheduler tests. It does **not** prove that this machine
 trusts its embedded key, accepts it, executes it, or performs inference.
 Variant 0's transformation and the first physical upload error remain unknown.
-The [first variant-1 hardware attempt](linux-backend.md#latest-hardware-result-variant-1-rejected)
+The [first variant-1 hardware attempt](linux-backend.md#earlier-npu1-hardware-result-variant-1-rejected)
 has since returned `0x253ff018` (status `1023`, detail `37`) and was rejected.
 Its mathematical signature validity and raw-image equality did not establish
 hardware acceptance. The new error's meaning remains unresolved.

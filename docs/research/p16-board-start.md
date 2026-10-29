@@ -1,7 +1,7 @@
 # P16 BIOS-300 board policy and HFRP startup
 
-> Research record. See [current status](status.md), [setup](setup.md) and
-> [shutdown/reload](shutdown-reload.md) for the current implementation and
+> Research record. See [current status](../status.md), [setup](../setup.md) and
+> [shutdown/reload](../shutdown-reload.md) for the current implementation and
 > pending hardware qualification. Earlier results and limitations below retain
 > their original experimental context.
 

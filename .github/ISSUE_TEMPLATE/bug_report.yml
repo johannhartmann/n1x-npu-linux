@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible setup, build, runtime or documentation problem.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check docs/status.md for the supported board, BIOS and kernel.
+        Please use Security → Report a vulnerability for security-sensitive reports.
+        Do not attach vendor binaries, firmware, ROM captures or credentials.
+  - type: input
+    id: revision
+    attributes:
+      label: Commit
+      description: Output of git rev-parse HEAD.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and execution mode
+      description: Board/model, BIOS, kernel, distribution and relevant CUDA/cuDLA versions. For offline checks, state that no NPU was used.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction and expected result
+      description: Exact command, inputs or their hashes, expected behavior and actual outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error and relevant logs
+      description: Include the complete error and relevant evidence. Redact private data before posting.
+      render: text

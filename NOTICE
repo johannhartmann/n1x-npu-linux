@@ -23,11 +23,16 @@ Super-resolution source model:
   The model’s source README identifies Apache-2.0. The model is downloaded
   separately, hash-checked and kept in ignored sources/.
 
-Optional sample photograph:
+Included demo photograph and measured result:
   NASA photograph of astronaut Eileen Collins, distributed by scikit-image
   as data.astronaut (documented there as public domain).
   https://scikit-image.org/docs/stable/api/skimage.data.html#skimage.data.astronaut
   https://github.com/scikit-image/scikit-image/blob/v0.19.3/skimage/data/astronaut.png
+  demo/assets/astronaut-input.png is the unchanged acquired sample.
+  demo/assets/astronaut-dla-3x.png is the actual measured N1X DLA output.
+  File hashes and processing provenance are recorded in demo/assets/README.md
+  and docs/evidence/npu-hardware-2026-10-28.json. No model weights or vendor
+  loadables are included with the images.
 
 NVIDIA, CUDA, cuDLA, TensorRT, ASUS and other product names identify the
 respective vendors’ products and do not imply endorsement.

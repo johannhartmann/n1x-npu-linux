@@ -8,6 +8,7 @@ reproduction code and regression evidence, not a batch installer.
 
 | Command/tool | Purpose | Requirements and effects |
 | --- | --- | --- |
+| `check_repo.py` | Check local documentation links, Python syntax, JSON and published image hashes | Standard library only; no project imports or hardware access |
 | `prepare_inputs.py` | Verify pinned inputs | Read-only file hashing by default |
 | `prepare_inputs.py --fetch` | Acquire public libraries/model/sample | Network; writes ignored inputs; no system install |
 | `prepare_inputs.py --extract-firmware` | Extract firmware from supplied KMD | Analysis venv; writes ignored inputs; no device access |
@@ -28,6 +29,8 @@ firmware or sets a power profile. Hardware qualifiers record the selected profil
 
 | Target | Scope | Additional inputs |
 | --- | --- | --- |
+| `make check` | Repository consistency plus the portable tests used by CI | Analysis venv and C compiler; no GPU/vendor files |
+| `make check-repo` | Local links, Python syntax, JSON and published image hashes | Python standard library only |
 | `make test` | Native C firmware parser/bounds tests | C compiler only |
 | `make test-portable` | Fixture-free channel, shutdown, ownership and controller checks | Analysis venv and C compiler; no GPU/vendor files |
 | `make test-p16-start` | Board/startup/runtime regression suite | Pinned KMD/firmware, compiled fixtures, BIOS capture and analysis inputs |
@@ -40,7 +43,8 @@ firmware or sets a power profile. Hardware qualifiers record the selected profil
 Offline means no NPU device submission; some tests still use actual CUDA or
 vendor code in isolated/emulated execution. Read each target’s requirements.
 Individual `test_*.py` files are executable regression tests, not all runnable
-from a source-only checkout. CI runs the fixture-free subset.
+from a source-only checkout. CI runs `make check`, including the fixture-free subset and repository checks.
+`make help` is the default target. All Python targets accept `PYTHON=/path/to/python`.
 
 ## Research tool families
 
@@ -71,6 +75,6 @@ from a source-only checkout. CI runs the fixture-free subset.
 `install_*.py` and corresponding audit/verifier tests implement earlier
 isolated FRTS, logging and SROOT kernel experiments. Build helpers generate
 local artifacts; install helpers can modify privileged files and boot menus.
-They are not part of normal demo startup. Follow [boot logging](../docs/boot-logging.md),
-[Linux backend](../docs/linux-backend.md) or [FRTS capture](../docs/npu2-frts-capture.md)
+They are not part of normal demo startup. Follow [boot logging](../docs/research/boot-logging.md),
+[Linux backend](../docs/research/linux-backend.md) or [FRTS capture](../docs/research/npu2-frts-capture.md)
 for the specific experiment and recovery procedure.

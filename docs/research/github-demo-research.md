@@ -1,13 +1,13 @@
 # A reproducible public N1X cuDLA demo
 
-> Research record. See [current status](status.md), [setup](setup.md) and
-> [shutdown/reload](shutdown-reload.md) for the current implementation and
+> Research record. See [current status](../status.md), [setup](../setup.md) and
+> [shutdown/reload](../shutdown-reload.md) for the current implementation and
 > pending hardware qualification. Earlier results and limitations below retain
 > their original experimental context.
 
 Research date: 2026-10-28. Recommendation only: neither model below has been
 compiled for N1X or executed on this DLA. Existing physical qualification
-covers the three small fixtures described in [the backend guide](cudla-backend.md).
+covers the three small fixtures described in [the backend guide](../cudla-backend.md).
 
 ## Recommendation: single-image 3x super-resolution
 

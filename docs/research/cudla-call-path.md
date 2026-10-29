@@ -3,7 +3,7 @@
 Research date: 2026-10-28. This investigation reads vendor binaries and runs
 isolated API tests; it does not start the device or change the installed driver.
 
-Implementation follow-up: [experimental Linux backend](cudla-backend.md).
+Implementation follow-up: [experimental Linux backend](../cudla-backend.md).
 The findings below describe the research boundary; the linked document tracks
 the subsequent implementation and distinguishes transport tests from hardware.
 
