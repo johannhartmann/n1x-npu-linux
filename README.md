@@ -1,7 +1,7 @@
 # NVIDIA N1X NPU on Linux
 
 [![Offline checks](https://github.com/johannhartmann/n1x-npu-linux/actions/workflows/offline.yml/badge.svg)](https://github.com/johannhartmann/n1x-npu-linux/actions/workflows/offline.yml)
-[GPL-2.0-only + MIT](LICENSING.md) · [Setup](docs/setup.md) · [Support status](docs/status.md) · [Contributing](CONTRIBUTING.md)
+[GPL-2.0-only + MIT](LICENSING.md) · [Setup](docs/setup.md) · [Support status](docs/status.md) · [Updates](docs/updates.md) · [Contributing](CONTRIBUTING.md)
 
 Experimental Linux driver and **NVIDIA cuDLA backend for the N1X NPU/DLA** in
 the ASUS ProArt P16 H7607BA / RTX Spark. Run real inference through NVIDIA's
