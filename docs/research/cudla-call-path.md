@@ -1,5 +1,10 @@
 # cuDLA to N1X firmware: the reusable frontend and missing Linux backend
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 Research date: 2026-10-28. This investigation reads vendor binaries and runs
 isolated API tests; it does not start the device or change the installed driver.
 

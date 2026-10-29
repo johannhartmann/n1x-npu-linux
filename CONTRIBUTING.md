@@ -17,8 +17,9 @@ venv/bin/python -m pip install -r requirements.txt
 make check
 ```
 
-`make check` runs repository consistency checks and the same portable tests as
-CI. Use `make help` for other targets. To use an existing Python environment,
+`make check` validates local links and section anchors, Python syntax, JSON
+receipts and published image hashes, then runs the same portable tests as CI.
+Use `make help` for other targets. To use an existing Python environment,
 set `PYTHON=/path/to/python`. Native compiler work additionally requires an
 ARM64 host and the [pinned inputs and dependencies](docs/setup.md).
 

@@ -1,5 +1,10 @@
 # Windows buffer release and the Linux retirement boundary
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 Research date: 2026-10-27. This investigation executes original Windows ARM64
 instructions offline. It does not release live P16 DMA memory or change the
 Linux driver's retention policy.

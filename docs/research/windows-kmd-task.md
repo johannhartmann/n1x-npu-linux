@@ -1,5 +1,10 @@
 # Windows KMD task submission and postaction construction
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 Research date: 2026-10-27. `scripts/inspect_kmd_task_submission.py` executes
 original ARM64 instructions from NVIDIA 617.42 `nvlddmkm.sys`, SHA-256
 `73b3187cdf84c0306df78595e49626d096e84dfc1e6356543db57b145007f987`.

@@ -1,9 +1,9 @@
 # A reproducible public N1X cuDLA demo
 
-> Research record. See [current status](../status.md), [setup](../setup.md) and
-> [shutdown/reload](../shutdown-reload.md) for the current implementation and
-> pending hardware qualification. Earlier results and limitations below retain
-> their original experimental context.
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
 
 Research date: 2026-10-28. Recommendation only: neither model below has been
 compiled for N1X or executed on this DLA. Existing physical qualification

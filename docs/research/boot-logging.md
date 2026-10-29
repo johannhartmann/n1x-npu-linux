@@ -1,5 +1,10 @@
 # Diagnostic boot logging on the P16
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The old early-capture and capture-OFF UKIs must not be retried. An initramfs VM
 test exposed an additional packaging defect: modules
 copied from the original npu1 kernel have split BTF metadata referring to a

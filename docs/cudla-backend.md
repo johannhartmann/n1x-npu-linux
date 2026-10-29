@@ -12,8 +12,8 @@ independent numerical references. See the result below.
 
 ## Build and local use
 
-Acquire the hash-pinned cuDLA 13.4.92 package using the commands in
-[the call-path investigation](research/cudla-call-path.md#new-executable-checks). The
+Acquire the hash-pinned cuDLA 13.4.92 package using the
+[setup guide](setup.md#3-acquire-the-pinned-inputs). The
 installed CUDA toolkit supplies `cuda.h` and its link-time driver stub; the
 running system must supply the actual `libcuda.so.1`.
 
@@ -89,7 +89,7 @@ covering all three graph fixtures and their constant/intermediate storage.
 `scripts/test_cudla_cuda_transport.py` uses the real NVIDIA frontend, our built
 backend and the real installed CUDA driver. Its NPU transport is a temporary
 mock that records submitted bytes and returns a fixed pattern, not an inference
-implementation. Thirty-two scenarios pass, including all three graph serializers,
+implementation. Thirty-four scenarios pass, including all three graph serializers,
 transport errors, wrong-reference rejection, ownership, capture rejection,
 freed memory, sticky execution errors and injected CUDA copy/synchronization
 failures. Injected synchronization failures drain the real CUDA operation before
@@ -106,6 +106,10 @@ before any firmware trigger. The offline open test exercises the actual fops
 initializer against the kernel's open gates, including the prior failure.
 
 ## Physical qualification
+
+The [current hardware receipt](evidence/npu-hardware-2026-10-28.json) records
+48 fixture jobs, 15 changing-input REEXECs and two healthy module reload cycles.
+The first eight-job result below documents the earlier retention-only driver.
 
 ### Physical result: 2026-10-28
 
@@ -145,14 +149,15 @@ above remain in force.
 
 Use a fresh boot of `7.2.8-23-omarchy-p16-asus-npu2` with no bootstrap loaded.
 The module is manually loaded from the build tree; no boot artifact changes
-are required for this fops fix. After a firmware attempt, the old module cannot
-be safely replaced in place.
+are required for this path. An earlier module without controlled shutdown,
+or an instance whose stop has failed, requires a reboot before replacement.
+For the current full lifecycle procedure, use [shutdown/reload](shutdown-reload.md).
 
 ```sh
 make -C /usr/lib/modules/$(uname -r)/build M="$PWD/driver" n1x_npu_bootstrap.ko
-pkexec /usr/bin/python3 "$PWD/scripts/qualify_p16_start.py" \
+pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_p16_start.py" \
   --through bypass_task --enable-accel --log "$PWD/results/NEW-cudla-start.jsonl"
-pkexec /usr/bin/python3 "$PWD/scripts/qualify_cudla.py" \
+pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_cudla.py" \
   --output-dir "$PWD/results/NEW-cudla-results"
 ```
 

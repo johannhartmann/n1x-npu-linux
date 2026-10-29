@@ -1,5 +1,10 @@
 # Early board-container capture on the booted npu2 kernel
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The capture-OFF npu2 kernel physically booted on 2026-10-27. The next manual
 entry is **N1X NPU FRTS capture - npu2 with disk log**. It uses exactly the
 same kernel and initramfs as that successful boot, with only two added options:

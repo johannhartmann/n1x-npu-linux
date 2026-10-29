@@ -1,5 +1,10 @@
 # NPU boot provider: SROOT mailbox
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The default NPU boot path reaches **nvsrootmbx.sys**, not merely another entry
 point inside nvlddmkm. This is established by matching interface registration
 and IOCTL records, not by guessing from driver names.

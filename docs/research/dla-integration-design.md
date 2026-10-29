@@ -1,5 +1,10 @@
 # How to expose N1X DLA to Linux applications
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 Research date: 2026-10-28. This records the architectural recommendation; the experimental native
 implementation is tracked in [native-runtime.md](native-runtime.md). It does
 not claim NVIDIA library compatibility. No hardware state

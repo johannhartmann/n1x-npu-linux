@@ -1,5 +1,10 @@
 # HAL-1 task completion without accelerator execution
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The extracted Windows HAL-1 raw firmware, SHA-256
 `2754b289e39b8d9ae9383d952f738bd1c5027fdd2573a564f664f9f66ac2f997`,
 implements descriptor flag bit 0 as an execution bypass. This provides a

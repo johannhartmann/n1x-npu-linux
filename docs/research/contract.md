@@ -1,5 +1,10 @@
 # Verified contract and open boundaries
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 All offsets refer to the exact files below. Preferred image bases are
 `0x140000000` for the KMD and `0x180000000` for the DLLs. RVA and raw file offset
 are distinct. Analysis date: 2026-10-24.

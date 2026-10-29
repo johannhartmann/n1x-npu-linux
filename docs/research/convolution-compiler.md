@@ -1,5 +1,10 @@
 # N1X convolution compiler bridge
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The offline bridge produces complete NVDA artifacts for an FP16 1x1 convolution
 with per-channel bias and for that convolution followed by ReLU. It uses
 original native frontend graph

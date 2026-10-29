@@ -8,7 +8,7 @@ reproduction code and regression evidence, not a batch installer.
 
 | Command/tool | Purpose | Requirements and effects |
 | --- | --- | --- |
-| `check_repo.py` | Check local documentation links, Python syntax, JSON and published image hashes | Standard library only; no project imports or hardware access |
+| `check_repo.py` | Check local documentation links and sections, Python syntax, JSON and published image hashes | Standard library only; no project imports or hardware access |
 | `prepare_inputs.py` | Verify pinned inputs | Read-only file hashing by default |
 | `prepare_inputs.py --fetch` | Acquire public libraries/model/sample | Network; writes ignored inputs; no system install |
 | `prepare_inputs.py --extract-firmware` | Extract firmware from supplied KMD | Analysis venv; writes ignored inputs; no device access |
@@ -30,7 +30,7 @@ firmware or sets a power profile. Hardware qualifiers record the selected profil
 | Target | Scope | Additional inputs |
 | --- | --- | --- |
 | `make check` | Repository consistency plus the portable tests used by CI | Analysis venv and C compiler; no GPU/vendor files |
-| `make check-repo` | Local links, Python syntax, JSON and published image hashes | Python standard library only |
+| `make check-repo` | Local links/sections, Python syntax, JSON and published image hashes | Python standard library only |
 | `make test` | Native C firmware parser/bounds tests | C compiler only |
 | `make test-portable` | Fixture-free channel, shutdown, ownership and controller checks | Analysis venv and C compiler; no GPU/vendor files |
 | `make test-p16-start` | Board/startup/runtime regression suite | Pinned KMD/firmware, compiled fixtures, BIOS capture and analysis inputs |

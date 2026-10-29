@@ -1,5 +1,10 @@
 # Native NVDA loadable ingestion
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 `runtime/loadable.py` now reads supported compiler-produced NVDA files directly,
 materializes private model memory, resolves the task-local address list and
 exposes named tensor metadata. `runtime/run_loadable.py` connects that loader

@@ -1,5 +1,10 @@
 # Builtin diagnostic selection, buffers and result boundary
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The pinned Windows `nvdla_runtime.dll` contains a 5,939,144-byte builtin NVDA
 loadable at RVA 0xa6610. Runtime SHA-256:
 `c58e3425eeee93f89b1ae68f814552aa1cacaaf85d913ca12a9b14f83902d49b`.

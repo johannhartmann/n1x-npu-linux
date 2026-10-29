@@ -1,5 +1,10 @@
 # DGX Spark OSROOT as an offline protocol reference
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 Both physical P16 upload variants returned nonzero SROOT replies. The Windows
 provider and KMD transport preserve no semantic decoder for their status/detail
 fields. A separate manufacturer firmware package now supplies readable OSROOT

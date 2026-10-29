@@ -1,9 +1,9 @@
 # Experimental native DLA runtime
 
-> Research record. See [current status](../status.md), [setup](../setup.md) and
-> [shutdown/reload](../shutdown-reload.md) for the current implementation and
-> pending hardware qualification. Earlier results and limitations below retain
-> their original experimental context.
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
 
 The module now contains an optional Linux DRM accel interface, a small native
 C client and a Python binding. **The accel interface now executes physical

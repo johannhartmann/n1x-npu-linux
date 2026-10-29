@@ -1,5 +1,10 @@
 # Region-5 recent-history reader
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The Windows reader at RVA `0xd465a0` copies recent history from the region-5
 ring. **It does not consume entries or advance either cursor.** The C helper
 `n1x_dla_region5_history` reproduces that view for an immutable CPU snapshot.

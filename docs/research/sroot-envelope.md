@@ -1,5 +1,10 @@
 # Signed SROOT envelope: offline structure and integrity evidence
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The exact default P16 SROOT input is 67508 bytes, SHA-256
 `0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4`.
 Its first LE u32 is the already recovered mailbox image identifier 0xc0302.

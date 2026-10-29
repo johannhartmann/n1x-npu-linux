@@ -1,5 +1,10 @@
 # NPU power-policy source: VBIOS BIT `l`
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 Update: the actual P16 BIOS-300 physical ROM has now been captured and compared
 with the original parser/initializer. See [board startup](p16-board-start.md).
 The sections below preserve the preceding acquisition investigation.

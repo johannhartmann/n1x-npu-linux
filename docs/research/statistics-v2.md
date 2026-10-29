@@ -1,5 +1,10 @@
 # Compiler statistics revision 2
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The TensorRT 11.4 Windows compiler produces a statistics blob that runtime
 617.42 cannot index correctly. The [runtime probe](model-probe.md) executes
 the original CRT and regex initialization, then observes the old header check

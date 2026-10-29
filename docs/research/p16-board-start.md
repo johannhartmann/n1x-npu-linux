@@ -1,9 +1,9 @@
 # P16 BIOS-300 board policy and HFRP startup
 
-> Research record. See [current status](../status.md), [setup](../setup.md) and
-> [shutdown/reload](../shutdown-reload.md) for the current implementation and
-> pending hardware qualification. Earlier results and limitations below retain
-> their original experimental context.
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
 
 The actual P16 policy is now available. The original NVIDIA 617.42 Windows
 parser and complete policy initializer both return zero on the physical ROM

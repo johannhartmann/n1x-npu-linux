@@ -1,5 +1,10 @@
 # Region-5 allocation and initialization
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The Linux bootstrap now has an optional region-5 setup matching the observed
 Windows-default buffer layout. **It has not been run on hardware.** The raw
 HAL-1 firmware accepts the complete original Windows-generated record in the

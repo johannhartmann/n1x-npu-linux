@@ -1,5 +1,10 @@
 # Windows-default configuration preparation and import
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The optional Linux bootstrap can now prepare and import the exported HAL-1
 configuration using the observed Windows constructor defaults. **It has not
 been run on hardware.** It does not expose arbitrary user settings or effective

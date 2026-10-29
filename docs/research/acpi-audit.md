@@ -1,5 +1,10 @@
 # P16 ACPI power-path audit
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 Audit date: 2026-10-25. **Live-table identity is now verified.** Read-only
 collection obtained DSDT, five SSDTs and IORT; no dynamic SSDTs were present.
 All six AML tables match the previously audited candidates byte-for-byte.

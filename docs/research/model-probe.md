@@ -1,5 +1,10 @@
 # A numerical probe for the Windows ARM DLA compiler
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The [convolution compiler bridge](convolution-compiler.md) now produces a
 separate FP16 1x1 convolution artifact through the same original frontend and
 Windows backend. Its constant-pointer relocation and native global-DRAM
@@ -57,7 +62,7 @@ Execution is CPU-only; a passing generator proves no NPU behavior.
 ## Candidate compile command (not yet run)
 
 On a compatible Windows ARM TensorRT 11.4 installation, NVIDIA documents the
-[standalone loadable workflow](https://docs.nvidia.com/deeplearning/tensorrt/11.4.0/inference-library/dla-standalone-mode.html).
+[standalone loadable workflow](https://docs.nvidia.com/deeplearning/tensorrt/latest/inference-library/dla-standalone-mode.html).
 Its `trtexec` form adapted to this model is:
 
 ```powershell

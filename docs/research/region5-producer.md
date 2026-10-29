@@ -1,5 +1,10 @@
 # Raw HAL-1 Region-5 producer and publication
 
+> Historical research record. This document preserves observations from earlier
+> bring-up stages, including superseded status claims and commands for older builds.
+> Use [current status](../status.md) and [setup](../setup.md) for the tested behavior
+> and current procedure. Command paths below are relative to the repository root.
+
 The raw HAL-1 producer at `0x106ab6` is now exercised with original reset,
 registration and DMA functions. **This is not a physical ring test.** The
 producer is invoked explicitly with a synthetic caller record; its surrounding

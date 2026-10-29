@@ -1,8 +1,10 @@
 # Setup and reproduction
 
 This guide starts from a fresh checkout on an already enabled ARM64 P16.
-It builds research tools and artifacts locally. Hardware commands appear only
-in the final section and must be run explicitly after reviewing the results.
+It builds research tools and artifacts locally. Section 4 includes CUDA-backed
+transport tests with a modeled NPU. Section 5 covers privileged board-ROM
+acquisition and local firmware installation; section 6 explicitly starts and
+qualifies the physical NPU. Review those steps before running them.
 
 ## 1. Platform prerequisites
 
@@ -51,8 +53,8 @@ uv pip install --python sources/superres-venv/bin/python -r requirements-superre
 ## 3. Acquire the pinned inputs
 
 The input helper downloads the public cuDLA archive, native compiler Debian
-package, super-resolution ONNX model and optional NASA sample photograph. It
-also invokes the existing range-based Windows compiler extractor. Hashes are
+package, super-resolution ONNX model and NASA sample photograph used by the
+demo. It also invokes the existing range-based Windows compiler extractor. Hashes are
 checked before use; existing mismatched files are refused. Packages are
 unpacked into ignored directories and are not installed system-wide.
 
@@ -131,6 +133,12 @@ corresponding `-conv1x1`, `-conv1x1_relu` and `-superres` directories,
 ```sh
 make runtime cudla
 make test-cudla
+```
+
+If you built the super-resolution model and created the optional image
+environment, also run:
+
+```sh
 sources/superres-venv/bin/python scripts/test_superres_image.py
 ```
 

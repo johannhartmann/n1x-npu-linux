@@ -21,6 +21,7 @@ help:
 check: check-repo test-portable
 check-repo:
 	$(PYTHON) scripts/check_repo.py
+	$(PYTHON) scripts/test_check_repo.py
 
 .PHONY: test test-vendor test-relu test-conv test-conv-relu test-p16-start kernel-check module clean generate-probe
 .PHONY: test-p16-stop

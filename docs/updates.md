@@ -37,8 +37,8 @@ The external NVIDIA and `spbm` modules under `updates/npu-test/` came from the
 isolated test-kernel build; they are not owned by the bootstrap package. A
 future NVIDIA update therefore still requires rebuilding and verifying those
 modules and the UKI before rebooting into NPU2.
-Run `python3 scripts/check_update_readiness.py` at any time. The check cannot
-read the root-owned EFI and checkpoint files or prove physical inference.
+Run `python3 scripts/check_update_readiness.py` at any time. The unprivileged
+check cannot verify root-owned boot-menu/EFI files or prove physical inference.
 Verify the current Limine images separately with
 `pkexec /usr/bin/python3 "$PWD/scripts/check_update_readiness.py" --boot`.
 
