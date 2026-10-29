@@ -16,14 +16,15 @@ reproduction code and regression evidence, not a batch installer.
 | `prepare_vision.py --fetch` | Acquire pinned DnCNN/ResNet checkpoints and create partitions/references | Vision environment; writes ignored files; no NPU |
 | `build_vision_models.py` | Compile denoising/classification partitions | ARM64 analysis environment, baseline ReLU capture, vendor compilers; no device access |
 | `test_vision_examples.py` | Original-checkpoint/reference, partition and image-boundary checks | Vision environment and prepared models; CPU only |
-| `../demo-denoise`, `../demo-classify` | DnCNN restoration and ResNet-18 classification | Explicit RAWIO elevation, initialized NPU; [instructions](../demo/vision.md) |
+| `../demo-denoise`, `../demo-classify` | DnCNN restoration and ResNet-18 classification | Unprivileged clients of the installed, fixed-model RAWIO broker; [instructions](../demo/vision.md) |
 | `qualify_p16_start.py` | Explicit bounded firmware-startup prefix | Root, exact board/kernel, ROM and firmware; changes NPU state |
 | `qualify_cudla.py` | Eight physical numerical jobs; `--reuse` keeps each graph loaded and verifies one allocation per graph | Already initialized NPU and CUDA; root; `--prepare-only` only creates references |
 | `qualify_p16_reload.py` | Stop, cleanup, unload, reload and numerical jobs | Root, exact audited setup; two healthy physical cycles verified on P16 |
 | `qualify_superres_tile.py` | One physical learned-graph window | Root, initialized NPU, CUDA, image/reference venv |
+| `install_cudla_broker.py` | Install the reviewed broker, runtime, models and next-node udev policy atomically | One explicit root run; verifies committed hashes; does not access the device, firmware, boot or power profile |
 | `npu_trigger.py` | One unbuffered sysfs operation | Root for real hardware paths; no retries |
 | `select_npu_dma_domains.py` | Inspect dedicated IOMMU groups | Default read-only; `--apply` changes only audited unbound groups |
-| `../demo-superres` | Full-image super-resolution launcher | Explicit RAWIO elevation; 512/1024 image runs and reuse verified on P16 |
+| `../demo-superres` | Full-image super-resolution launcher | Unprivileged client of the installed, fixed-model RAWIO broker; 512/1024 image runs and reuse verified on P16 |
 
 Use [setup](../docs/setup.md) for ordering and [status](../docs/status.md) for
 which stages have physical evidence. None of the input/model helpers starts

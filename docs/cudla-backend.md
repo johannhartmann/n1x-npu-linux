@@ -25,19 +25,28 @@ This produces `runtime/cudla/libnvcudla.so` and `runtime/cudla/cudla-smoke`.
 The latter links the original NVIDIA library, not the backend directly.
 Nothing is installed globally or substituted for NVIDIA's public library.
 
-For an application launched from the repository root:
+The repository-local smoke application is an administrative qualification
+tool. It directly opens the accel node and therefore runs only in the explicit
+root hardware workflow:
 
 ```sh
 LD_LIBRARY_PATH="$PWD/runtime/cudla" \
   runtime/cudla/cudla-smoke MODEL.nvda INPUT.fp16 EXPECTED.fp16 NEW-OUTPUT.fp16
 ```
 
-The current driver requires `CAP_SYS_RAWIO`; ordinary desktop users cannot
-perform its INFO/EXEC/READ ioctls. Firmware startup is a separate, explicit
-operation. The backend never loads a module, starts firmware or retries a
-failed submission automatically. `N1X_DLA_DEVICE` optionally selects a device
-path; otherwise discovery tries accel nodes and verifies the N1X driver name
-and ABI through the existing C transport.
+The public image demos do not elevate their Python environments. Their
+unprivileged clients authenticate `/usr/libexec/n1x-dla-broker`, compare each
+installed model with the reviewed local artifact, and exchange only packed
+tensor bytes over a bounded binary protocol. The root-owned broker opens fixed
+root-owned models, libraries and `/dev/accel/accel0`, then drops to UID/GID
+65534 with only `CAP_SYS_RAWIO`, `NO_NEW_PRIVS` and core dumps disabled. The
+device node is `0600 root:root`, and the driver also rejects an unprivileged
+open. See [setup](setup.md#5-board-input-and-module-build).
+
+Firmware startup remains a separate, explicit administrative operation. The
+backend never loads a module, starts firmware or retries a failed submission
+automatically. `N1X_DLA_DEVICE` is retained for the direct qualification tool;
+normal demos use the installed broker's fixed device path.
 
 ## Implemented contract and limits
 
@@ -64,7 +73,9 @@ and ABI through the existing C transport.
 - If CUDA synchronization fails, potentially referenced pinned host storage is
   retained until process exit. Such quarantine is capped at 64 MiB/128 entries
   globally. Completed transfers release their staging normally.
-- The kernel’s 64-MiB/128-job retention limit remains. The new backend reuses a
+- The kernel’s 64-MiB/128-job retention limit remains. ABI 2 registers only the
+  model input/output regions as writable; REEXEC cannot patch constants,
+  instructions or unrelated image bytes. The backend reuses a
   successful model’s allocation for subsequent I/O when the kernel advertises
   that capability. Reuse and checked shutdown/reclamation are implemented and
   offline-tested and physically qualified in two healthy P16 reload cycles
@@ -73,11 +84,13 @@ and ABI through the existing C transport.
   not implemented. The backend exports all required names and declines
   unsupported features; it does not create fake NvSci objects.
 
-The module registry is capped at 64 models and 256 MiB of materialized images.
-Descriptors and embedded instruction streams still require trusted input and
-the kernel's RAWIO privilege; bounds-checked metadata is not an instruction
-sandbox. General model compilation and TensorRT engine compatibility remain
-separate from standalone N1X loadable execution through cuDLA.
+The backend module registry is capped at 64 models and 256 MiB of materialized
+images. The broker accepts at most 64 installed model IDs, verifies root
+ownership and write protection, and caps each model and tensor. Descriptors and
+embedded instruction streams still require trusted input and the kernel's
+RAWIO privilege; bounds-checked metadata is not an instruction sandbox. General
+model compilation and TensorRT engine compatibility remain separate from
+standalone N1X loadable execution through cuDLA.
 
 ## Evidence
 

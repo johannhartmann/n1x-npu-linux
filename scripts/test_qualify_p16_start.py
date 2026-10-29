@@ -85,11 +85,11 @@ def main():
                     if fail:raise OSError(errno.EINVAL,'modeled DRM open failure')
                 def __enter__(self):return self
                 def __exit__(self,*_):pass
-                def info(self):return {'abi_version':1}
+                def info(self):return {'abi_version':2}
             with patch.object(n1x_dla,'Device',Device):
                 try:preflight_accel(dev,lambda **row:records.append(row),accel_class)
                 except OSError:assert fail and not records
-                else:assert not fail and records==[{'action':'accel ABI preflight','info':{'abi_version':1}}]
+                else:assert not fail and records==[{'action':'accel ABI preflight','info':{'abi_version':2}}]
             cases+=1
         (node/'device').unlink()
         with patch.object(n1x_dla,'Device') as opened:

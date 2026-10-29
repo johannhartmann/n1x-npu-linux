@@ -7,7 +7,4 @@ if [[ ! -x "$demo_python" ]]; then
   echo "Missing vision environment; see demo/vision.md." >&2
   exit 1
 fi
-if [[ $EUID -eq 0 || ${1:-} == --help || ${1:-} == -h ]]; then
-  exec "$demo_python" "$repo_dir/demo/vision.py" classify "$@"
-fi
-exec pkexec --keep-cwd "$demo_python" "$repo_dir/demo/vision.py" classify "$@"
+exec "$demo_python" "$repo_dir/demo/vision.py" classify "$@"

@@ -52,7 +52,8 @@ def main():
         record(args.output_dir/'attempt.json', dict(started_ns=started, model_sha256=model.sha256,
                inputs={name: hashlib.sha256(value).hexdigest() for name, value in inputs.items()}))
         try:
-            job_id = device.submit(image, ranges)
+            writable = [(tensor.offset, tensor.bytes) for tensor in [*model.inputs, *model.outputs]]
+            job_id = device.submit(image, ranges, writable)
             record(args.output_dir/'submitted.json', dict(job_id=job_id))
             outputs = []
             for index, tensor in enumerate(model.outputs):

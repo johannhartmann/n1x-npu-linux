@@ -39,11 +39,13 @@ fail:
 }
 int n1x_dla_submit(int fd, const void *image, unsigned int bytes,
                    const struct n1x_dla_accel_range *ranges, unsigned int count,
+                   const struct n1x_dla_accel_range *writable, unsigned int writable_count,
                    struct n1x_dla_accel_exec *result)
 {
-    if (!image || !ranges || !result) return -EINVAL;
+    if (!image || !ranges || !writable || !writable_count || !result) return -EINVAL;
     *result = (struct n1x_dla_accel_exec){.image_ptr = (uintptr_t)image,
-        .ranges_ptr = (uintptr_t)ranges, .image_bytes = bytes, .num_addresses = count};
+        .ranges_ptr = (uintptr_t)ranges, .writable_ranges_ptr = (uintptr_t)writable,
+        .image_bytes = bytes, .num_addresses = count, .num_writable_ranges = writable_count};
     if (ioctl(fd, DRM_IOCTL_N1X_DLA_EXEC, result) < 0) return -errno;
     if (!result->job_id || (!result->status && !result->completed)) return -EPROTO;
     return result->status;

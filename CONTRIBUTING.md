@@ -13,7 +13,7 @@ required:
 
 ```sh
 python3.12 -m venv venv
-venv/bin/python -m pip install -r requirements.txt
+venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 make check
 ```
 
@@ -22,6 +22,8 @@ receipts and published image hashes, then runs the same portable tests as CI.
 Use `make help` for other targets. To use an existing Python environment,
 set `PYTHON=/path/to/python`. Native compiler work additionally requires an
 ARM64 host and the [pinned inputs and dependencies](docs/setup.md).
+Regenerate a changed lock file with the exact `uv pip compile` command recorded
+in its header; review dependency changes before committing it.
 
 | Change | Relevant verification |
 | --- | --- |

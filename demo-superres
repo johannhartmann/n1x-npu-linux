@@ -6,9 +6,4 @@ if [[ ! -x "$demo_python" ]]; then
   echo "Missing demo environment; see demo/README.md." >&2
   exit 1
 fi
-if [[ $EUID -eq 0 || ${1:-} == --help || ${1:-} == -h ]]; then
-  exec "$demo_python" "$repo_dir/demo/superres.py" "$@"
-fi
-# The experimental kernel transport requires CAP_SYS_RAWIO. Keep privilege
-# elevation explicit and limited to this invocation, without system installs.
-exec pkexec "$demo_python" "$repo_dir/demo/superres.py" "$@"
+exec "$demo_python" "$repo_dir/demo/superres.py" "$@"

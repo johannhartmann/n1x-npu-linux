@@ -29,6 +29,8 @@ struct n1x_accel_job {
     u64 id;
     size_t allocated;
     u32 image_bytes;
+    struct n1x_dla_accel_range *writable;
+    u32 num_writable;
 };
 struct n1x_dla_accel {
     struct drm_device drm;
@@ -85,7 +87,7 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 {
     struct n1x_dla_accel *accel = to_accel(drm);
     struct n1x_dla_accel_exec *req = data;
-    struct n1x_dla_accel_range *ranges;
+    struct n1x_dla_accel_range *ranges, *writable;
     struct n1x_accel_job *job;
     struct n1x_dla_task_args args = {0};
     struct n1x_dla_job_ops ops;
@@ -96,19 +98,50 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 
     if (!capable(CAP_SYS_RAWIO))
         return -EPERM;
-    if (req->flags || req->reserved || req->job_id || req->status || req->completed ||
-        !req->image_ptr || !req->ranges_ptr || !req->image_bytes ||
+    if (req->flags || req->job_id || req->status || req->completed ||
+        !req->image_ptr || !req->ranges_ptr || !req->writable_ranges_ptr || !req->image_bytes ||
         req->image_bytes > N1X_DLA_MAX_IMAGE || !req->num_addresses ||
-        req->num_addresses > N1X_DLA_MAX_ADDRESSES)
+        req->num_addresses > N1X_DLA_MAX_ADDRESSES || !req->num_writable_ranges ||
+        req->num_writable_ranges > N1X_DLA_MAX_WRITABLE_RANGES)
         return -EINVAL;
     bytes = PAGE_ALIGN((size_t)req->image_bytes + N1X_JOB_PREFIX);
     ranges = memdup_user(u64_to_user_ptr(req->ranges_ptr),
                         req->num_addresses * sizeof(*ranges));
     if (IS_ERR(ranges))
         return PTR_ERR(ranges);
+    writable = memdup_user(u64_to_user_ptr(req->writable_ranges_ptr),
+                           req->num_writable_ranges * sizeof(*writable));
+    if (IS_ERR(writable)) {
+        err = PTR_ERR(writable);
+        writable = NULL;
+        goto free_ranges;
+    }
     for (i = 0; i < req->num_addresses; i++) {
         if (!ranges[i].bytes || ranges[i].offset >= req->image_bytes ||
             ranges[i].bytes > req->image_bytes - ranges[i].offset) {
+            err = -EINVAL;
+            goto free_ranges;
+        }
+    }
+    for (i = 0; i < req->num_writable_ranges; i++) {
+        unsigned int j;
+        bool covered = false;
+        if (!writable[i].bytes || writable[i].offset >= req->image_bytes ||
+            writable[i].bytes > req->image_bytes - writable[i].offset) {
+            err = -EINVAL;
+            goto free_ranges;
+        }
+        for (j = 0; j < req->num_addresses; j++) {
+            u64 delta;
+            if (ranges[j].offset > writable[i].offset)
+                continue;
+            delta = writable[i].offset - ranges[j].offset;
+            if (delta < ranges[j].bytes && writable[i].bytes <= ranges[j].bytes - delta) {
+                covered = true;
+                break;
+            }
+        }
+        if (!covered) {
             err = -EINVAL;
             goto free_ranges;
         }
@@ -138,6 +171,8 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
     }
     job->allocated = bytes;
     job->image_bytes = req->image_bytes;
+    job->writable = writable;
+    job->num_writable = req->num_writable_ranges;
     job->task.buffer = dma_alloc_coherent(drm->dev, bytes, &job->task.dma, GFP_KERNEL);
     if (!job->task.buffer) {
         err = -ENOMEM;
@@ -182,6 +217,7 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
     list_add_tail(&job->link, &accel->jobs);
     accel->retained += bytes;
     accel->count++;
+    writable = NULL;
     req->job_id = job->id;
     req->status = job->task.error = err;
     req->completed = !err && job->task.verified;
@@ -195,6 +231,7 @@ free_job:
     mutex_unlock(&accel->lock);
     kfree(job);
 free_ranges:
+    kfree(writable);
     kfree(addresses);
     kfree(ranges);
     return err;
@@ -289,8 +326,23 @@ static int reexec_ioctl(struct drm_device *drm, void *data, struct drm_file *fil
         goto unlock;
     }
     for (i = 0; i < req->num_patches; i++) {
+        bool writable = false;
         if (patches[i].offset >= job->image_bytes || patches[i].bytes > job->image_bytes - patches[i].offset) {
             err = -EINVAL;
+            goto unlock;
+        }
+        for (j = 0; j < job->num_writable; j++) {
+            u64 delta;
+            if (job->writable[j].offset > patches[i].offset)
+                continue;
+            delta = patches[i].offset - job->writable[j].offset;
+            if (delta < job->writable[j].bytes && patches[i].bytes <= job->writable[j].bytes - delta) {
+                writable = true;
+                break;
+            }
+        }
+        if (!writable) {
+            err = -EPERM;
             goto unlock;
         }
         for (j = 0; j < i; j++)
@@ -353,6 +405,7 @@ int n1x_dla_accel_stop(struct n1x_dla_accel *accel, int (*stop)(struct device *)
             list_del(&job->link);
             dma_free_coherent(accel->drm.dev, job->allocated,
                               job->task.buffer, job->task.dma);
+            kfree(job->writable);
             kfree(job);
         }
         accel->retained = 0;
@@ -363,9 +416,15 @@ int n1x_dla_accel_stop(struct n1x_dla_accel *accel, int (*stop)(struct device *)
     return err;
 }
 /* No GEM mmap: all device-visible bytes are immutable after EXEC's snapshot. */
+static int n1x_accel_open(struct inode *inode, struct file *file)
+{
+    if (!capable(CAP_SYS_RAWIO))
+        return -EPERM;
+    return accel_open(inode, file);
+}
 static const struct file_operations accel_fops = {
     .fop_flags = FOP_UNSIGNED_OFFSET,
-    .owner = THIS_MODULE, .open = accel_open, .release = drm_release,
+    .owner = THIS_MODULE, .open = n1x_accel_open, .release = drm_release,
     .unlocked_ioctl = drm_ioctl, .compat_ioctl = drm_compat_ioctl,
     .llseek = noop_llseek,
 };

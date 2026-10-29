@@ -68,9 +68,11 @@ def main():
                 def info(self):
                     return dict(retain_limit=1 if mode == 'budget' else 64 << 20,
                                 retained_bytes=0, max_jobs=128, retained_jobs=0)
-                def submit(self, image, ranges):
+                def submit(self, image, ranges, writable):
                     calls.append('submit')
                     assert ranges == model.ranges
+                    assert writable == [(tensor.offset, tensor.bytes)
+                                        for tensor in [*model.inputs, *model.outputs]]
                     images.append(bytes(image))
                     if mode == 'submit_timeout':
                         error = OSError(errno.ETIMEDOUT, 'modeled submission failure')

@@ -18,8 +18,9 @@ class Info(c.Structure):
 
 class Result(c.Structure):
     _fields_ = [('image_ptr', c.c_uint64), ('ranges_ptr', c.c_uint64),
+                ('writable_ranges_ptr', c.c_uint64),
                 ('image_bytes', c.c_uint32), ('num_addresses', c.c_uint32),
-                ('flags', c.c_uint32), ('reserved', c.c_uint32),
+                ('num_writable_ranges', c.c_uint32), ('flags', c.c_uint32),
                 ('job_id', c.c_uint64), ('status', c.c_int32),
                 ('completed', c.c_uint32)]
 
@@ -39,6 +40,7 @@ class Device:
         lib.n1x_dla_open.argtypes = [c.c_char_p]
         lib.n1x_dla_info.argtypes = [c.c_int, c.POINTER(Info)]
         lib.n1x_dla_submit.argtypes = [c.c_int, c.c_void_p, c.c_uint,
+                                     c.POINTER(Range), c.c_uint,
                                      c.POINTER(Range), c.c_uint, c.POINTER(Result)]
         lib.n1x_dla_read.argtypes = [c.c_int, c.c_ulonglong, c.c_ulonglong,
                                    c.c_void_p, c.c_ulonglong]
@@ -51,17 +53,24 @@ class Device:
         checked(self.lib.n1x_dla_info(self.fd, c.byref(result)))
         return {name: getattr(result, name) for name, _ in Info._fields_}
 
-    def submit(self, image, ranges):
-        if not 0 < len(image) <= 32 << 20 or not 0 < len(ranges) <= 512:
+    def submit(self, image, ranges, writable):
+        if (not 0 < len(image) <= 32 << 20 or not 0 < len(ranges) <= 512 or
+                not 0 < len(writable) <= 64):
             raise ValueError('image/address count outside ABI limits')
-        for offset, size in ranges:
+        for offset, size in [*ranges, *writable]:
             if offset < 0 or size <= 0 or offset > len(image) or size > len(image) - offset:
                 raise ValueError('address range outside image')
+        for offset, size in writable:
+            if not any(offset >= base and size <= extent - (offset - base)
+                       for base, extent in ranges if offset >= base):
+                raise ValueError('writable range is not covered by an address range')
         backing = c.create_string_buffer(bytes(image), len(image))
         addresses = (Range * len(ranges))(*(Range(*item) for item in ranges))
+        writable_ranges = (Range * len(writable))(*(Range(*item) for item in writable))
         result = Result()
         checked(self.lib.n1x_dla_submit(self.fd, backing, len(image), addresses,
-                                       len(ranges), c.byref(result)), result.job_id)
+                                       len(ranges), writable_ranges, len(writable),
+                                       c.byref(result)), result.job_id)
         return result.job_id
 
     def read(self, job_id, offset, size):

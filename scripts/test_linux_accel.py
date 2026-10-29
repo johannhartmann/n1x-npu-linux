@@ -101,6 +101,7 @@ static struct device device;
 static struct drm_file owner,other;
 static struct n1x_dla_accel accel;
 static struct n1x_dla_accel_range ranges[512];
+static struct n1x_dla_accel_range writable[64];
 static struct n1x_dla_accel_exec req;
 static int cases;
 static int stop_error,stops;
@@ -137,8 +138,10 @@ static int backend(struct device *d,struct n1x_dla_job *task,const struct n1x_dl
 }
 static void reset_request(void)
 {req=(struct n1x_dla_accel_exec){.image_ptr=(uintptr_t)image,.ranges_ptr=(uintptr_t)ranges,
- .image_bytes=image_bytes,.num_addresses=2};
+ .writable_ranges_ptr=(uintptr_t)writable,.image_bytes=image_bytes,.num_addresses=2,
+ .num_writable_ranges=1};
  ranges[0]=(struct n1x_dla_accel_range){0,128};ranges[1]=(struct n1x_dla_accel_range){128,128};
+ writable[0]=(struct n1x_dla_accel_range){8,16};
  privileged=true;copyin_fail=copyout_fail=memdup_fail=dma_fail=false;
  heap_fail_at=-1;heap_calls=0;backend_error=0;backend_attempt=true;dma_address=0x100000000ULL;}
 static void check(int expected)
@@ -161,6 +164,7 @@ int main(int argc,char **argv)
   assert(n>0&&(size_t)n<=sizeof(ranges)&&n%sizeof(ranges[0])==0&&!fseek(in,0,SEEK_SET));
   req.num_addresses=n/sizeof(ranges[0]);
   assert(fread(ranges,1,n,in)==(size_t)n&&fgetc(in)==EOF&&!fclose(in));
+  writable[0]=ranges[0];
   check(-ECANCELED);return 0;
  }
  assert(argc==1);
@@ -169,20 +173,25 @@ int main(int argc,char **argv)
  assert(info_ioctl(&accel.drm,&info,&owner)==-EPERM);
  struct n1x_dla_accel_read read={0};
  assert(read_ioctl(&accel.drm,&read,&owner)==-EPERM);
- for(int mode=0;mode<10;mode++){
+ for(int mode=0;mode<11;mode++){
   reset_request();
-  switch(mode){case 0:req.flags=1;break;case 1:req.reserved=1;break;case 2:req.job_id=1;break;
-  case 3:req.status=-EIO;break;case 4:req.completed=1;break;case 5:req.image_ptr=0;break;
-  case 6:req.ranges_ptr=0;break;case 7:req.image_bytes=0;break;
-  case 8:req.image_bytes=N1X_DLA_MAX_IMAGE+1;break;case 9:req.num_addresses=513;break;}
+  switch(mode){case 0:req.flags=1;break;case 1:req.job_id=1;break;
+  case 2:req.status=-EIO;break;case 3:req.completed=1;break;case 4:req.image_ptr=0;break;
+  case 5:req.ranges_ptr=0;break;case 6:req.writable_ranges_ptr=0;break;case 7:req.image_bytes=0;break;
+  case 8:req.image_bytes=N1X_DLA_MAX_IMAGE+1;break;case 9:req.num_addresses=513;break;
+  case 10:req.num_writable_ranges=65;break;}
   /* Invalid caller output fields are unchanged on rejected ioctls. */
   assert(exec_ioctl(&accel.drm,&req,&owner)==-EINVAL);cases++;
  }
  reset_request();req.num_addresses=0;check(-EINVAL);
+ reset_request();req.num_writable_ranges=0;check(-EINVAL);
  reset_request();ranges[1].offset=UINT64_MAX;check(-EINVAL);
  reset_request();ranges[1].bytes=UINT64_MAX;check(-EINVAL);
  reset_request();ranges[1].offset=image_bytes;check(-EINVAL);
  reset_request();ranges[1].bytes=0;check(-EINVAL);
+ reset_request();writable[0].offset=image_bytes;check(-EINVAL);
+ reset_request();writable[0].bytes=UINT64_MAX;check(-EINVAL);
+ reset_request();writable[0]=(struct n1x_dla_accel_range){512,1};check(-EINVAL);
  reset_request();memdup_fail=true;check(-EFAULT);
  reset_request();heap_fail_at=0;check(-ENOMEM);
  reset_request();heap_fail_at=1;check(-ENOMEM);
@@ -212,6 +221,7 @@ int main(int argc,char **argv)
  assert(reexec_ioctl(&accel.drm,&again,&other)==-ENOENT);
  again.reserved=1;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EINVAL);again.reserved=0;
  patch.offset=image_bytes;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EINVAL);patch.offset=13;
+ patch.offset=100;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EPERM);patch.offset=13;
  memdup_fail=true;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EFAULT);memdup_fail=false;
  u64 previous=1;
  int reuse_allocs=allocations,reuse_frees=frees;
@@ -235,7 +245,7 @@ int main(int argc,char **argv)
  again=(struct n1x_dla_accel_reexec){.job_id=req.job_id,.patches_ptr=(uintptr_t)&patch,.num_patches=1};
  assert(reexec_ioctl(&accel.drm,&again,&owner)==-EIO);
  assert(!info_ioctl(&accel.drm,&info,&owner)&&info.retained_jobs==2&&info.retained_bytes==24576);
- assert(info.abi_version==1&&info.capabilities==15&&info.reserved==0);
+ assert(info.abi_version==2&&info.capabilities==15&&info.reserved==0);
  /* An uncertain stop must retain every job and block all future execution. */
  stop_error=-ETIMEDOUT;int before_stop=frees;
  assert(n1x_dla_accel_stop(&accel,stopped_hardware)==-ETIMEDOUT && stops==1);

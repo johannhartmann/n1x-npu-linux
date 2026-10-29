@@ -1,0 +1,2 @@
+# Restrict the experimental RAWIO device before any userspace broker opens it.
+SUBSYSTEM=="accel", KERNEL=="accel[0-9]*", KERNELS=="NVDA200A:00", DRIVERS=="n1x-npu-bootstrap", OWNER:="root", GROUP:="root", MODE:="0600"

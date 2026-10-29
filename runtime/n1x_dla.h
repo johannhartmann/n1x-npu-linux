@@ -13,6 +13,7 @@ int n1x_dla_open(const char *path);
 int n1x_dla_info(int fd, struct n1x_dla_accel_info *info);
 int n1x_dla_submit(int fd, const void *image, unsigned int bytes,
                    const struct n1x_dla_accel_range *ranges, unsigned int count,
+                   const struct n1x_dla_accel_range *writable, unsigned int writable_count,
                    struct n1x_dla_accel_exec *result);
 int n1x_dla_read(int fd, unsigned long long job_id, unsigned long long offset,
                  void *output, unsigned long long bytes);

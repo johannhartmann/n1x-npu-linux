@@ -276,6 +276,9 @@ cudlaStatus cudlaDrvSubmitTask(cudlaDevHandle handle,const cudlaTask *tasks,uint
         }
         if(copy_error) return d->last=cudlaErrorCuda;
         n1x_dla_accel_exec result{};
+        std::vector<n1x_dla_accel_range> writable;
+        for(const auto *tensors:{&m->model.inputs,&m->model.outputs})
+            for(const auto& tensor:*tensors) writable.push_back({tensor.offset,tensor.desc.size});
         if(reuse) {
             std::vector<n1x_dla_accel_patch> patches;
             for(const auto *tensors:{&m->model.inputs,&m->model.outputs})
@@ -283,7 +286,8 @@ cudlaStatus cudlaDrvSubmitTask(cudlaDevHandle handle,const cudlaTask *tasks,uint
                     patches.push_back({tensor.offset,tensor.desc.size,reinterpret_cast<uintptr_t>(image+tensor.offset)});
             err=n1x_dla_resubmit(d->fd,m->retained_job,patches.data(),patches.size(),&result);
         } else {
-            err=n1x_dla_submit(d->fd,image,m->model.image.size(),m->model.ranges.data(),m->model.ranges.size(),&result);
+            err=n1x_dla_submit(d->fd,image,m->model.image.size(),m->model.ranges.data(),m->model.ranges.size(),
+                               writable.data(),writable.size(),&result);
         }
         if(err) return d->last=kernel_error(err); // Never retry an uncertain EXEC.
         if(info.capabilities&N1X_DLA_CAP_REEXEC_IO) m->retained_job=result.job_id;

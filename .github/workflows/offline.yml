@@ -19,6 +19,6 @@ jobs:
       - name: Prepare analysis environment
         run: |
           python -m venv venv
-          venv/bin/python -m pip install -r requirements.txt
+          venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
       - name: Check repository and portable protocol/lifetime paths
         run: make check

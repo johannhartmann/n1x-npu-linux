@@ -8,7 +8,15 @@ there is no stable release or production support commitment.
 
 The transport requires `CAP_SYS_RAWIO` and accepts **trusted models only**.
 Metadata bounds checks do not sandbox the embedded DLA instruction stream.
-Do not expose the device or privileged demo launcher to untrusted tenants.
+The public demos keep Python, image parsing, ONNX validation and output files
+unprivileged; only the installed root-owned broker holds RAWIO. Do not expose
+the device, broker protocol or administrative qualification tools to untrusted
+tenants.
+The accel node is root-only and the driver independently rejects opens and
+ioctls without `CAP_SYS_RAWIO`. ABI 2 also limits completed-job patches to the
+writable ranges registered at initial submission; the standard backend
+registers only tensor inputs and outputs. A RAWIO caller is still trusted to
+choose those ranges and to supply a safe instruction stream.
 The setup tools acquire vendor inputs by pinned hashes; their distribution
 terms remain separate from this repository's source licenses.
 

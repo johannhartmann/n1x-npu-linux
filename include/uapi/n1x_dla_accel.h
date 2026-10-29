@@ -8,10 +8,11 @@
 #include <libdrm/drm.h>
 #endif
 /* Experimental ABI. No compatibility with NVIDIA cuDLA is implied. */
-#define N1X_DLA_ABI_VERSION 1
+#define N1X_DLA_ABI_VERSION 2
 #define N1X_DLA_MAX_IMAGE (32U << 20)
 #define N1X_DLA_RETAIN_LIMIT (64U << 20)
 #define N1X_DLA_MAX_ADDRESSES 512U
+#define N1X_DLA_MAX_WRITABLE_RANGES 64U
 #define N1X_DLA_MAX_JOBS 128U
 #define N1X_DLA_CAP_RAWIO_REQUIRED 1U
 #define N1X_DLA_CAP_RETAIN_UNTIL_REBOOT 2U
@@ -32,9 +33,8 @@ struct n1x_dla_accel_info {
  * These ranges do not validate the instruction stream inside that image. */
 struct n1x_dla_accel_range { __u64 offset, bytes; };
 struct n1x_dla_accel_exec {
-    __u64 image_ptr, ranges_ptr;
-    __u32 image_bytes, num_addresses;
-    __u32 flags, reserved;
+    __u64 image_ptr, ranges_ptr, writable_ranges_ptr;
+    __u32 image_bytes, num_addresses, num_writable_ranges, flags;
     /* Outputs: zero job_id means no submission. An attempted job is retained,
      * including after failure; status is its negative errno or zero.
      * Never retry EXEC automatically after a syscall error (including EFAULT).
@@ -48,7 +48,9 @@ struct n1x_dla_accel_read {
     __u64 reserved;
 };
 /* Opt-in reuse of a successfully completed, non-preemptible trusted task.
- * Caller restricts patches to model I/O; constants/instructions stay resident.
+ * The kernel restricts patches to caller-registered writable ranges, intended
+ * for model I/O. The CAP_SYS_RAWIO caller remains responsible for selecting
+ * those ranges; the standard backend registers only tensor inputs/outputs.
  * Retains the allocation, including after error. Replaces the prior result ID.
  */
 struct n1x_dla_accel_patch { __u64 offset, bytes, data_ptr; };

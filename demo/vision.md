@@ -63,11 +63,13 @@ Then, from the repository root:
 
 ```sh
 uv venv --python 3.12 sources/vision-venv
-uv pip install --python sources/vision-venv/bin/python -r requirements-vision.txt
+uv pip install --python sources/vision-venv/bin/python --require-hashes \
+  --only-binary :all: -r requirements-vision.lock
 sources/vision-venv/bin/python scripts/prepare_vision.py --fetch
 sources/vision-venv/bin/python scripts/test_vision_examples.py
 venv/bin/python scripts/build_vision_models.py
 make runtime cudla
+pkexec /usr/bin/python3 "$PWD/scripts/install_cudla_broker.py" --models all
 ```
 
 PyTorch is used only for safe `weights_only=True` checkpoint acquisition and
@@ -112,9 +114,11 @@ documented [healthy manual shutdown](../docs/shutdown-reload.md#build-and-qualif
 then perform the [fresh startup](../docs/setup.md) before switching examples.
 Batch several images in one invocation to avoid restarting between images.
 
-The launchers request RAWIO elevation through Polkit and retain the caller's
-working directory. Output directories must be new. The power profile is only
-recorded, never changed. No model or runtime file is installed system-wide.
+The launchers and all image/ONNX processing remain unprivileged. Polkit starts
+only the installed root-owned broker, which uses fixed installed model IDs and
+a binary tensor protocol. Output directories must be new. The power profile is
+only recorded, never changed. Re-run the installer after intentionally rebuilding
+a pinned model or runtime; it refuses any model whose committed hash differs.
 
 Pass several image paths in one invocation to reuse the same loaded models:
 

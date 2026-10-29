@@ -33,7 +33,8 @@ driver at runtime. Install matching kernel headers separately.
 git clone https://github.com/johannhartmann/n1x-npu-linux.git
 cd n1x-npu-linux
 uv venv --python 3.12 venv
-uv pip install --python venv/bin/python -r requirements.txt -r requirements-probe.txt
+uv pip install --python venv/bin/python --require-hashes --only-binary :all: \
+  -r requirements.lock -r requirements-probe.lock
 mkdir -p sources results
 make check
 ```
@@ -47,7 +48,8 @@ The optional image/reference environment is separate:
 
 ```sh
 uv venv --python 3.12 sources/superres-venv
-uv pip install --python sources/superres-venv/bin/python -r requirements-superres.txt
+uv pip install --python sources/superres-venv/bin/python --require-hashes \
+  --only-binary :all: -r requirements-superres.lock
 ```
 
 ## 3. Acquire the pinned inputs
@@ -168,6 +170,20 @@ make module
 These `make` targets do not load the module or boot firmware. Ensure the
 installed kernel/header pair is the exact audited release. The ReLU template
 and board capture are installed by the startup qualifier after hash checks.
+
+Install the small privileged runtime and the checked super-resolution model as
+root-owned files. Review the listed artifacts before authenticating:
+
+```sh
+pkexec /usr/bin/python3 "$PWD/scripts/install_cudla_broker.py" --models superres
+```
+
+The installer does not touch the running device. It installs the broker under
+`/usr/libexec`, pinned libraries/models under `/usr/lib/n1x-npu-linux`, and a
+`0600 root:root` udev rule for the next accel-node creation. The desktop demos,
+image decoders, Python environments, ONNX Runtime and output handling remain
+unprivileged. The broker drops to UID/GID 65534 with only `CAP_SYS_RAWIO` after
+opening its fixed root-owned artifacts and device handles.
 
 ## 6. Explicit hardware qualification after reboot
 

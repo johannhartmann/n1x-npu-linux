@@ -44,8 +44,10 @@ From the repository root, create the image-processing environment:
 
 ```sh
 uv venv --python 3.12 sources/superres-venv
-uv pip install --python sources/superres-venv/bin/python -r requirements-superres.txt
+uv pip install --python sources/superres-venv/bin/python --require-hashes \
+  --only-binary :all: -r requirements-superres.lock
 make module cudla
+pkexec /usr/bin/python3 "$PWD/scripts/install_cudla_broker.py" --models superres
 ```
 
 The required source model is `sources/demo-research/super-resolution-10.onnx`,
@@ -65,7 +67,9 @@ After successful manual firmware startup and driver qualification:
 
 The current platform power profile is recorded and left unchanged.
 The output directory must be new. Input dimensions must both be at least 64.
-The launcher uses `pkexec` because the experimental driver requires RAWIO.
+The launcher itself stays unprivileged. It authenticates only the installed,
+root-owned broker, which holds RAWIO and accepts packed tensor bytes for the
+pinned model; image decoding, CPU validation and file output never run as root.
 The output includes `upscaled.png`, raw DLA output planes, input and bicubic
 comparisons, numerical metrics and an HTML report. Learned inference has no
 CPU fallback. CPU preprocessing, chroma interpolation and pixel rearrangement

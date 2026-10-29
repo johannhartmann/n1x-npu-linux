@@ -162,8 +162,10 @@ def main():
             def __enter__(self): return self
             def __exit__(self, *_): calls.append('close')
             def info(self): return dict(retain_limit=64 << 20, retained_bytes=0, max_jobs=128, retained_jobs=0)
-            def submit(self, image, ranges):
+            def submit(self, image, ranges, writable):
                 assert image == model.image and ranges == model.ranges
+                assert writable == [(tensor.offset, tensor.bytes)
+                                    for tensor in [*model.inputs, *model.outputs]]
                 calls.append('submit')
                 if fail:
                     error = OSError(errno.ETIMEDOUT, 'modeled failure')

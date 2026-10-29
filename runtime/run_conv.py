@@ -126,7 +126,8 @@ def main():
                    expected_sha256=hashlib.sha256(expected).hexdigest()))
             job_id = 0
             try:
-                job_id = device.submit(image, ranges)
+                writable = [(tensor.offset, tensor.bytes) for tensor in [*model.inputs, *model.outputs]]
+                job_id = device.submit(image, ranges, writable)
                 record(prefix.with_suffix('.submitted.json'), dict(job_id=job_id))
                 output = device.read(job_id, model.outputs[0].offset, BYTES)
                 unchanged = device.read(job_id, source.offset, BYTES) == source_bytes

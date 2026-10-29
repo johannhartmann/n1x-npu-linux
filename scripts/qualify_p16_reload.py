@@ -41,7 +41,7 @@ def stop_and_unload(record):
         if info['retained_jobs'] or info['retained_bytes']:
             raise RuntimeError('DMA accounting not empty after stop')
         try:
-            dev.submit(bytes(4096), [(0, 1)])
+            dev.submit(bytes(4096), [(0, 1)], [(0, 1)])
         except OSError as exc:
             if exc.errno != errno.ENODEV:
                 raise

@@ -36,13 +36,26 @@ static void event(const char *name) {
 }
 int n1x_dla_open(const char *p) {(void)p;event("open");return fail("open")?-EACCES:open("/dev/null",O_RDWR);}
 int n1x_dla_info(int fd,struct n1x_dla_accel_info *i) {
- assert(fd>=0);event("info");memset(i,0,sizeof(*i));i->abi_version=1;
+ assert(fd>=0);event("info");memset(i,0,sizeof(*i));i->abi_version=N1X_DLA_ABI_VERSION;
  i->capabilities=getenv("TEST_REUSE")?N1X_DLA_CAP_REEXEC_IO:0;
  i->retain_limit=fail("budget")?1:64U<<20;i->max_jobs=128;return 0;
 }
 int n1x_dla_submit(int fd,const void *image,unsigned int bytes,
- const struct n1x_dla_accel_range *ranges,unsigned int count,struct n1x_dla_accel_exec *r) {
+ const struct n1x_dla_accel_range *ranges,unsigned int count,
+ const struct n1x_dla_accel_range *writable,unsigned int writable_count,
+ struct n1x_dla_accel_exec *r) {
  assert(fd>=0);event("EXEC");
+ assert(writable&&writable_count==2);
+ for(unsigned int i=0;i<writable_count;i++) {
+  int covered=0;
+  assert(writable[i].offset<bytes&&writable[i].bytes<=bytes-writable[i].offset);
+  for(unsigned int j=0;j<count;j++)
+   if(writable[i].offset>=ranges[j].offset) {
+    unsigned long long delta=writable[i].offset-ranges[j].offset;
+    if(delta<ranges[j].bytes && writable[i].bytes<=ranges[j].bytes-delta) covered=1;
+   }
+  assert(covered);
+ }
  free(saved_image);saved_image=malloc(bytes);assert(saved_image);memcpy(saved_image,image,bytes);saved_bytes=bytes;saved_id=7;
  FILE *f=fopen(getenv("TEST_IMAGE"),"wb");assert(f);assert(fwrite(image,1,bytes,f)==bytes);assert(!fclose(f));
  f=fopen(getenv("TEST_RANGES"),"wb");assert(f);assert(fwrite(ranges,sizeof(*ranges),count,f)==count);assert(!fclose(f));

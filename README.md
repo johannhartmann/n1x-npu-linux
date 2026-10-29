@@ -75,7 +75,7 @@ git clone https://github.com/johannhartmann/n1x-npu-linux.git
 cd n1x-npu-linux
 make test                      # C compiler + make only
 python3.12 -m venv venv
-venv/bin/python -m pip install -r requirements.txt
+venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 make check                     # consistency + portable protocol/lifetime tests
 ```
 
@@ -86,7 +86,9 @@ are separate and preserve the selected power profile.
 ## Architecture
 
 ```text
-cuDLA application + CUDA buffers
+unprivileged image/validation application
+  → fixed binary protocol → root-owned capability-confined broker
+  → CUDA buffers
   → NVIDIA's original libcudla.so.1
   → this project's libnvcudla.so backend
   → blocking CUDA staging + RAWIO-only Linux accel transport

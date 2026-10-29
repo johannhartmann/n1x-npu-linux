@@ -68,7 +68,7 @@ def main():
                         dict(input_sha256=input_hash, started_ns=started, submitted=False))
             job_id = 0
             try:
-                job_id = device.submit(image, ranges)
+                job_id = device.submit(image, ranges, [(0, 3136), (4096, 3136)])
                 save_record(args.output_dir / f'{index:03d}-submitted.json', dict(job_id=job_id))
                 output = device.read(job_id, 4096, len(expected))
                 unchanged = device.read(job_id, 0, 3136) == image[:3136]
