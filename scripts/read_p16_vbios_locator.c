@@ -64,7 +64,7 @@ int main(int argc, char **argv)
         fputs("Usage: read_p16_vbios_locator [--capture NEW_FILE]\n", stderr);
         return 1;
     }
-    if (uname(&kernel) || strcmp(kernel.release, "7.2.8-23-omarchy-p16-asus-npu2") ||
+    if (uname(&kernel) || strcmp(kernel.release, "7.2.8-23-rtx-spark-npu") ||
         !match("/sys/class/dmi/id/sys_vendor", "ASUS") ||
         !match("/sys/class/dmi/id/product_name", "ProArt P16 H7607BA") ||
         !match("/sys/class/dmi/id/bios_version", "H7607BA.300") ||

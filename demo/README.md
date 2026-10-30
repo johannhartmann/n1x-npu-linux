@@ -33,7 +33,7 @@ reboot and qualification required to replace the old pinned module.
 
 ## Local prerequisites and execution
 
-Use the audited P16/BIOS/npu2 kernel and acquire the pinned vendor libraries,
+Use the qualified P16/BIOS NPU kernel and acquire the pinned vendor libraries,
 firmware and compiler inputs described in the repository documentation.
 Follow the [setup guide](../docs/setup.md) to acquire pinned inputs and run
 `venv/bin/python scripts/build_models.py --superres` in a fresh workspace.

@@ -38,10 +38,20 @@ The public image demos do not elevate their Python environments. Their
 unprivileged clients authenticate `/usr/libexec/n1x-dla-broker`, compare each
 installed model with the reviewed local artifact, and exchange only packed
 tensor bytes over a bounded binary protocol. The root-owned broker opens fixed
-root-owned models, libraries and `/dev/accel/accel0`, then drops to UID/GID
-65534 with only `CAP_SYS_RAWIO`, `NO_NEW_PRIVS` and core dumps disabled. The
+root-owned models, libraries and `/dev/accel/accel0`, then drops to the
+dedicated `n1x-dla` system UID/GID with only `CAP_SYS_RAWIO`, `NO_NEW_PRIVS`
+and core dumps disabled. The
 device node is `0600 root:root`, and the driver also rejects an unprivileged
 open. See [setup](setup.md#5-board-input-and-module-build).
+
+`setuid`/`setgid` clear Linux's parent-death signal, so the broker explicitly
+re-arms and verifies `PDEATHSIG` after the credential change and checks that the
+original parent still exists. Protocol reads and writes have a 60-second
+inactivity deadline. Model IDs must be unique; aggregate raw model and CUDA
+tensor storage are bounded. The broker queries the backend's exact materialized
+image sizes and the kernel's live counters before dropping privilege, and
+refuses the entire session before its first submit unless all selected models
+fit the remaining 64-MiB/128-job retention budget.
 
 Firmware startup remains a separate, explicit administrative operation. The
 backend never loads a module, starts firmware or retries a failed submission
@@ -85,12 +95,21 @@ normal demos use the installed broker's fixed device path.
   unsupported features; it does not create fake NvSci objects.
 
 The backend module registry is capped at 64 models and 256 MiB of materialized
-images. The broker accepts at most 64 installed model IDs, verifies root
-ownership and write protection, and caps each model and tensor. Descriptors and
+images. The broker accepts at most 64 distinct installed model IDs, verifies root
+ownership and write protection, and caps each model, tensor and their aggregate
+storage. Descriptors and
 embedded instruction streams still require trusted input and the kernel's
 RAWIO privilege; bounds-checked metadata is not an instruction sandbox. General
 model compilation and TensorRT engine compatibility remain separate from
 standalone N1X loadable execution through cuDLA.
+
+Completed allocations are reused for changing inputs while a broker is alive,
+but remain kernel-owned after that broker exits. The observed completion fence
+and firmware idle message do not establish whole-device DMA quiescence, so the
+backend deliberately has no per-job release operation. A later independent
+session must fit beside those retained allocations; otherwise its broker fails
+the startup preflight without submitting anything. Reclamation remains the
+checked administrative shutdown/reload sequence, not an automatic demo action.
 
 ## Evidence
 
@@ -138,7 +157,7 @@ all eight CUDA input allocations remained unchanged:
 | FP16 1x1 convolution with channel bias | 3 | 3 exact matches |
 | FP16 convolution followed by ReLU | 3 | 3 exact matches |
 
-Kernel: `7.2.8-23-omarchy-p16-asus-npu2`; module srcversion
+Kernel: `7.2.8-23-rtx-spark-npu`; module srcversion
 `A867C2D035B190C79E9E143`; boot ID
 `81aeb5b0-5475-4a34-99db-a12c0195ba54`; performance profile.
 The kernel reported zero retained accel jobs before the run and exactly eight
@@ -160,7 +179,7 @@ above remain in force.
 
 ### Reproduction
 
-Use a fresh boot of `7.2.8-23-omarchy-p16-asus-npu2` with no bootstrap loaded.
+Use a fresh boot of `7.2.8-23-rtx-spark-npu` with no bootstrap loaded.
 The module is manually loaded from the build tree; no boot artifact changes
 are required for this path. An earlier module without controlled shutdown,
 or an instance whose stop has failed, requires a reboot before replacement.

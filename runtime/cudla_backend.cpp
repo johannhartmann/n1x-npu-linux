@@ -4,6 +4,7 @@
 // No CPU inference, implicit firmware startup, retry or fake NvSci objects.
 #include "cudla_model.hpp"
 #include "n1x_dla.h"
+#include "n1x_cudla_private.h"
 #include <cudlaExternalEtbl.hpp>
 #include <cuda.h>
 #include <cerrno>
@@ -103,6 +104,20 @@ struct HostImage {
 }
 
 extern "C" {
+int n1x_cudla_materialized_image_size(const void *loadable,size_t loadable_bytes,uint64_t *image_bytes) {
+    if(!loadable || !loadable_bytes || !image_bytes) return -EINVAL;
+    try {
+        n1x::Model model(static_cast<const uint8_t*>(loadable),loadable_bytes);
+        *image_bytes=model.image.size();
+        return 0;
+    } catch(const std::invalid_argument&) {
+        return -EINVAL;
+    } catch(const std::bad_alloc&) {
+        return -ENOMEM;
+    } catch(...) {
+        return -EIO;
+    }
+}
 cudlaStatus cudlaDrvGetVersion(uint64_t *version) {
     if(!version) return cudlaErrorInvalidParam;
     *version=1005000; return cudlaSuccess;

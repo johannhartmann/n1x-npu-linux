@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run a bounded P16 startup prefix, with durable logs and no retries.
 
-Explicit manual experiment on npu2, not an autostart service. Starts only
+Explicit manual experiment on the qualified NPU kernel, not an autostart service. Starts only
 with unbound endpoints and no bootstrap loaded. Leaves attempted hardware
 state/module/DMA retained until checked explicit shutdown. Uncertain failures
 remain retained until reboot.
@@ -19,7 +19,7 @@ from npu_trigger import trigger, TRIGGERS
 from select_npu_dma_domains import plan, apply
 
 ROOT = Path(__file__).resolve().parents[1]
-KERNEL = '7.2.8-23-omarchy-p16-asus-npu2'
+KERNEL = '7.2.8-23-rtx-spark-npu'
 ROM_SHA256 = 'a82af14d15effa98a75b19d9135421c7c27f20cca7398d0b0a7ba87547b8b64c'
 RELU_SHA256 = 'b5792ecfbdc5d190fec9cdf7ecc17c7ba6919a42d5c1528e2acbcc2fc47f997c'
 PHASES = (
@@ -92,7 +92,7 @@ def main():
     if args.enable_accel and args.after_hfrp:
         parser.error('--enable-accel must be selected at fresh module load')
     if os.geteuid() or platform.release() != KERNEL:
-        parser.error('requires root on the audited npu2 kernel')
+        parser.error('requires root on the qualified NPU kernel')
     loaded = Path('/sys/module/n1x_npu_bootstrap')
     if loaded.exists() != args.after_hfrp:
         parser.error('fresh start requires no module; --after-hfrp requires the existing module')

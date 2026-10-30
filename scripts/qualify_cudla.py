@@ -76,7 +76,7 @@ def main():
     if args.prepare_only:
         print(f'Prepared {len(jobs)} jobs; no device access; {sum(g[0]["retained_bytes"] for g in groups)} retained bytes required')
         return
-    if os.geteuid()!=0 or platform.release()!=KERNEL:raise RuntimeError('requires root and audited npu2 kernel')
+    if os.geteuid()!=0 or platform.release()!=KERNEL:raise RuntimeError('requires root and qualified NPU kernel')
     profile=Path('/sys/firmware/acpi/platform_profile').read_text().strip()
     built=subprocess.check_output(['modinfo','-F','srcversion',str(ROOT/'driver/n1x_npu_bootstrap.ko')],text=True).strip()
     if Path('/sys/module/n1x_npu_bootstrap/srcversion').read_text().strip()!=built:raise RuntimeError('loaded module differs from reviewed build')

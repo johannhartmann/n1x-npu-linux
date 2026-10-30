@@ -37,8 +37,15 @@ with physical NPU convolutions, explicit CPU stages and independent numerical ch
 
 ## Supported platform
 
+`n1x_npu_bootstrap` is a Linux kernel module; it is not an Omarchy component.
+The module source and recovered RTX Spark protocol are kept in this repository.
+The co-installable `linux-rtx-spark-npu` build is only the currently qualified
+reference kernel because the P16 BIOS needs the scoped SROOT DMA-coherency
+quirk. Omarchy is the host distribution used for qualification, not part of the
+driver or package identity.
+
 Physical support is pinned to **ASUS ProArt P16 H7607BA**, BIOS **H7607BA.300**,
-and kernel **7.2.8-23-omarchy-p16-asus-npu2** with matching headers. These guards
+and kernel **7.2.8-23-rtx-spark-npu** with matching headers. These guards
 are enforced by the driver. Other N1X hardware and kernels need a separate port
 and qualification. Start with the related [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux)
 for workstation enablement; this repository supplies the NPU implementation and
@@ -59,6 +66,10 @@ This is a manually operated experimental driver. The transport requires
 `CAP_SYS_RAWIO` and trusted models; metadata checks do not sandbox embedded
 instructions. Healthy shutdown releases retained DMA. Uncertain firmware/DMA
 failures preserve allocations and lifetime references until reboot.
+Ordinary broker exit is not that shutdown boundary: successful allocations are
+reused within a session and remain retained afterward. A new session is
+preflighted against the remaining budget and fails before submission if the
+complete selected model set cannot fit.
 Automatic suspend/resume, failed-channel recovery, general ONNX/TensorRT model
 compilation, asynchronous scheduling and CUDA Graphs are unsupported.
 

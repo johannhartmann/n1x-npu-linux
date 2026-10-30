@@ -138,7 +138,7 @@ def main():
     args = parser.parse_args()
     if args.add_noise and args.example!='denoise': parser.error('--add-noise is for denoising only')
     if os.geteuid()==0: parser.error('run as an unprivileged desktop user; the installed broker isolates RAWIO')
-    if platform.release()!='7.2.8-23-omarchy-p16-asus-npu2': parser.error('requires the audited npu2 kernel')
+    if platform.release()!='7.2.8-23-rtx-spark-npu': parser.error('requires the qualified RTX Spark NPU kernel')
     manifest = json.loads((ROOT/'config/vision-models.json').read_text())
     for name,expected in manifest['prepared'].items():
         if sha(ROOT/'sources/vision'/name)!=expected: parser.error('prepared source mismatch: '+name)

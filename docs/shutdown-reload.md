@@ -2,7 +2,7 @@
 
 The controlled healthy shutdown passed **two physical unload/reload cycles**
 on the audited P16 using module `1ED6855E6645BEEF8DA3534` and kernel
-`7.2.8-23-omarchy-p16-asus-npu2`. Each startup passed the firmware/ReLU probes,
+`7.2.8-23-rtx-spark-npu`. Each startup passed the firmware/ReLU probes,
 eight baseline cuDLA jobs and eight changing-input reuse jobs. Both stops
 confirmed power-off, released all retained allocations and balanced lifetime
 references. Open clients blocked unload; closing them allowed ordinary removal,

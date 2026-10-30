@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build installed P16 external-driver versions for the isolated NPU test kernel.
+"""Build installed external-driver versions for a qualified RTX Spark NPU kernel.
 
 Copies /usr/src inputs and never installs modules or updates DKMS/boot state.
 """
@@ -19,8 +19,11 @@ def main():
     kernel, destination = args.kernel.resolve(), args.destination.absolute()
     manifest = json.loads((kernel/'npu-build-manifest.json').read_text())
     release = manifest['expected_release']
-    if manifest['stage'] != 'built' or release not in ('7.2.8-23-omarchy-p16-asus-npu1', '7.2.8-23-omarchy-p16-asus-npu2'):
-        parser.error('requires the completed isolated NPU test-kernel build')
+    if manifest['stage'] != 'built' or release not in (
+            '7.2.8-23-omarchy-p16-asus-npu1',
+            '7.2.8-23-omarchy-p16-asus-npu2',
+            '7.2.8-23-rtx-spark-npu'):
+        parser.error('requires a completed qualified NPU kernel build')
     if digest(kernel/'arch/arm64/boot/Image') != manifest['image_sha256']:
         parser.error('kernel Image no longer matches the completed build')
     if destination.exists() or destination.is_symlink():

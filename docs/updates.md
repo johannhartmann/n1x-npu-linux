@@ -1,7 +1,7 @@
 # Omarchy and kernel updates
 
 The NPU bootstrap has been physically qualified only on ASUS ProArt P16
-H7607BA.300 with `7.2.8-23-omarchy-p16-asus-npu2`. Its code enforces this
+H7607BA.300 with `7.2.8-23-rtx-spark-npu`. Its code enforces this
 board, BIOS and kernel release. The separately named kernel package remains
 installed alongside normal `linux-omarchy`; ordinary Omarchy package updates
 do not turn a new stock kernel into an NPU kernel.
@@ -32,12 +32,12 @@ omarchy hook install post-update config/omarchy-npu-post-update
 
 The hook runs the read-only readiness check after Omarchy updates and reports
 when the running kernel, board/BIOS, package ownership or loaded module differs.
-It also detects an NVIDIA userspace/module version mismatch for the NPU2 kernel.
+It also detects an NVIDIA userspace/module version mismatch for the NPU kernel.
 The external NVIDIA, SPBM and CPUID modules are installed via DKMS for the
 audited NPU kernel. The original test modules were backed up under
 `/var/lib/p16-platform/boot-hook-backup/npu-test-modules/`. A future NVIDIA or
 kernel update still requires checking the DKMS builds and the staged UKI before
-rebooting into NPU2.
+rebooting into the NPU kernel.
 Run `python3 scripts/check_update_readiness.py` at any time. The unprivileged
 check requires the audited external modules to be installed and selected from
 DKMS. It cannot verify root-owned boot-menu/EFI files or prove physical inference.

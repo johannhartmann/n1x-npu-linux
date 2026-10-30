@@ -9,7 +9,7 @@ offline tests and physical execution are separate evidence levels.
 - ASUS ProArt P16 H7607BA, BIOS `H7607BA.300`, NVIDIA RTX Spark / N1X.
 - NPU ACPI `NVDA200A`, compatible ID `NVDA2042`, revision `0x34`, DLA HAL 1.
 - SROOT ACPI `NVDA8600`, revision 1; its own noncoherent DMA requester.
-- Kernel `7.2.8-23-omarchy-p16-asus-npu2` and matching headers.
+- Kernel `7.2.8-23-rtx-spark-npu` and matching headers.
 - Original NVIDIA Linux cuDLA 13.4.92 frontend, CUDA staging, reconstructed backend.
 - Pinned Windows ARM64 driver 617.42 and TensorRT 11.4 compiler inputs.
 

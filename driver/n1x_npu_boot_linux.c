@@ -30,7 +30,7 @@
 #include "n1x_dla_accel.h"
 #include "n1x_hfrp_setup.h"
 
-#define N1X_BOOT_KERNEL "7.2.8-23-omarchy-p16-asus-npu2"
+#define N1X_BOOT_KERNEL "7.2.8-23-rtx-spark-npu"
 #define N1X_BOARD_FIRMWARE "nvidia/n1x/p16-bios300-physical.rom"
 #define N1X_BOOT_FIRMWARE "nvidia/n1x/p16-sroot-v0.bin"
 #define N1X_BOOT_FALLBACK_FIRMWARE "nvidia/n1x/p16-sroot-v1.bin"

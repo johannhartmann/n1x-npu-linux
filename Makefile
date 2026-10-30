@@ -288,15 +288,16 @@ cudla: runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke runtime/cudla/n1x-d
 test-cudla: cudla
 	$(PYTHON) scripts/test_cudla_model.py
 	$(PYTHON) scripts/test_cudla_broker.py
+	$(PYTHON) scripts/test_cudla_broker_security.py
 	$(PYTHON) scripts/test_qualify_cudla.py
 	$(PYTHON) scripts/test_cudla_cuda_transport.py
-runtime/cudla/libnvcudla.so: runtime/cudla_backend.cpp runtime/cudla_model.cpp runtime/cudla_model.hpp runtime/n1x_dla.h include/uapi/n1x_dla_accel.h runtime/libn1x_dla.so $(CUDLA_PACKAGE)/include/cudla.h $(CUDA_ROOT)/include/cuda.h
+runtime/cudla/libnvcudla.so: runtime/cudla_backend.cpp runtime/cudla_model.cpp runtime/cudla_model.hpp runtime/n1x_dla.h runtime/n1x_cudla_private.h include/uapi/n1x_dla_accel.h runtime/libn1x_dla.so $(CUDLA_PACKAGE)/include/cudla.h $(CUDA_ROOT)/include/cuda.h
 	mkdir -p runtime/cudla
 	$(CXX) -std=c++17 $(CFLAGS) -fPIC -shared -Iinclude -I$(CUDLA_PACKAGE)/include -I$(CUDA_ROOT)/include runtime/cudla_backend.cpp runtime/cudla_model.cpp -Lruntime -ln1x_dla -L$(CUDA_ROOT)/lib64/stubs -lcuda -Wl,-rpath,'$$ORIGIN/..' -Wl,-soname,libnvcudla.so -Wl,-z,defs -o $@
 runtime/cudla/cudla-smoke: runtime/cudla_smoke.cpp $(CUDLA_PACKAGE)/include/cudla.h $(CUDA_ROOT)/include/cuda.h
 	mkdir -p runtime/cudla
 	$(CXX) -std=c++17 $(CFLAGS) -I$(CUDLA_PACKAGE)/include -I$(CUDA_ROOT)/include $< -L$(CUDLA_PACKAGE)/lib -lcudla -L$(CUDA_ROOT)/lib64/stubs -lcuda -Wl,-rpath,$(CUDLA_PACKAGE)/lib -o $@
-runtime/cudla/n1x-dla-broker: runtime/cudla_broker.cpp runtime/n1x_dla.h include/uapi/n1x_dla_accel.h runtime/cudla/libnvcudla.so runtime/libn1x_dla.so $(CUDLA_PACKAGE)/include/cudla.h $(CUDA_ROOT)/include/cuda.h
+runtime/cudla/n1x-dla-broker: runtime/cudla_broker.cpp runtime/n1x_dla.h runtime/n1x_cudla_private.h include/uapi/n1x_dla_accel.h runtime/cudla/libnvcudla.so runtime/libn1x_dla.so $(CUDLA_PACKAGE)/include/cudla.h $(CUDA_ROOT)/include/cuda.h
 	mkdir -p runtime/cudla
 	$(CXX) -std=c++17 $(CFLAGS) -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fPIE \
 		-Iinclude -Iruntime -I$(CUDLA_PACKAGE)/include -I$(CUDA_ROOT)/include $< \

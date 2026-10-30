@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the verified isolated kernel with the existing P16 packaging recipe.
+"""Package a verified NPU kernel with the reviewed P16 packaging recipe.
 
 Creates co-installable kernel/headers packages only. Never installs packages or
 changes boot entries. The original P16 recipe and source tree remain untouched.
@@ -13,12 +13,13 @@ import subprocess
 from build_sroot_kernel import digest
 
 RECIPE_HASH = '7f878f7b87b96dfccb8e31ed36a69a341c1a370e7f336dfb9e48421e3868fbda'
-PKGBASE = 'linux-p16-asus-23-npu1'
-
-
 def package_base(release):
-    if release not in ('7.2.8-23-omarchy-p16-asus-npu1', '7.2.8-23-omarchy-p16-asus-npu2'):
-        raise ValueError('unsupported isolated kernel release')
+    if release not in ('7.2.8-23-omarchy-p16-asus-npu1',
+                       '7.2.8-23-omarchy-p16-asus-npu2',
+                       '7.2.8-23-rtx-spark-npu'):
+        raise ValueError('unsupported qualified NPU kernel release')
+    if release == '7.2.8-23-rtx-spark-npu':
+        return 'linux-rtx-spark-npu'
     return 'linux-p16-asus-23-' + release.rsplit('-', 1)[1]
 
 
@@ -74,7 +75,7 @@ def main():
     release = manifest['expected_release']
     pkgbase = package_base(release)
     if manifest['stage'] != 'built':
-        parser.error('requires the completed isolated kernel build')
+        parser.error('requires the completed qualified NPU kernel build')
     if digest(kernel/'arch/arm64/boot/Image') != manifest['image_sha256']:
         parser.error('kernel Image differs from the verified build')
     if digest(kernel/'.config') != manifest['source_pins']['.config']:

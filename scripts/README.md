@@ -40,7 +40,7 @@ firmware or sets a power profile. Hardware qualifiers record the selected profil
 | `make test-portable` | Fixture-free channel, shutdown, ownership and controller checks | Analysis venv and C compiler; no GPU/vendor files |
 | `make test-p16-start` | Board/startup/runtime regression suite | Pinned KMD/firmware, compiled fixtures, BIOS capture and analysis inputs |
 | `make test-p16-stop` | Original stop/wakeup replay, joined protocol/lifetime faults and cleanup tests | KMD, firmware and compiled ReLU fixture; no live NPU |
-| `make test-cudla` | Backend model/API/CUDA staging checks | cuDLA package, CUDA headers and actual CUDA driver; NPU transport is modeled |
+| `make test-cudla` | Backend model/API/CUDA staging and broker confinement/preflight checks | cuDLA package, CUDA headers and actual CUDA driver; NPU transport is modeled |
 | `make test-relu`, `test-conv`, `test-conv-relu` | Fixture compilation/materialization and protocol checks | Exact vendor inputs and analysis artifacts |
 | `make test-vendor` | Broad historical original-code regression suite | Additional pinned auxiliary drivers, runtime libraries, ACPI files and artifacts |
 | `make module`, `make kernel-check` | Kernel compilation only | Matching installed kernel headers |

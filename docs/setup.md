@@ -9,11 +9,14 @@ qualifies the physical NPU. Review those steps before running them.
 ## 1. Platform prerequisites
 
 The physical driver currently requires ASUS ProArt P16 H7607BA, BIOS
-`H7607BA.300`, and kernel **`7.2.8-23-omarchy-p16-asus-npu2`** with matching
+`H7607BA.300`, and kernel **`7.2.8-23-rtx-spark-npu`** with matching
 headers. Start with the separate [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux).
-This repository does not supply a generic Omarchy kernel installer or signed
-kernel package. The exact test kernel and scoped noncoherent SROOT DMA patch
-are documented in [Linux backend](research/linux-backend.md). Earlier kernel-build and
+The driver itself is an out-of-tree Linux kernel module and has no Omarchy
+dependency. The named kernel is the currently qualified reference build, not
+the driver identity: it carries the scoped noncoherent SROOT DMA quirk required
+by this P16 BIOS. This repository does not supply a generic distribution
+installer or signed kernel package. The exact reference kernel and quirk are
+documented in [Linux backend](research/linux-backend.md). Earlier kernel-build and
 FRTS/UKI experiments are indexed as historical workflows in [the tool index](../scripts/README.md).
 
 Preserve the known-working boot entry when preparing a test kernel. A different
@@ -182,13 +185,20 @@ The installer does not touch the running device. It installs the broker under
 `/usr/libexec`, pinned libraries/models under `/usr/lib/n1x-npu-linux`, and a
 `0600 root:root` udev rule for the next accel-node creation. The desktop demos,
 image decoders, Python environments, ONNX Runtime and output handling remain
-unprivileged. The broker drops to UID/GID 65534 with only `CAP_SYS_RAWIO` after
-opening its fixed root-owned artifacts and device handles.
+unprivileged. The installer creates a dedicated, file-less `n1x-dla` system
+identity; the broker drops to it with only `CAP_SYS_RAWIO` after
+opening its fixed root-owned artifacts and device handles. It rejects duplicate
+or aggregate-overbudget model selections, verifies that the complete requested
+session fits the live retained-DMA budget before the first submission, and
+terminates stalled protocol I/O after 60 seconds. Completed allocations remain
+retained after a broker exits; use the checked shutdown/reload procedure below
+to reclaim them. A fence or idle notification alone is not a safe release
+boundary.
 
 ## 6. Explicit hardware qualification after reboot
 
 Replacing an older module without shutdown support, or an instance whose stop
-has failed, requires a reboot of the **same audited npu2 kernel**. Keep the
+has failed, requires a reboot of the **same qualified NPU kernel**. Keep the
 known-working boot entry.
 Then, when ready to run the bounded qualification (the current power profile is recorded and left unchanged):
 

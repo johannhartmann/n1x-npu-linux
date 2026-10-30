@@ -7,8 +7,8 @@ import platform
 import re
 import subprocess
 
-KERNEL = '7.2.8-23-omarchy-p16-asus-npu2'
-PACKAGE = 'n1x-npu-bootstrap-p16-asus-23-npu2'
+KERNEL = '7.2.8-23-rtx-spark-npu'
+PACKAGE = 'n1x-npu-bootstrap-rtx-spark'
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -31,7 +31,7 @@ def check():
     facts.append(f'Kernel: {running}')
     if running != KERNEL:
         issues.append(f'running kernel is not the audited NPU kernel {KERNEL}')
-    for name in ('linux-p16-asus-23-npu2', 'linux-p16-asus-23-npu2-headers'):
+    for name in ('linux-rtx-spark-npu', 'linux-rtx-spark-npu-headers'):
         if command('pacman', '-Q', name) is None:
             issues.append(f'{name} is not installed')
     module = Path('/usr/lib/modules') / KERNEL / 'updates/n1x-npu-bootstrap/n1x_npu_bootstrap.ko'
@@ -73,11 +73,12 @@ def check_boot():
     if not menu.is_file():
         return ['Cannot read /boot/limine.conf; run --boot with root privileges']
     content = menu.read_text()
-    if re.findall(r'^default_entry:\s*(.*?)\s*$', content, re.M) != [
-            'Omarchy/linux-p16-asus-23']:
-        issues.append('known-working P16 default entry changed')
-    if '/N1X NPU test' not in content or '/N1X NPU diagnostics - disk log' not in content:
-        issues.append('NPU test or diagnostics boot entry missing')
+    defaults = re.findall(r'^default_entry:\s*(.*?)\s*$', content, re.M)
+    if defaults not in (["Omarchy/linux-p16-asus-23-npu2"],
+                        ["Omarchy/linux-rtx-spark-npu"]):
+        issues.append('default is neither the known-working NPU2 entry nor the RTX Spark NPU candidate')
+    if not re.search(r'^\s*//linux-rtx-spark-npu\s*$', content, re.M):
+        issues.append('managed NPU boot entry missing')
     images = re.findall(r'boot\(\):(/EFI/Linux/[^#\s]+)#([a-f0-9]{128})', content)
     if not images:
         issues.append('no hashed Limine UKI paths found')

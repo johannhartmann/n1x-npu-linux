@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Physically qualify stop -> DMA release -> unload -> load -> cuDLA inference.
 
-Run as root on the audited npu2 kernel. Requires the pinned artifacts described
+Run as root on the qualified NPU kernel. Requires the pinned artifacts described
 in docs/cudla-backend.md. Stops at the first failure; never forces unload,
 resets a failed channel or retries an uncertain operation. Leaves the final
 successfully reloaded device running, with durable per-cycle evidence.
@@ -71,13 +71,13 @@ def main():
     parser.add_argument('--cycles', type=int, choices=range(1, 4), default=2)
     args = parser.parse_args()
     if os.geteuid() or platform.release() != KERNEL:
-        parser.error('requires root and the audited npu2 kernel')
+        parser.error('requires root and the qualified NPU kernel')
     profile = Path('/sys/firmware/acpi/platform_profile').read_text().strip()
     module = ROOT/'driver/n1x_npu_bootstrap.ko'
     version = subprocess.check_output(['modinfo', '-F', 'srcversion', str(module)], text=True).strip()
     if MODULE.exists() and ((MODULE/'srcversion').read_text().strip() != version or
                             not (ENDPOINT/'shutdown').exists()):
-        parser.error('old pinned module is loaded; reboot the SAME npu2 kernel once before qualification')
+        parser.error('old pinned module is loaded; reboot the same NPU kernel once before qualification')
     out = args.output_dir.resolve()
     out.mkdir(exist_ok=False)
     owner = int(os.environ['PKEXEC_UID']) if 'PKEXEC_UID' in os.environ else None
