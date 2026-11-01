@@ -13,26 +13,56 @@ def shutdown_harness():
     text = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     state = text[text.index('struct n1x_boot_endpoint {'):text.index('static bool n1x_boot_machine(')]
     code = text[text.index('static int n1x_boot_stop_hardware('):text.index('static DEVICE_ATTR_WO(shutdown);')]
+    start_fn = text[text.index('static int n1x_boot_start_once('):text.index('static ssize_t start_store(')]
     stores = []
     for phase in TRIGGERS:
         if phase == 'shutdown':
             continue
         start = text.index('static ssize_t '+phase+'_store(')
         stores.append(text[start:text.index('static DEVICE_ATTR_WO(', start)])
-    names = set(re.findall(r'\b(n1x_boot_\w+)\(\)', ''.join(stores)))-{'n1x_boot_machine'}
+    names = set(re.findall(r'\b(n1x_boot_\w+)\(\)', ''.join(stores)))-{'n1x_boot_machine', 'n1x_boot_start_once'}
     writer_checks = '\n'.join(
         f'assert({phase}_store(&device,NULL,"{payload.decode().strip()}",{len(payload)-1}) == -ESHUTDOWN);'
         for phase, payload in TRIGGERS.items() if phase != 'shutdown')
-    writer_harness = 'static bool enable_hfrp;\n'+''.join(
-        'static int '+name+'(void) {assert(0);return -EIO;}\n' for name in sorted(names))
-    writer_harness += r'''
+    writer_harness = (
+        'static bool enable_hfrp,enable_upload,enable_ping,enable_region5,'
+        'enable_config_snapshot,enable_config_apply,enable_lpwr_config,enable_bypass_task;\n'
+        'static int start_step,start_fail_step;\n'
+        + ''.join(
+            'static int '+name+'(void) {assert(start_fail_step>=0);return ++start_step==start_fail_step?-EREMOTEIO:0;}\n'
+            for name in sorted(names))
+    )
+    writer_harness += start_fn + r'''
 int n1x_hfrp_query_power_state(const struct n1x_dla_io *io,struct n1x_hfrp_channel *c,
  const struct n1x_hfrp_version *v,u32 p,u32 delay,struct n1x_hfrp_power_state *s,
  struct n1x_hfrp_exchange_result *r) {assert(0);return -EIO;}
 ''' + ''.join(stores)+'''
 static void check_stopped_writers(void) {
+ start_fail_step=-1;
  boot_stopping=true;
-'''+writer_checks+'\n assert(!boot_lock);\n}\n'
+'''+writer_checks+r'''
+ assert(!boot_lock);
+}
+static void check_single_start(void) {
+ for(int fail=0;fail<=8;fail++){
+  boot_stopping=false;machine=privileged=true;
+  dla_ep.hfrp=(void *)1;boot_dla=&dla_ep;boot_sroot=&sroot_ep;
+  enable_hfrp=enable_upload=enable_ping=enable_region5=true;
+  enable_config_snapshot=enable_config_apply=enable_lpwr_config=enable_bypass_task=true;
+  boot_hfrp.attempted=boot_attempted=boot_ping.attempted=boot_region5.attempted=false;
+  boot_config.attempted=boot_config_apply.attempted=boot_lpwr.attempted=boot_task.attempted=false;
+  boot_hfrp.error=boot_error=boot_ping.error=boot_region5.error=0;
+  boot_config.error=boot_config_apply.error=boot_lpwr.error=boot_task.error=0;
+  start_step=0;start_fail_step=fail;
+  ssize_t ret=start_store(&device,NULL,"start",5);
+  assert(ret==(fail?-EREMOTEIO:5) && start_step==(fail?fail:8));
+ }
+ enable_bypass_task=false;start_step=0;start_fail_step=0;
+ assert(start_store(&device,NULL,"start",5)==-EPERM && !start_step);
+ enable_bypass_task=true;boot_ping.attempted=true;
+ assert(start_store(&device,NULL,"start",5)==-EALREADY && !start_step);
+}
+'''
     harness = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -183,6 +213,7 @@ int main(void)
  assert(!boot_hfrp_held && !boot_upload_held && !boot_lock && !accel.locked);
  assert(!n1x_boot_stop_device(&device) && stops==1 && dma_frees==7 && pm_puts==3);
  check_stopped_writers();assert(stops==1 && accesses==4 && dma_frees==7);
+ check_single_start();
  reset();boot_attempted=boot_upload_held=false;boot_hfrp_held=true;
  boot_ping.attempted=boot_config.attempted=boot_region5.attempted=false;
  boot_config_apply.attempted=boot_lpwr.attempted=boot_task.attempted=boot_relu.attempted=false;

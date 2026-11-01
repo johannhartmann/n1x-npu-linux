@@ -42,11 +42,14 @@ static struct device dla_dev={0},sroot_dev={1};
 static u32 registers[128];
 static struct n1x_boot_endpoint dla_ep={&dla_dev,registers},sroot_ep={&sroot_dev,NULL};
 static struct n1x_boot_endpoint *boot_dla,*boot_sroot;
-static bool enable_hfrp,boot_attempted,machine_ok,module_ok,boot_hfrp_held;
+static bool enable_hfrp,boot_attempted,machine_ok,module_ok,boot_hfrp_held,strict_platform=true;
 static int gates[2],request_error,resume_error,resume_refs,module_refs,releases,requests;
-static int step,fail_step,reads,writes,cases;
+static int step,fail_step,reads,writes,cases,live_policy_calls;
 static u8 image[0x110000];
 static struct firmware fw;
+static int n1x_boot_board_policy(const struct firmware *firmware);
+static int n1x_boot_live_board_policy(void)
+{live_policy_calls++;return n1x_boot_board_policy(&fw);}
 static bool n1x_boot_machine(void) {return machine_ok;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *ep) {return gates[ep->dev->id];}
 static int request_firmware_direct(const struct firmware **out,const char *name,struct device *dev)
@@ -84,9 +87,9 @@ int n1x_hfrp_power_on(const struct n1x_dla_io *io,struct n1x_hfrp_channel *c,
 '''+functions+r'''
 static void reset(void)
 {memset(&boot_hfrp,0,sizeof(boot_hfrp));memset(registers,0,sizeof(registers));registers[0]=0x20251722;
- boot_dla=&dla_ep;boot_sroot=&sroot_ep;dla_ep.hfrp=registers;enable_hfrp=machine_ok=module_ok=true;
+ boot_dla=&dla_ep;boot_sroot=&sroot_ep;dla_ep.hfrp=registers;enable_hfrp=machine_ok=module_ok=strict_platform=true;
  boot_attempted=false;gates[0]=gates[1]=request_error=resume_error=resume_refs=module_refs=0;
- releases=requests=step=fail_step=reads=writes=0;fw=(struct firmware){sizeof(image),image};}
+ releases=requests=step=fail_step=reads=writes=live_policy_calls=0;fw=(struct firmware){sizeof(image),image};}
 static void early(int expected)
 {assert(n1x_boot_prepare_hfrp_once()==expected);assert(!boot_hfrp.attempted && !boot_hfrp.powered);
  assert(!resume_refs && !module_refs && !writes && !step);cases++;}
@@ -107,6 +110,12 @@ int main(int argc,char **argv)
  reset();image[100]^=1;early(-EBADMSG);assert(releases==1);image[100]^=1;
  reset();resume_error=-EIO;early(-EIO);assert(releases==1);
  reset();registers[0]++;early(-EOPNOTSUPP);
+ reset();strict_platform=false;registers[0]=0x20250424;early(-EOPNOTSUPP);
+ reset();strict_platform=false;registers[0]=0x20250425;request_error=-ENOENT;
+ image[100]^=1;
+ assert(n1x_boot_prepare_hfrp_once()==0 && live_policy_calls==1 && releases==0 && boot_hfrp.powered);
+ image[100]^=1;cases++;
+ reset();strict_platform=false;image[0x28076]^=1;early(-EOPNOTSUPP);image[0x28076]^=1;
  reset();module_ok=false;early(-ENODEV);
  for(int i=0;i<=4;i++){reset();fail_step=i;
  assert(n1x_boot_prepare_hfrp_once()==(i?-EIO:0));

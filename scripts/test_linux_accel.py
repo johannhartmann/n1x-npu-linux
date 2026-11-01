@@ -223,9 +223,14 @@ int main(int argc,char **argv)
  patch.offset=image_bytes;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EINVAL);patch.offset=13;
  patch.offset=100;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EPERM);patch.offset=13;
  memdup_fail=true;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EFAULT);memdup_fail=false;
+ read.offset=13;
+ backend_attempt=false;backend_error=-ENODEV;
+ assert(reexec_ioctl(&accel.drm,&again,&owner)==-ENODEV&&!again.new_job_id);
+ backend_error=0;assert(reexec_ioctl(&accel.drm,&again,&owner)==-EIO&&!again.new_job_id);
+ backend_attempt=true;
+ output=0;assert(!read_ioctl(&accel.drm,&read,&owner)&&output==0x5a);
  u64 previous=1;
  int reuse_allocs=allocations,reuse_frees=frees;
- read.offset=13;
  for(int iteration=0;iteration<64;iteration++){
   replacement=(unsigned char)(0x80+iteration);image[13]=replacement;
   again=(struct n1x_dla_accel_reexec){.job_id=previous,.patches_ptr=(uintptr_t)&patch,.num_patches=1};

@@ -90,6 +90,10 @@ static bool enable_accel;
 module_param(enable_accel, bool, 0400);
 MODULE_PARM_DESC(enable_accel, "Register experimental RAWIO-only accel API; explicit startup still required (default false)");
 
+static bool strict_platform = true;
+module_param(strict_platform, bool, 0400);
+MODULE_PARM_DESC(strict_platform, "Require exact P16 BIOS-300 DMI/kernel/ROM-hash pins (default true; false uses capability/PCIR/HFRP-v1.5+ checks)");
+
 struct n1x_boot_endpoint {
 	struct device *dev;
 	void __iomem *base;
@@ -175,6 +179,8 @@ static u8 boot_relu_input_hash[SHA256_DIGEST_SIZE], boot_relu_output_hash[SHA256
 
 static bool n1x_boot_machine(void)
 {
+	if (!strict_platform)
+		return true;
 	return !strcmp(init_uts_ns.name.release, N1X_BOOT_KERNEL) &&
 		dmi_match(DMI_SYS_VENDOR, "ASUS") &&
 		dmi_match(DMI_PRODUCT_NAME, "ProArt P16 H7607BA") &&
@@ -268,6 +274,36 @@ static void n1x_boot_delay(void *context, u32 interval_us)
 	usleep_range(interval_us, interval_us + 100);
 }
 
+static int n1x_boot_board_policy(const struct firmware *firmware);
+
+static int n1x_boot_live_board_policy(void)
+{
+	struct firmware carveout = {.size = 0x110000U};
+	void __iomem *locator_io;
+	resource_size_t rom_phys;
+	u32 locator;
+	void *rom;
+	int err;
+
+	locator_io = ioremap(0x1182bc80ULL, sizeof(u32));
+	if (!locator_io)
+		return -ENOMEM;
+	locator = readl(locator_io);
+	iounmap(locator_io);
+	rom_phys = (((u64)locator << 12) + 0x80000600ULL) & 0xffffffffULL;
+	if (!rom_phys ||
+	    region_intersects(rom_phys, carveout.size, IORESOURCE_SYSTEM_RAM,
+			      IORES_DESC_NONE) != REGION_DISJOINT)
+		return -EOPNOTSUPP;
+	rom = memremap(rom_phys, carveout.size, MEMREMAP_WB);
+	if (!rom)
+		return -ENOMEM;
+	carveout.data = rom;
+	err = n1x_boot_board_policy(&carveout);
+	memunmap(rom);
+	return err;
+}
+
 /* Separate, bounded HFRP resource. Never pass these offsets through the DLA
  * register remapper. No IRQ handler consumes these rings concurrently.
  */
@@ -313,13 +349,21 @@ static int n1x_boot_board_policy(const struct firmware *firmware)
 	};
 	u8 digest[SHA256_DIGEST_SIZE];
 	int err;
-	if (!firmware || !firmware->data || firmware->size != 0x110000)
+	if (!firmware || !firmware->data || !firmware->size ||
+	    firmware->size > 0x110000 ||
+	    (strict_platform && firmware->size != 0x110000))
 		return -EBADMSG;
-	sha256(firmware->data, firmware->size, digest);
-	if (memcmp(digest, expected, sizeof(digest)))
-		return -EBADMSG;
+	if (strict_platform) {
+		sha256(firmware->data, firmware->size, digest);
+		if (memcmp(digest, expected, sizeof(digest)))
+			return -EBADMSG;
+	}
 	err = n1x_dla_parse_vbios_policy(firmware->data, firmware->size,
 			&boot_hfrp.policy, &boot_hfrp.location);
+	if (err)
+		return err;
+	err = n1x_dla_verify_vbios_pcir(firmware->data, firmware->size,
+			&boot_hfrp.location);
 	if (err)
 		return err;
 	return n1x_dla_prepare_gating(&boot_hfrp.policy, &boot_hfrp.gating);
@@ -331,7 +375,7 @@ static int n1x_boot_board_policy(const struct firmware *firmware)
  */
 static int n1x_boot_prepare_hfrp_once(void)
 {
-	const struct firmware *firmware;
+	const struct firmware *firmware = NULL;
 	struct n1x_dla_io io;
 	u32 stamp;
 	int err;
@@ -347,17 +391,19 @@ static int n1x_boot_prepare_hfrp_once(void)
 	if (err)
 		return err;
 	err = request_firmware_direct(&firmware, N1X_BOARD_FIRMWARE, boot_dla->dev);
-	if (err)
-		return err;
-	err = n1x_boot_board_policy(firmware);
-	release_firmware(firmware);
+	if (!err) {
+		err = n1x_boot_board_policy(firmware);
+		release_firmware(firmware);
+	} else if (!strict_platform) {
+		err = n1x_boot_live_board_policy();
+	}
 	if (err)
 		return err;
 	err = pm_runtime_resume_and_get(boot_dla->dev);
 	if (err < 0)
 		return err;
 	err = n1x_boot_hfrp_read(boot_dla, 0, &stamp);
-	if (!err && stamp != 0x20251722)
+	if (!err && (strict_platform ? stamp != 0x20251722 : stamp < 0x20250425))
 		err = -EOPNOTSUPP;
 	if (err)
 		goto put;
@@ -376,6 +422,8 @@ static int n1x_boot_prepare_hfrp_once(void)
 	boot_hfrp.phase = 2;
 	err = n1x_hfrp_discover_version(&io, &boot_hfrp.channel, 5001, 1000,
 			&boot_hfrp.version, &boot_hfrp.exchange);
+	if (!err && (boot_hfrp.version.major != 1 || boot_hfrp.version.minor < 5))
+		err = -EOPNOTSUPP;
 	if (err)
 		goto done;
 	boot_hfrp.phase = 3;
@@ -1166,6 +1214,10 @@ static ssize_t relu_status_show(struct device *dev, struct device_attribute *att
 {
     ssize_t size;
     mutex_lock(&boot_lock);
+    if (!boot_dla || boot_dla->dev != dev) {
+        mutex_unlock(&boot_lock);
+        return -ENODEV;
+    }
     size = sysfs_emit(buf,
         "enabled=%u attempted=%u error=%d accepted=%u completed=%u signal_seen=%u pending=%#x reply=%#x data=%#x fence=%#x numeric_verified=%u input_sha256=%*phN output_sha256=%*phN retained=%u idle_notifications=%u idle_blocked=%u fence_value=%#x queue_poisoned=%u\n",
         enable_relu_probe, boot_relu.attempted, boot_relu.error, boot_relu.accepted,
@@ -1309,6 +1361,10 @@ static ssize_t hfrp_status_show(struct device *dev, struct device_attribute *att
 {
 	ssize_t size;
 	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev) {
+		mutex_unlock(&boot_lock);
+		return -ENODEV;
+	}
 	size = sysfs_emit(buf,
 		"enabled=%u attempted=%u phase=%u error=%d state=%u pending=%u stamp=%#x version=%u.%u configured=%u command=%u completed=%u setup_reply=%#x setup_length=%u setup_payload=%*phN final_reply=%#x final_length=%u final_payload=%*phN power_accepted=%u frequency_khz=%u gating=%#x query_attempted=%u query_error=%d query_valid=%u query_raw=%#x query_reply=%#x query_length=%u query_payload=%*phN\n",
 		enable_hfrp, boot_hfrp.attempted, boot_hfrp.phase, boot_hfrp.error,
@@ -1334,6 +1390,10 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	ssize_t size;
 
 	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev) {
+		mutex_unlock(&boot_lock);
+		return -ENODEV;
+	}
 	size = sysfs_emit(buf,
 		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x lpwr_enabled=%u lpwr_attempted=%u lpwr_error=%d lpwr_accepted=%u lpwr_reply_valid=%u lpwr_reply=%#x lpwr_retained=%u task_enabled=%u task_attempted=%u task_error=%d task_response_valid=%u task_reply=%#x task_data=%#x task_accepted=%u task_signal_seen=%u task_fence=%#x task_pending=%#x task_verified=%u task_retained=%u task_idle_notifications=%u task_idle_blocked=%u task_fence_value=%#x queue_poisoned=%u\n",
 		!!boot_dla, !!boot_sroot, enable_upload, boot_attempted, boot_error,
@@ -1532,6 +1592,10 @@ static ssize_t shutdown_status_show(struct device *dev, struct device_attribute 
 {
 	ssize_t size;
 	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev) {
+		mutex_unlock(&boot_lock);
+		return -ENODEV;
+	}
 	size = sysfs_emit(buf,
 		"attempted=%u stage=%s error=%d accepted=%u state_valid=%u state=%#x hardware_off=%u released=%u hfrp_held=%u upload_held=%u irq_owned=%#x irq_before=%#x irq_after=%#x irq_readback=%u "
 		"power_attempted=%u power_head_attempted=%u power_reply_valid=%u power_reply=%#x power_length=%u power_payload=%*phN "
@@ -1555,13 +1619,94 @@ static ssize_t shutdown_status_show(struct device *dev, struct device_attribute 
 static struct device_attribute dev_attr_shutdown_status =
 	__ATTR(shutdown_status, 0400, shutdown_status_show, NULL);
 
-static struct attribute *boot_attrs[] = {&dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
+static int n1x_boot_start_once(void)
+{
+	int err;
+
+	if (!n1x_boot_machine() || !enable_hfrp || !enable_upload ||
+	    !enable_ping || !enable_region5 || !enable_config_snapshot ||
+	    !enable_config_apply || !enable_lpwr_config || !enable_bypass_task)
+		return -EPERM;
+	if (!boot_dla || !boot_dla->hfrp || !boot_sroot)
+		return -ENODEV;
+	if (boot_hfrp.attempted || boot_attempted || boot_ping.attempted ||
+	    boot_region5.attempted || boot_config.attempted ||
+	    boot_config_apply.attempted || boot_lpwr.attempted ||
+	    boot_task.attempted)
+		return -EALREADY;
+	err = n1x_boot_prepare_hfrp_once();
+	boot_hfrp.error = err;
+	if (err)
+		return err;
+	err = n1x_boot_upload();
+	boot_error = err;
+	if (err)
+		return err;
+	err = n1x_boot_ping_once();
+	boot_ping.error = err;
+	if (err)
+		return err;
+	err = n1x_boot_init_region5_once();
+	boot_region5.error = err;
+	if (err)
+		return err;
+	err = n1x_boot_read_config_once();
+	boot_config.error = err;
+	if (err)
+		return err;
+	err = n1x_boot_apply_config_once();
+	boot_config_apply.error = err;
+	if (err)
+		return err;
+	err = n1x_boot_apply_lpwr_once();
+	boot_lpwr.error = err;
+	if (err)
+		return err;
+	err = n1x_boot_bypass_task_once();
+	boot_task.error = err;
+	return err;
+}
+
+static ssize_t start_store(struct device *dev, struct device_attribute *attr,
+			   const char *buf, size_t count)
+{
+	int err;
+
+	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "start"))
+		return -EPERM;
+	mutex_lock(&boot_lock);
+	if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!boot_dla || boot_dla->dev != dev)
+		err = -ENODEV;
+	else
+		err = n1x_boot_start_once();
+	mutex_unlock(&boot_lock);
+	return err ? err : (ssize_t)count;
+}
+static DEVICE_ATTR_WO(start);
+
+static struct attribute *boot_attrs[] = {&dev_attr_start.attr, &dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
 	&dev_attr_shutdown.attr, &dev_attr_shutdown_status.attr,
 	&dev_attr_prepare_hfrp.attr, &dev_attr_hfrp_status.attr, &dev_attr_query_power_state.attr,
 	&dev_attr_relu_probe.attr, &dev_attr_relu_status.attr,
 	&dev_attr_config_snapshot.attr, &dev_attr_init_region5.attr,
 	&dev_attr_apply_config.attr, &dev_attr_apply_lpwr.attr, &dev_attr_bypass_task.attr, &dev_attr_status.attr, NULL};
-ATTRIBUTE_GROUPS(boot);
+
+static umode_t boot_attr_is_visible(struct kobject *kobj, struct attribute *attr, int n)
+{
+	struct device *dev = kobj_to_dev(kobj);
+	const struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
+
+	(void)n;
+	return endpoint && !endpoint->sroot ? attr->mode : 0;
+}
+
+static const struct attribute_group boot_group = {
+	.attrs = boot_attrs,
+	.is_visible = boot_attr_is_visible,
+};
+__ATTRIBUTE_GROUPS(boot);
 
 /* accel->lock is outside boot_lock; sysfs never takes accel->lock. */
 static int n1x_boot_accel_submit(struct device *dev, struct n1x_dla_job *job,

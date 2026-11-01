@@ -87,7 +87,8 @@ static void rejected(struct device *dev,const char *text,int error,int expected_
  assert(!memcmp(before,&boot_hfrp,sizeof(before)));cases++;}
 static void cached(void)
 {char buf[32];int calls=queries;assert(hfrp_status_show(&dla_dev,NULL,buf)==6);
- assert(!strcmp(buf,"cached") && queries==calls && !boot_lock);cases++;}
+ assert(!strcmp(buf,"cached") && queries==calls && !boot_lock);
+ assert(hfrp_status_show(&other_dev,NULL,buf)==-ENODEV && !boot_lock);cases++;}
 int main(void)
 {reset();privileged=false;rejected(&dla_dev,"query\n",-EPERM,0);
  reset();rejected(&dla_dev,"query extra\n",-EPERM,0);

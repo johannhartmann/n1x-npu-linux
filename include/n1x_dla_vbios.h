@@ -54,6 +54,12 @@ int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
                                 struct n1x_dla_vbios_policy *out,
                                 struct n1x_dla_vbios_location *location);
 
+/* Verify the PCI Expansion ROM Data Structure ("PCIR") at location->rom_base
+ * matches the N1X iGPU/VBIOS carrier (vendor 0x10de, device 0x2e03).
+ */
+int n1x_dla_verify_vbios_pcir(const __u8 *data, size_t size,
+                               const struct n1x_dla_vbios_location *location);
+
 struct n1x_dla_gating_policy {
     __u32 request_mask;
     /* Windows outer bytes 0x31d..0x325, retained without invented enum names. */
