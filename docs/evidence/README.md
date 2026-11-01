@@ -7,6 +7,7 @@ records; [current status](../status.md) summarizes the supported behavior.
 
 | Receipt | Scope |
 | --- | --- |
+| [Heterogeneous ONNX EP & `INT8` hardware qualification](n1x-ort-hardware-2026-11-01.json) | `mnist-12.onnx` (`FP16` & auto-calibrated `INT8`), `super-resolution-10.onnx` (`DLA + Host`), 3-stage `DLA -> Host -> DLA`, `REEXEC_IO` reuse, and confirmed `43 00` / state `07` shutdown |
 | [Current physical NPU qualification](npu-hardware-2026-10-28.json) | 48 fixture jobs, two healthy reload cycles and two complete super-resolution image runs |
 | [Vision examples](vision-hardware-2026-10-29.json) | Six denoising/classification image runs, 657 physical application submissions, batch reuse and three healthy stops/startups |
 | [Vision compiler reproduction](vision-reproduction-2026-10-29.json) | Fresh outputs for all 15 pinned vision loadables; existing super-resolution artifact unchanged |

@@ -1,6 +1,6 @@
 # Experimental N1X super-resolution demo
 
-Also available: [DnCNN denoising and ResNet-18 classification](vision.md).
+Also available: [DnCNN denoising and ResNet-18 classification](vision.md) · [Heterogeneous ONNX Execution Provider demo (`./demo-onnx`)](ort_demo.py).
 
 This example applies the ONNX Model Zoo sub-pixel CNN to a complete image,
 producing a 3x larger result through NVIDIA's original Linux cuDLA frontend

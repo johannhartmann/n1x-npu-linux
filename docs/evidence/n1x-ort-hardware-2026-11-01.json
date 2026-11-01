@@ -1,0 +1,138 @@
+{
+  "schema": "n1x-ort-hardware-qualification-v1",
+  "date": "2026-11-01",
+  "kernel": "7.2.8-23-omarchy-p16-asus-npu2",
+  "boot_id": "ef2d77df-b2c7-4cda-8ace-e8cf1a511b2b",
+  "platform_profile": "balanced",
+  "artifacts": {
+    "libn1x_ort_sha256": "1f1faa96cd3f34ab951d8402a8f70d21e02679d75df2b67fde0d8425353a0016",
+    "libn1x_compiler_sha256": "fd041f029b77b4d77a5c1b514e2d012274c2e423ce902a07a34156c46e872d4f",
+    "libn1x_dla_sha256": "18d10a2472c94c2ef3d9c579e4198efc6dbeed32479e83feb7701a860ec48443"
+  },
+  "transport_before": {
+    "abi_version": 2,
+    "capabilities": 63,
+    "max_image_bytes": 33554432,
+    "max_addresses": 512,
+    "retained_bytes": 0,
+    "retain_limit": 67108864,
+    "retained_jobs": 0,
+    "max_jobs": 128,
+    "reserved": 0
+  },
+  "transport_after": {
+    "abi_version": 2,
+    "capabilities": 63,
+    "max_image_bytes": 33554432,
+    "max_addresses": 512,
+    "retained_bytes": 22360064,
+    "retain_limit": 67108864,
+    "retained_jobs": 7,
+    "max_jobs": 128,
+    "reserved": 0
+  },
+  "mnist12": {
+    "model_sha256": "5c688690f8bacf667d4c2074af5ad0646ca328d7ab03eccf944a65b320171bdd",
+    "dla_stages": 1,
+    "host_stages": 0,
+    "nvda_bytes": 2975356,
+    "fp16_max_abs_err": 0.005588531494140625,
+    "fp16_rmse": 0.0026139612309634686,
+    "fp16_exec_ms": 0.782,
+    "fp16_reexec_ms": 0.354,
+    "int8_cosine_sim": 0.9998530745506287,
+    "top1_match": true,
+    "used_resubmit": true,
+    "ref_logits": [
+      -3.2571,
+      3.7367,
+      -5.3589,
+      0.8591,
+      -11.54,
+      -0.8627,
+      -8.4397,
+      4.7316,
+      6.2407,
+      0.5751
+    ],
+    "fp16_logits": [
+      -3.2578,
+      3.7363,
+      -5.3594,
+      0.8594,
+      -11.5391,
+      -0.8647,
+      -8.4453,
+      4.7305,
+      6.2461,
+      0.5757
+    ],
+    "int8_logits": [
+      -3.362,
+      3.5438,
+      -5.3611,
+      0.9087,
+      -11.6309,
+      -0.9087,
+      -8.3597,
+      4.6342,
+      6.3606,
+      0.6361
+    ]
+  },
+  "superres10": {
+    "model_sha256": "85f36ff88cc504a24af5e0602148bc56a8aa09a58eca8c0da2756f3e8186035e",
+    "output_shape": [
+      1,
+      1,
+      192,
+      192
+    ],
+    "fp16_max_abs_err": 0.0015102624893188477,
+    "fp16_rmse": 0.00024402543203905225,
+    "fp16_exec_ms": 1.646,
+    "fp16_reexec_ms": 1.029,
+    "dla_stages": 1,
+    "host_stages": 1,
+    "nvda_bytes": 3193548,
+    "used_resubmit": true
+  },
+  "three_stage_dla_host_dla": {
+    "fp16_max_abs_err": 0.00013715028762817383,
+    "int8_mae": 0.0005379676003940403,
+    "stages": [
+      "DLA",
+      "Host",
+      "DLA"
+    ]
+  },
+  "shutdown": {
+    "attempted": "1",
+    "stage": "released",
+    "error": "0",
+    "accepted": "1",
+    "state_valid": "1",
+    "state": "0x7",
+    "hardware_off": "1",
+    "released": "1",
+    "hfrp_held": "0",
+    "upload_held": "0",
+    "irq_owned": "0x10801d0",
+    "irq_before": "0x1001e05",
+    "irq_after": "0x1001e05",
+    "irq_readback": "1",
+    "power_attempted": "1",
+    "power_head_attempted": "1",
+    "power_reply_valid": "1",
+    "power_reply": "0xb06",
+    "power_length": "2",
+    "power_payload": "4300",
+    "query_head_attempted": "1",
+    "query_reply_valid": "1",
+    "query_reply": "0xc05",
+    "query_length": "1",
+    "query_payload": "07",
+    "channel": "1",
+    "pending": "65535"
+  }
+}
