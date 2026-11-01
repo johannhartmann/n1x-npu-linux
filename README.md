@@ -3,10 +3,12 @@
 [![Offline checks](https://github.com/johannhartmann/n1x-npu-linux/actions/workflows/offline.yml/badge.svg)](https://github.com/johannhartmann/n1x-npu-linux/actions/workflows/offline.yml)
 [GPL-2.0-only + MIT](LICENSING.md) · [Setup](docs/setup.md) · [Support status](docs/status.md) · [Updates](docs/updates.md) · [Contributing](CONTRIBUTING.md)
 
-Experimental Linux driver and **NVIDIA cuDLA backend for the N1X NPU/DLA** in
-the ASUS ProArt P16 H7607BA / RTX Spark. Run real inference through NVIDIA's
-original Linux cuDLA frontend, rebuild the checked model fixtures, and explore
-the recovered firmware and driver protocols.
+Experimental Linux driver, **native `t254` compiler (`FP16`/`INT8`)**, **heterogeneous
+ONNX Execution Provider (`N1xInferenceSession`)**, and **NVIDIA cuDLA backend for the
+N1X NPU/DLA** in the ASUS ProArt P16 H7607BA / RTX Spark. Compile and run standard
+ONNX Model Zoo graphs (`emotion-ferplus-8`, `mnist-12`, `super-resolution-10`) or
+execute inference through NVIDIA's original Linux cuDLA frontend, rebuild the
+checked model fixtures, and explore the recovered firmware and driver protocols.
 
 The implementation was reconstructed from NVIDIA's Windows ARM64 driver and
 checked against original-code emulation, public Jetson sources and physical
@@ -63,7 +65,8 @@ research tools, not a generic distribution/kernel installer.
 | Heterogeneous ONNX Execution Provider (`libn1x_ort.so`, `N1xInferenceSession`) | [Design & qualification](docs/designs/n1x-onnx-execution-provider.md): C++ `CHW16`/`CHW32` surface packing, cycle-free `DLA + Host` graph partitioning, `INT8` auto-calibration, and `REEXEC_IO` reuse |
 | Dynamic frequency scaling (`npu_freq_khz`) | HFRP clock scaling from `892.8 MHz` to `1500 MHz` (`2.31x` measured throughput increase on physical NPU) |
 
-[Exact versions, hashes and measurements](docs/evidence/npu-hardware-2026-10-28.json)
+[Exact cuDLA/reload measurements](docs/evidence/npu-hardware-2026-10-28.json)
+· [ONNX EP & compiler measurements](docs/evidence/n1x-ort-hardware-2026-11-01.json)
 · [Current limits](docs/status.md)
 
 This is an experimental driver. The packaged `n1x-npu.service` can perform the
@@ -105,16 +108,24 @@ are separate and preserve the selected power profile.
 ## Architecture
 
 ```text
-unprivileged image/validation application
-  → fixed binary protocol → root-owned capability-confined broker
-  → CUDA buffers
-  → NVIDIA's original libcudla.so.1
-  → this project's libnvcudla.so backend
-  → blocking CUDA staging + RAWIO-only Linux accel transport
-  → Linux driver → extracted firmware → physical N1X DLA
+1. Heterogeneous ONNX Execution Provider & Native Compiler (./demo-onnx, N1xInferenceSession)
+   .onnx model (FP16 or auto-calibrated INT8)
+     → runtime/n1x_ort.py (canonicalization, DLA + Host graph partitioning, SHA-256 .nvda cache)
+     → runtime/libn1x_compiler.so (in-process t254 DAG compiler → .nvda loadables)
+     → runtime/libn1x_ort.so (C++ CHW16/CHW32 surface packing + retained REEXEC_IO)
+     → runtime/libn1x_dla.so → /dev/accel/accel0 → Linux driver → physical N1X DLA
+
+2. NVIDIA cuDLA Frontend & Confined IPC Broker (./demo-superres, ./demo-vision)
+   unprivileged image/validation application
+     → fixed binary protocol → root-owned capability-confined broker
+     → CUDA buffers
+     → NVIDIA's original libcudla.so.1
+     → this project's libnvcudla.so backend
+     → blocking CUDA staging + RAWIO-only Linux accel transport
+     → Linux driver → extracted firmware → physical N1X DLA
 ```
 
-[cuDLA API and backend](docs/cudla-backend.md) · [Shutdown and reload](docs/shutdown-reload.md)
+[ONNX Execution Provider design](docs/designs/n1x-onnx-execution-provider.md) · [cuDLA API and backend](docs/cudla-backend.md) · [Shutdown and reload](docs/shutdown-reload.md)
 
 ## Repository map
 
