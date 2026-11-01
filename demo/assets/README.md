@@ -39,3 +39,25 @@ overlapping windows. CPU work subtracted predicted noise and encoded the output.
 The [vision receipt](../../docs/evidence/vision-hardware-2026-10-29.json) records
 the original input hash, exact outputs, quality scores and independent reference
 comparison. No pretrained weights or vendor instructions are distributed here.
+
+## FER+ facial emotion recognition example (`./demo-onnx --model emotion`)
+
+| File | Dimensions | SHA-256 |
+| --- | --- | --- |
+| [emotion-ferplus-gallery-dla.png](emotion-ferplus-gallery-dla.png) | 1080x520 | `933733179625438bcec69679960cbf8309ae223007540af39d84c19831740dc0` |
+
+This gallery composite is rendered directly from the physical N1X DLA outputs
+recorded by [`./demo-onnx --model emotion`](../ort_demo.py) in `FP16` and
+auto-calibrated `INT8` (`results/emotion-ferplus-fp16/result.json` and
+`results/emotion-ferplus-int8/result.json`), matching the
+[ONNX Execution Provider hardware receipt](../../docs/evidence/n1x-ort-hardware-2026-11-01.json).
+All 37 ONNX nodes (8 `Conv`, 8 `MaxPool`, 3 `Dense`/`MatMul` layers, plus constant
+`Sub`/`Div` input normalization) are lowered into a single `t254` `.nvda` loadable
+(`1 DLAStage`, `0 HostStages`, `21.21 MB` in `FP16` / `12.47 MB` in `INT8`) and
+executed across the 6-preset 64x64 facial expression gallery with retained
+`REEXEC_IO` reuse (`1.37 ms` in `FP16`, `0.98 ms` in `INT8`), matching the
+independent FP32 ONNX reference top-1 prediction on all `6/6` expressions.
+The source model is ONNX Model Zoo's MIT-licensed `emotion-ferplus-8.onnx`,
+acquired separately via `scripts/prepare_inputs.py --fetch` as described in
+[NOTICE](../../NOTICE). No model weights or `.nvda` loadables are included with
+this image.

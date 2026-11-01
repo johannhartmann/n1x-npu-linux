@@ -110,6 +110,9 @@
     "gallery_top1_matches": "6/6",
     "used_resubmit": true
   },
+  "published_assets": {
+    "emotion-ferplus-gallery-dla.png": "933733179625438bcec69679960cbf8309ae223007540af39d84c19831740dc0"
+  },
   "three_stage_dla_host_dla": {
     "fp16_max_abs_err": 0.00013715028762817383,
     "int8_mae": 0.0005379676003940403,

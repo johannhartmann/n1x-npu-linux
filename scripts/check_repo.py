@@ -106,6 +106,11 @@ def main():
         path = ROOT/'demo/assets'/name
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             errors.append(f'{path.relative_to(ROOT)}: differs from the physical vision receipt')
+    ort = json.loads((ROOT/'docs/evidence/n1x-ort-hardware-2026-11-01.json').read_text())
+    for name, expected in ort.get('published_assets', {}).items():
+        path = ROOT/'demo/assets'/name
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            errors.append(f'{path.relative_to(ROOT)}: differs from the physical ORT receipt')
     if errors:
         raise SystemExit('\n'.join(errors))
     print(f'Repository checks passed: {counts["python"]} Python files, '
