@@ -720,12 +720,19 @@ extern "C" int n1x_compile_json_graph(const char *json_spec,
                 N1xDlaWeights kw = parse_weights(l, "weights", default_weight_dtype, weight_arena);
                 N1xDlaWeights bw = parse_weights(l, "bias", default_weight_dtype, weight_arena);
                 uint8_t bias_mode = parse_bias_mode(l.at("bias_mode"), bw.count > 0);
-                N1xDlaDims2 kernel{in_dims.h, in_dims.w};
+                N1xDlaDims2 kernel{in_dims.h > 0 ? in_dims.h : 1, in_dims.w > 0 ? in_dims.w : 1};
+                if (l.has("kernel")) {
+                    kernel = parse_dims2(l.at("kernel"), kernel.h, kernel.w);
+                }
                 N1xDlaDims2 zero_pad{0, 0};
                 N1xDlaDims2 unit{1, 1};
+                N1xDlaDims2 fc_stride{
+                    std::max<int32_t>(1, std::min<int32_t>(kernel.h, 8)),
+                    std::max<int32_t>(1, std::min<int32_t>(kernel.w, 8)),
+                };
                 check_dla(NvDlaNetworkAddConvolution(
                               network, inp, out_channels, 0,
-                              kernel, zero_pad, zero_pad, unit, unit,
+                              kernel, zero_pad, zero_pad, fc_stride, unit,
                               kw, bw, bias_mode, 1, &layer),
                           "NvDlaNetworkAddConvolution(FullyConnected)");
             } else if (op == "Activation" || op == "Relu" || op == "Sigmoid" || op == "Tanh" || op == "Clip" || op == "LeakyRelu") {

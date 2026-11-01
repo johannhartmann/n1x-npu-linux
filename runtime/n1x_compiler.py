@@ -261,6 +261,10 @@ def onnx_to_dag(
                 for d in inp.type.tensor_type.shape.dim
             ]
             shape = dims
+        if len(shape) == 2:
+            shape = [shape[0], shape[1], 1, 1]
+        elif len(shape) == 3:
+            shape = [shape[0], shape[1], 1, shape[2]]
         tensor_shapes[inp.name] = shape
         inputs_spec.append({"name": inp.name, "shape": shape})
 
@@ -293,6 +297,14 @@ def onnx_to_dag(
             continue
         if op in ("Identity", "Dropout", "Flatten", "Reshape", "Squeeze", "Unsqueeze"):
             src = resolve(node.input[0])
+            if src in initializers:
+                arr = initializers[src]
+                if op == "Reshape" and len(node.input) > 1 and resolve(node.input[1]) in initializers:
+                    target_sh = [int(x) for x in initializers[resolve(node.input[1])].reshape(-1)]
+                    initializers[node.output[0]] = arr.reshape(target_sh)
+                else:
+                    initializers[node.output[0]] = arr
+                continue
             alias_map[node.output[0]] = src
             if src in tensor_shapes:
                 tensor_shapes[node.output[0]] = tensor_shapes[src]
@@ -301,6 +313,9 @@ def onnx_to_dag(
             src = resolve(node.input[0])
             attrs = get_attrs(node)
             perm = list(attrs.get("perm", []))
+            if src in initializers:
+                initializers[node.output[0]] = np.transpose(initializers[src], axes=perm if perm else None)
+                continue
             # 6D Reshape -> Transpose([0, 1, 4, 2, 5, 3]) -> Reshape is opset-10 PixelShuffle
             if perm == [0, 1, 4, 2, 5, 3]:
                 if not include_pixel_shuffle:
@@ -340,9 +355,23 @@ def onnx_to_dag(
             kshape = list(attrs.get("kernel_shape", w_arr.shape[2:]))
             strides = list(attrs.get("strides", [1, 1]))
             dilations = list(attrs.get("dilations", [1, 1]))
-            pads = list(attrs.get("pads", [0, 0, 0, 0]))
-            if len(pads) == 2:
-                pads = [pads[0], pads[1], pads[0], pads[1]]
+            auto_pad = str(attrs.get("auto_pad", "NOTSET"))
+            if "pads" in attrs:
+                pads = list(attrs["pads"])
+                if len(pads) == 2:
+                    pads = [pads[0], pads[1], pads[0], pads[1]]
+            elif auto_pad in ("SAME_UPPER", "SAME_LOWER") and inp_name in tensor_shapes:
+                _, _, ih, iw = tensor_shapes[inp_name]
+                oh_same = (ih + strides[0] - 1) // strides[0]
+                ow_same = (iw + strides[1] - 1) // strides[1]
+                ph_tot = max(0, (oh_same - 1) * strides[0] + dilations[0] * (kshape[0] - 1) + 1 - ih)
+                pw_tot = max(0, (ow_same - 1) * strides[1] + dilations[1] * (kshape[1] - 1) + 1 - iw)
+                if auto_pad == "SAME_UPPER":
+                    pads = [ph_tot // 2, pw_tot // 2, ph_tot - ph_tot // 2, pw_tot - pw_tot // 2]
+                else:
+                    pads = [ph_tot - ph_tot // 2, pw_tot - pw_tot // 2, ph_tot // 2, pw_tot // 2]
+            else:
+                pads = [0, 0, 0, 0]
             wb64, wdt, _ = _encode_b64_array(w_arr, weight_dtype)
             layer_dict: dict[str, Any] = {
                 "op": "Convolution" if op == "Conv" else "Deconvolution",
@@ -382,11 +411,14 @@ def onnx_to_dag(
             out_channels = int(w_arr.shape[0])
             b_arr = initializers[node.input[2]] if len(node.input) > 2 and node.input[2] else None
             wb64, wdt, _ = _encode_b64_array(w_arr, weight_dtype)
+            in_sh = tensor_shapes.get(inp_name, [1, int(w_arr.size // max(1, out_channels)), 1, 1])
+            fc_kernel = [int(in_sh[2]), int(in_sh[3])] if len(in_sh) == 4 else [1, 1]
             layer_dict = {
                 "op": "FullyConnected",
                 "input": inp_name,
                 "output": out_name,
                 "out_channels": out_channels,
+                "kernel": fc_kernel,
                 "weights_b64": wb64,
                 "weights_dtype": wdt,
                 "bias_mode": "channel" if b_arr is not None else "none",
@@ -452,10 +484,14 @@ def onnx_to_dag(
         elif op in ("Add", "Sub", "Mul", "Max", "Min"):
             in0 = resolve(node.input[0])
             in1 = resolve(node.input[1])
-            if in1 in initializers and op in ("Add", "Mul"):
-                const_arr = initializers[in1].reshape(-1)
+            if in0 in initializers and in1 not in initializers and op in ("Add", "Mul"):
+                in0, in1 = in1, in0
+            if in1 in initializers and op in ("Add", "Sub", "Mul"):
+                const_arr = np.asarray(initializers[in1], dtype=np.float32).reshape(-1)
+                if op == "Sub":
+                    const_arr = -const_arr
                 c_len = int(const_arr.size)
-                shift = const_arr if op == "Add" else np.zeros(c_len, dtype=np.float32)
+                shift = const_arr if op in ("Add", "Sub") else np.zeros(c_len, dtype=np.float32)
                 scale = const_arr if op == "Mul" else np.ones(c_len, dtype=np.float32)
                 sb64, sdt, _ = _encode_b64_array(shift, weight_dtype)
                 scb64, scdt, _ = _encode_b64_array(scale, weight_dtype)
@@ -482,6 +518,8 @@ def onnx_to_dag(
                 )
             if in0 in tensor_shapes:
                 tensor_shapes[out_name] = list(tensor_shapes[in0])
+            elif in1 in tensor_shapes:
+                tensor_shapes[out_name] = list(tensor_shapes[in1])
 
         elif op == "BatchNormalization":
             inp_name = resolve(node.input[0])

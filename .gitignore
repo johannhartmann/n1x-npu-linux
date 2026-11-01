@@ -14,6 +14,8 @@ modules.order
 /runtime/libn1x_dla.so
 /runtime/libn1x_compiler.so
 /runtime/n1x-compile
+/runtime/libn1x_ort.so
+/runtime/n1x-ort-run
 /runtime/cudla/
 
 # Local process crash dumps

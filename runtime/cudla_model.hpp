@@ -1,9 +1,20 @@
 // SPDX-License-Identifier: MIT
 #pragma once
-#include <cudla.h>
 #include <cstdint>
 #include <vector>
 #include "uapi/n1x_dla_accel.h"
+#if __has_include(<cudla.h>)
+#include <cudla.h>
+#else
+#define CUDLA_LOADABLE_TENSOR_DESC_NUM_STRIDES 8
+struct cudlaModuleTensorDescriptor {
+    char name[88];
+    uint64_t size;
+    uint64_t n, c, h, w;
+    uint8_t dataFormat, dataType, dataCategory, pixelFormat, pixelMapping;
+    uint32_t stride[CUDLA_LOADABLE_TENSOR_DESC_NUM_STRIDES];
+};
+#endif
 
 namespace n1x {
 struct Tensor {
