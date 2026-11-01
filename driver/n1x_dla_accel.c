@@ -273,6 +273,7 @@ static int reexec_ioctl(struct drm_device *drm, void *data, struct drm_file *fil
     struct n1x_dla_accel_reexec *req = data;
     struct n1x_dla_accel_patch *patches;
     struct n1x_accel_job *job = NULL, *candidate;
+    struct n1x_dla_job saved;
     struct n1x_dla_job_ops ops;
     void **copies;
     size_t total = 0;
@@ -356,14 +357,30 @@ static int reexec_ioctl(struct drm_device *drm, void *data, struct drm_file *fil
      * Program, address list and allocation remain resident. This is neither
      * error recovery nor a whole-device DMA-free/unmap boundary.
      */
-    for (i = 0; i < req->num_patches; i++)
-        memcpy(job->task.buffer + N1X_JOB_PREFIX + patches[i].offset, copies[i], patches[i].bytes);
-    job->task = (struct n1x_dla_job){.buffer = job->task.buffer, .dma = job->task.dma};
-    job->id = ++accel->last_id; /* Old READ IDs cannot observe the replacement. */
+    for (i = 0; i < req->num_patches; i++) {
+        u8 *dst = job->task.buffer + N1X_JOB_PREFIX + patches[i].offset;
+        u8 *src = copies[i];
+        size_t b;
+        for (b = 0; b < patches[i].bytes; b++) {
+            u8 tmp = dst[b];
+            dst[b] = src[b];
+            src[b] = tmp;
+        }
+    }
+    saved = job->task;
+    job->task = (struct n1x_dla_job){.buffer = saved.buffer, .dma = saved.dma};
     ops = (struct n1x_dla_job_ops){job, publish, read_fence};
     err = accel->submit(drm->dev, &job->task, &ops);
-    if (!job->task.attempted && !err)
-        err = -EIO;
+    if (!job->task.attempted) {
+        for (i = 0; i < req->num_patches; i++)
+            memcpy(job->task.buffer + N1X_JOB_PREFIX + patches[i].offset,
+                   copies[i], patches[i].bytes);
+        job->task = saved;
+        if (!err)
+            err = -EIO;
+        goto unlock;
+    }
+    job->id = ++accel->last_id; /* Old READ IDs cannot observe the replacement. */
     req->new_job_id = job->id;
     req->status = job->task.error = err;
     req->completed = !err && job->task.verified;

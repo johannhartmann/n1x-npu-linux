@@ -114,7 +114,7 @@ static ssize_t dma_state_show(struct device *dev,
 			size += sysfs_emit_at(buf, size, "stream_id[%u]=0x%x\n", i, spec->ids[i]);
 	return size;
 }
-static DEVICE_ATTR_RO(dma_state);
+static DEVICE_ATTR(dma_state, 0400, dma_state_show, NULL);
 
 static ssize_t registers_show(struct device *dev,
 			     struct device_attribute *attr, char *buf)
@@ -163,7 +163,9 @@ static int n1x_probe(struct platform_device *pdev)
 
 	if (!dmi_match(DMI_SYS_VENDOR, "ASUS") ||
 	    !dmi_match(DMI_PRODUCT_NAME, "ProArt P16 H7607BA") ||
-	    !dmi_match(DMI_BIOS_VERSION, "H7607BA.300") || !adev)
+	    !dmi_match(DMI_BIOS_VERSION, "H7607BA.300") || !adev ||
+	    (strcmp(acpi_device_hid(adev), "NVDA8600") &&
+	     strcmp(acpi_device_hid(adev), "NVDA200A")))
 		return -ENODEV;
 	sroot = !strcmp(acpi_device_hid(adev), "NVDA8600");
 	if (ACPI_FAILURE(acpi_evaluate_integer(adev->handle, "_HRV", NULL, &revision)) ||
@@ -223,6 +225,7 @@ static struct platform_driver n1x_driver = {
 		.name = "n1x-npu-observe",
 		.acpi_match_table = n1x_acpi_ids,
 		.dev_groups = n1x_groups,
+		.suppress_bind_attrs = true,
 	},
 };
 module_platform_driver(n1x_driver);

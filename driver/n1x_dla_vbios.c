@@ -213,3 +213,25 @@ int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
     *location = found;
     return 0;
 }
+
+int n1x_dla_verify_vbios_pcir(const __u8 *data, size_t size,
+                               const struct n1x_dla_vbios_location *location)
+{
+    size_t pcir_offset;
+    const __u8 *pcir;
+
+    if (!data || !location)
+        return -EINVAL;
+    if (!fits(location->rom_base, 0x1a, size) ||
+        get16(data + location->rom_base) != 0xaa55)
+        return -EBADMSG;
+    pcir_offset = get16(data + location->rom_base + 0x18);
+    if (pcir_offset < 0x1a || !fits(location->rom_base, pcir_offset + 8, size))
+        return -EBADMSG;
+    pcir = data + location->rom_base + pcir_offset;
+    if (get32(pcir) != 0x52494350U)
+        return -EBADMSG;
+    if (get16(pcir + 4) != 0x10deU || get16(pcir + 6) != 0x2e03U)
+        return -EOPNOTSUPP;
+    return 0;
+}

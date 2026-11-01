@@ -25,6 +25,7 @@ typedef uint32_t u32;
 #define N1X_BOOT_KERNEL "7.2.8-23-rtx-spark-npu"
 struct {struct {char release[80];} name;} init_uts_ns;
 enum {DMI_SYS_VENDOR,DMI_PRODUCT_NAME,DMI_BIOS_VERSION};
+static bool strict_platform = true;
 static const char *dmi_values[3];
 static bool dmi_match(int key,const char *expected) {return !strcmp(dmi_values[key],expected);}
 struct acpi_device {struct {bool cca_seen,coherent_dma;} flags;};
@@ -73,7 +74,11 @@ int main(void)
  assert(n1x_boot_machine());strcpy(init_uts_ns.name.release,"7.2.8-23-omarchy-p16-asus");
  assert(!n1x_boot_machine());strcpy(init_uts_ns.name.release,N1X_BOOT_KERNEL);
  for(int i=0;i<3;i++){const char *saved=dmi_values[i];dmi_values[i]="other";
- assert(!n1x_boot_machine());dmi_values[i]=saved;}
+ assert(!n1x_boot_machine());strict_platform=false;assert(n1x_boot_machine());
+ strict_platform=true;dmi_values[i]=saved;}
+ strcpy(init_uts_ns.name.release,"7.2.8-generic-arm64");
+ strict_platform=false;assert(n1x_boot_machine());
+ strict_platform=true;strcpy(init_uts_ns.name.release,N1X_BOOT_KERNEL);
  for(int root=0;root<2;root++){
  struct n1x_boot_endpoint ep=reset(root);check(&ep,0);
  ep=reset(root);domain.type=11;check(&ep,0);

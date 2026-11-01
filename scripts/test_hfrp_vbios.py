@@ -58,6 +58,7 @@ def compare_c(pe):
     lib.n1x_dla_decode_vbios_policy.argtypes = [pointer, ctypes.c_size_t]*3+[ctypes.POINTER(Policy)]
     lib.n1x_dla_parse_vbios_policy.argtypes = [pointer, ctypes.c_size_t, ctypes.POINTER(Policy),
                                               ctypes.POINTER(Location)]
+    lib.n1x_dla_verify_vbios_pcir.argtypes = [pointer, ctypes.c_size_t, ctypes.POINTER(Location)]
 
     def parse(image, null=None):
         result, location = Policy(), Location()
@@ -138,9 +139,20 @@ def compare_c(pe):
         assert decode(tables, null=null)[0] == -errno.EINVAL
         failures += 1
     for entry_size in (6, 8):
-        code, result, location = parse(fixture(rom_base=0x1000, bit_offset=0x1100, entry_size=entry_size))
+        img = bytearray(fixture(rom_base=0x1000, bit_offset=0x1100, entry_size=entry_size))
+        code, result, location = parse(img)
         assert code == 0 and location.rom_base == 0x1000 and location.frequency_offset == 0x1500
         assert result.frequency_khz == 650000
+        buf = (ctypes.c_uint8*len(img)).from_buffer_copy(img)
+        assert lib.n1x_dla_verify_vbios_pcir(buf, len(img), ctypes.byref(location)) == 0
+        bad_dev = bytearray(img)
+        struct.pack_into('<H', bad_dev, 0x1000 + 0x46, 0x2e04)
+        bad_buf = (ctypes.c_uint8*len(bad_dev)).from_buffer_copy(bad_dev)
+        assert lib.n1x_dla_verify_vbios_pcir(bad_buf, len(bad_dev), ctypes.byref(location)) == -errno.EOPNOTSUPP
+        bad_sig = bytearray(img)
+        struct.pack_into('<I', bad_sig, 0x1000 + 0x40, 0x5344504e)
+        sig_buf = (ctypes.c_uint8*len(bad_sig)).from_buffer_copy(bad_sig)
+        assert lib.n1x_dla_verify_vbios_pcir(sig_buf, len(bad_sig), ctypes.byref(location)) == -errno.EBADMSG
     invalid_images = []
     for size in (0, 1, 11):
         invalid_images.append((bytes(size), -errno.EMSGSIZE))
@@ -200,6 +212,8 @@ def fixture(*, rom_base=0, bit_offset=0x100, entry_size=8, token=0x6c,
             table_version=0x10, corrupt_checksum=False):
     image = bytearray(0x110000)
     struct.pack_into('<H', image, rom_base, 0xaa55)
+    struct.pack_into('<H', image, rom_base+0x18, 0x40)
+    struct.pack_into('<IHH', image, rom_base+0x40, 0x52494350, 0x10de, 0x2e03)
     # BIT signature/version/header-size/entry-size/count/checksum.
     header = bytearray(struct.pack('<HIHBBBB', 0xb8ff, 0x544942, 0x100, 12, entry_size, 1, 0))
     header[-1] = (-sum(header)) & 255
