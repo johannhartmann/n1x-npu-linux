@@ -91,6 +91,10 @@ That discovery warning does not indicate a fallback from DLA inference.
 
 The top-level [`./demo-onnx`](../demo-onnx) launcher ([`demo/ort_demo.py`](ort_demo.py)) compiles, partitions, caches, and executes ONNX Model Zoo graphs through [`N1xInferenceSession`](../runtime/n1x_ort.py) in `FP16` and auto-calibrated `INT8`, producing `result.json` and an interactive `report.html`:
 
+<p><a href="assets/emotion-ferplus-gallery-dla.png"><img src="assets/emotion-ferplus-gallery-dla.png" width="760" alt="FER+ 6-expression gallery evaluated on the physical N1X DLA in FP16 and INT8"></a></p>
+
+[View the published FER+ gallery artifact](assets/emotion-ferplus-gallery-dla.png) · [Asset provenance and hashes](assets/README.md#fer-facial-emotion-recognition-example-demo-onnx---model-emotion)
+
 | Model (`--model`) | Stages (`DLA` / `Host`) | Precision | `.nvda` size | Initial `EXEC` | Retained `REEXEC_IO` | Accuracy vs. FP32 ONNX Reference |
 | --- | --- | --- | --- | --- | --- | --- |
 | `emotion` (`emotion-ferplus-8.onnx`) | `1 DLA` / `0 Host` (37 nodes) | `FP16` | `21.21 MB` | `4.07 ms` | `1.37 ms` | `max_err = 0.001340`, `RMSE = 0.000811`, `cos = 1.000000` (`6/6` gallery top-1) |
@@ -100,11 +104,22 @@ The top-level [`./demo-onnx`](../demo-onnx) launcher ([`demo/ort_demo.py`](ort_d
 
 See the [ONNX Execution Provider hardware receipt](../docs/evidence/n1x-ort-hardware-2026-11-01.json) and [design document](../docs/designs/n1x-onnx-execution-provider.md).
 
-Example invocations (with `/dev/accel/accel0` started):
+### Pinned ONNX source models and artifacts
+
+`venv/bin/python scripts/prepare_inputs.py --fetch` downloads and verifies the three ONNX Model Zoo graphs into ignored `sources/demo-research/`:
+
+| Model alias (`--model`) | Local source path | Source ONNX SHA-256 | Compiled `.nvda` stages |
+| --- | --- | --- | --- |
+| `emotion` | `sources/demo-research/emotion-ferplus-8.onnx` | `a2a2ba6a335a3b29c21acb6272f962bd3d47f84952aaffa03b60986e04efa61c` | `1 DLAStage` (`21,210,412` B `FP16` / `12,465,324` B `INT8`), cached in `~/.cache/n1x_ort` |
+| `mnist` | `sources/demo-research/mnist-12.onnx` | `5c688690f8bacf667d4c2074af5ad0646ca328d7ab03eccf944a65b320171bdd` | `1 DLAStage` (`2,975,356` B `FP16` / `INT8`), cached in `~/.cache/n1x_ort` |
+| `superres` | `sources/demo-research/super-resolution-10.onnx` | `85f36ff88cc504a24af5e0602148bc56a8aa09a58eca8c0da2756f3e8186035e` | `1 DLAStage` (`3,193,548` B `FP16`) + `1 HostStage` (`DepthToSpace`) |
+
+Example invocations (with `make runtime` built and `/dev/accel/accel0` started; add `--simulate` to run without NPU hardware):
 
 ```sh
 ./demo-onnx --model emotion --precision fp16 --output-dir results/emotion-ferplus-fp16
 ./demo-onnx --model emotion --precision int8 --output-dir results/emotion-ferplus-int8
 ./demo-onnx --model mnist --precision fp16 --output-dir results/mnist-fp16
+./demo-onnx --model mnist --precision int8 --output-dir results/mnist-int8
 ./demo-onnx --model superres --precision fp16 --output-dir results/superres-ort-fp16
 ```

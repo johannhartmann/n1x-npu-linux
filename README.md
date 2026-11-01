@@ -32,11 +32,25 @@ NASA sample, distributed by scikit-image. [Image provenance and hashes](demo/ass
 The learned four-convolution graph runs on DLA; CPU work handles image preparation,
 chroma resizing, pixel rearrangement and independent validation.
 
-**[Run the demo →](demo/README.md)**
+**[Run the super-resolution demo →](demo/README.md)**
 
-Additional examples: [full-image DnCNN denoising and ResNet-18 classification](demo/vision.md) and
-[`./demo-onnx` heterogeneous ONNX Execution Provider demos (`emotion-ferplus-8`, `mnist-12`, `super-resolution-10`)](demo/README.md#heterogeneous-onnx-execution-provider-demo-demo-onnx),
-with physical NPU execution, `FP16`/`INT8` compilation, and independent numerical checks.
+### FER+ facial emotion recognition on the N1X DLA (`./demo-onnx --model emotion`)
+
+The 6-preset 64×64 facial expression gallery below ran end-to-end on the physical
+N1X DLA through [`N1xInferenceSession`](runtime/n1x_ort.py) (`1 DLAStage`, `0 HostStages`
+for all 37 nodes of ONNX Model Zoo's `emotion-ferplus-8.onnx`, `1.37 ms` in `FP16`
+and `0.98 ms` in auto-calibrated `INT8` via `REEXEC_IO`, `6/6` top-1 agreement with
+the FP32 ONNX reference):
+
+<p><a href="demo/assets/emotion-ferplus-gallery-dla.png"><img src="demo/assets/emotion-ferplus-gallery-dla.png" width="760" alt="FER+ 6-expression gallery evaluated on the physical N1X DLA in FP16 and INT8"></a></p>
+
+```sh
+./demo-onnx --model emotion --precision fp16 --output-dir results/emotion-ferplus-fp16
+./demo-onnx --model emotion --precision int8 --output-dir results/emotion-ferplus-int8
+```
+
+**[Run `./demo-onnx` (`emotion`, `mnist`, `superres`) →](demo/README.md#heterogeneous-onnx-execution-provider-demo-demo-onnx)** ·
+Additional examples: [full-image DnCNN denoising and ResNet-18 classification](demo/vision.md).
 
 ## Supported platform
 

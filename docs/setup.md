@@ -58,10 +58,11 @@ uv pip install --python sources/superres-venv/bin/python --require-hashes \
 ## 3. Acquire the pinned inputs
 
 The input helper downloads the public cuDLA archive, native compiler Debian
-package, super-resolution ONNX model and NASA sample photograph used by the
-demo. It also invokes the existing range-based Windows compiler extractor. Hashes are
-checked before use; existing mismatched files are refused. Packages are
-unpacked into ignored directories and are not installed system-wide.
+package, ONNX Model Zoo models (`super-resolution-10.onnx`, `emotion-ferplus-8.onnx`,
+`mnist-12.onnx`) and NASA sample photograph used by the demos. It also invokes the
+existing range-based Windows compiler extractor. Hashes are checked before use;
+existing mismatched files are refused. Packages are unpacked into ignored
+directories and are not installed system-wide.
 
 ```sh
 venv/bin/python scripts/prepare_inputs.py --fetch

@@ -17,11 +17,15 @@ The linux-nv-oot implementation is GPL-2.0-only; existing GPL declarations in
 this repository are retained. Generated vendor disassembly/decompiler exports
 stay in ignored results/ and are not distributed here.
 
-Super-resolution source model:
-  ONNX Model Zoo, sub_pixel_cnn_2016 / super-resolution-10.onnx
+Super-resolution, emotion recognition and MNIST source models:
+  ONNX Model Zoo, sub_pixel_cnn_2016 / super-resolution-10.onnx (Apache-2.0)
   https://github.com/onnx/models/tree/main/validated/vision/super_resolution/sub_pixel_cnn_2016
-  The model’s source README identifies Apache-2.0. The model is downloaded
-  separately, hash-checked and kept in ignored sources/.
+  ONNX Model Zoo, emotion_ferplus / emotion-ferplus-8.onnx (MIT)
+  https://github.com/onnx/models/tree/main/validated/vision/body_analysis/emotion_ferplus
+  ONNX Model Zoo, mnist / mnist-12.onnx (MIT)
+  https://github.com/onnx/models/tree/main/validated/vision/classification/mnist
+  These models are downloaded separately via scripts/prepare_inputs.py,
+  hash-checked and kept in ignored sources/demo-research/.
 
 Included demo photograph and measured result:
   NASA photograph of astronaut Eileen Collins, distributed by scikit-image
