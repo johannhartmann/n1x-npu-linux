@@ -32,8 +32,9 @@ chroma resizing, pixel rearrangement and independent validation.
 
 **[Run the demo →](demo/README.md)**
 
-Additional examples: [full-image DnCNN denoising and ResNet-18 classification](demo/vision.md),
-with physical NPU convolutions, explicit CPU stages and independent numerical checks.
+Additional examples: [full-image DnCNN denoising and ResNet-18 classification](demo/vision.md) and
+[`./demo-onnx` heterogeneous ONNX Execution Provider demos (`emotion-ferplus-8`, `mnist-12`, `super-resolution-10`)](demo/README.md#heterogeneous-onnx-execution-provider-demo-demo-onnx),
+with physical NPU execution, `FP16`/`INT8` compilation, and independent numerical checks.
 
 ## Supported platform
 

@@ -86,3 +86,25 @@ The independent ONNX CPU reference may warn that generic device discovery
 cannot read `accel0/device/vendor` on this ACPI platform device. The reference
 explicitly uses CPUExecutionProvider; physical learned inference uses cuDLA.
 That discovery warning does not indicate a fallback from DLA inference.
+
+## Heterogeneous ONNX Execution Provider demo (`./demo-onnx`)
+
+The top-level [`./demo-onnx`](../demo-onnx) launcher ([`demo/ort_demo.py`](ort_demo.py)) compiles, partitions, caches, and executes ONNX Model Zoo graphs through [`N1xInferenceSession`](../runtime/n1x_ort.py) in `FP16` and auto-calibrated `INT8`, producing `result.json` and an interactive `report.html`:
+
+| Model (`--model`) | Stages (`DLA` / `Host`) | Precision | `.nvda` size | Initial `EXEC` | Retained `REEXEC_IO` | Accuracy vs. FP32 ONNX Reference |
+| --- | --- | --- | --- | --- | --- | --- |
+| `emotion` (`emotion-ferplus-8.onnx`) | `1 DLA` / `0 Host` (37 nodes) | `FP16` | `21.21 MB` | `4.07 ms` | `1.37 ms` | `max_err = 0.001340`, `RMSE = 0.000811`, `cos = 1.000000` (`6/6` gallery top-1) |
+| `emotion` (`emotion-ferplus-8.onnx`) | `1 DLA` / `0 Host` (37 nodes) | `INT8` | `12.47 MB` | `2.11 ms` | `0.98 ms` | `cos = 0.999930`, `RMSE = 0.031666` (`6/6` gallery top-1) |
+| `mnist` (`mnist-12.onnx`) | `1 DLA` / `0 Host` (7 nodes) | `FP16` / `INT8` | `2.98 MB` | `0.83 ms` | `0.33 ms` | `FP16 max_err = 0.005589`, `INT8 cos = 0.999853` (`top-1` match) |
+| `superres` (`super-resolution-10.onnx`) | `1 DLA` / `1 Host` (`DepthToSpace`) | `FP16` | `3.19 MB` | `1.36 ms` | `1.04 ms` | `max_err = 0.001510`, `RMSE = 0.000244` (`[1, 1, 192, 192]`) |
+
+See the [ONNX Execution Provider hardware receipt](../docs/evidence/n1x-ort-hardware-2026-11-01.json) and [design document](../docs/designs/n1x-onnx-execution-provider.md).
+
+Example invocations (with `/dev/accel/accel0` started):
+
+```sh
+./demo-onnx --model emotion --precision fp16 --output-dir results/emotion-ferplus-fp16
+./demo-onnx --model emotion --precision int8 --output-dir results/emotion-ferplus-int8
+./demo-onnx --model mnist --precision fp16 --output-dir results/mnist-fp16
+./demo-onnx --model superres --precision fp16 --output-dir results/superres-ort-fp16
+```

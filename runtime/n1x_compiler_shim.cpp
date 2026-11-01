@@ -89,7 +89,7 @@ std::map<std::string, uint64_t> g_loaded_modules;
 std::set<std::string> g_virtual_dirs;
 
 uint8_t *g_win_heap_base = nullptr;
-constexpr size_t kWinHeapSize = 256ULL * 1024 * 1024;
+constexpr size_t kWinHeapSize = 2048ULL * 1024 * 1024;
 size_t g_win_heap_cursor = 0;
 size_t g_win_heap_watermark = 0;
 std::vector<uint8_t> g_win_data_snapshot;
@@ -99,8 +99,10 @@ std::vector<uint8_t> g_win_heap_snapshot;
 struct AllocHeader {
     uint64_t magic;
     size_t size;
+    size_t capacity;
 };
 constexpr uint64_t kAllocMagic = 0x4e31584845415030ULL;
+std::map<size_t, std::vector<void *>> g_win_free_lists;
 
 inline void restore_win_x18() {
     asm volatile("mov x18, %0" :: "r"(g_win_teb) : "memory");
@@ -245,6 +247,21 @@ uint64_t win_GetProcessHeap() {
 void *win_HeapAlloc(uint64_t, uint32_t flags, size_t bytes) {
     size_t actual = (bytes == 0) ? 1 : bytes;
     size_t aligned = (actual + 15) & ~size_t(15);
+    auto it = g_win_free_lists.find(aligned);
+    if (it != g_win_free_lists.end() && !it->second.empty()) {
+        void *raw = it->second.back();
+        it->second.pop_back();
+        auto *hdr = static_cast<AllocHeader *>(raw);
+        hdr->magic = kAllocMagic;
+        hdr->size = actual;
+        hdr->capacity = aligned;
+        void *user = static_cast<uint8_t *>(raw) + sizeof(AllocHeader);
+        if (flags & 0x8) {
+            memset(user, 0, actual);
+        }
+        restore_win_x18();
+        return user;
+    }
     size_t total = sizeof(AllocHeader) + aligned;
     if (!g_win_heap_base || g_win_heap_cursor + total > kWinHeapSize) {
         restore_win_x18();
@@ -255,6 +272,7 @@ void *win_HeapAlloc(uint64_t, uint32_t flags, size_t bytes) {
     auto *hdr = static_cast<AllocHeader *>(raw);
     hdr->magic = kAllocMagic;
     hdr->size = actual;
+    hdr->capacity = aligned;
     void *user = static_cast<uint8_t *>(raw) + sizeof(AllocHeader);
     if (flags & 0x8) {
         memset(user, 0, actual);
@@ -264,7 +282,19 @@ void *win_HeapAlloc(uint64_t, uint32_t flags, size_t bytes) {
 }
 
 uint32_t win_HeapFree(uint64_t, uint32_t, void *ptr) {
-    (void)ptr;
+    if (ptr && g_win_heap_base) {
+        auto *raw = static_cast<uint8_t *>(ptr) - sizeof(AllocHeader);
+        auto *hdr = reinterpret_cast<AllocHeader *>(raw);
+        size_t offset = static_cast<size_t>(raw - g_win_heap_base);
+        if (hdr->magic == kAllocMagic && offset >= g_win_heap_watermark && g_win_heap_watermark > 0) {
+            size_t total = sizeof(AllocHeader) + hdr->capacity;
+            if (offset + total == g_win_heap_cursor) {
+                g_win_heap_cursor = offset;
+            } else {
+                g_win_free_lists[hdr->capacity].push_back(raw);
+            }
+        }
+    }
     restore_win_x18();
     return 1;
 }
@@ -955,6 +985,7 @@ uint32_t NvDlaCreateNetwork(N1xDlaHandle *out_network) {
         memset(g_win_heap_base + g_win_heap_watermark, 0, g_win_heap_cursor - g_win_heap_watermark);
         g_win_heap_cursor = g_win_heap_watermark;
     }
+    g_win_free_lists.clear();
     g_win_ticks = 1000;
     g_virtual_dirs.clear();
     return fn(out_network);

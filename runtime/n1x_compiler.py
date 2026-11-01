@@ -485,18 +485,20 @@ def onnx_to_dag(
                 ow = (w + pads[1] + pads[3] - window[1]) // strides[1] + 1
                 tensor_shapes[out_name] = [n, c, oh, ow]
 
-        elif op in ("Add", "Sub", "Mul", "Max", "Min"):
+        elif op in ("Add", "Sub", "Mul", "Div", "Max", "Min"):
             in0 = resolve(node.input[0])
             in1 = resolve(node.input[1])
             if in0 in initializers and in1 not in initializers and op in ("Add", "Mul"):
                 in0, in1 = in1, in0
-            if in1 in initializers and op in ("Add", "Sub", "Mul"):
+            if in1 in initializers and op in ("Add", "Sub", "Mul", "Div"):
                 const_arr = np.asarray(initializers[in1], dtype=np.float32).reshape(-1)
                 if op == "Sub":
                     const_arr = -const_arr
+                elif op == "Div":
+                    const_arr = (1.0 / const_arr).astype(np.float32)
                 c_len = int(const_arr.size)
                 shift = const_arr if op in ("Add", "Sub") else np.zeros(c_len, dtype=np.float32)
-                scale = const_arr if op == "Mul" else np.ones(c_len, dtype=np.float32)
+                scale = const_arr if op in ("Mul", "Div") else np.ones(c_len, dtype=np.float32)
                 sb64, sdt, _ = _encode_b64_array(shift, weight_dtype)
                 scb64, scdt, _ = _encode_b64_array(scale, weight_dtype)
                 layers_spec.append(
