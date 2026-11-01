@@ -34,8 +34,8 @@ build() {
     "${src}/runtime/n1x_ort.cpp" "${src}/runtime/cudla_model.cpp" \
     -L"${src}/runtime" -ln1x_dla -Wl,-rpath,/usr/lib -o "${src}/runtime/libn1x_ort.so"
   g++ -std=c++17 -O2 -g -Wall -Wextra -Werror -DN1X_ORT_CLI_MAIN -I"${src}/include" -I"${src}/runtime" \
-    "${src}/runtime/n1x_ort.cpp" -L"${src}/runtime" -ln1x_ort \
-    -Wl,-rpath,/usr/lib -o "${src}/runtime/n1x-ort-run"
+    "${src}/runtime/n1x_ort.cpp" -L"${src}/runtime" -ln1x_ort -ln1x_dla \
+    -Wl,-rpath-link,"${src}/runtime" -Wl,-rpath,/usr/lib -o "${src}/runtime/n1x-ort-run"
 }
 
 package() {

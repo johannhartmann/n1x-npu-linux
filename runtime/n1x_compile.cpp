@@ -526,6 +526,14 @@ N1xDlaWeights make_int32_dims_weights(const JsonValue &v,
 }
 
 void apply_tensor_calibration(N1xDlaHandle tensor, const JsonValue &spec, bool is_int8, float default_range) {
+    if (spec.is_number()) {
+        float rmax = static_cast<float>(spec.num_val);
+        if (rmax > 0.0f) {
+            check_dla(NvDlaTensorSetChannelDynamicRange(tensor, -1, -rmax, rmax),
+                      "NvDlaTensorSetChannelDynamicRange");
+            return;
+        }
+    }
     if (spec.has("channel_dynamic_ranges") && spec.at("channel_dynamic_ranges").is_array()) {
         const auto &ranges = spec.at("channel_dynamic_ranges").arr_val;
         for (size_t c = 0; c < ranges.size(); ++c) {
@@ -614,7 +622,10 @@ extern "C" int n1x_compile_json_graph(const char *json_spec,
         std::map<std::string, N1xDlaHandle> tensors;
         std::vector<N1xDlaHandle> all_tensors;
 
-        const JsonValue &calib_map = root.at("calibration");
+        const JsonValue &raw_calib = root.at("calibration");
+        const JsonValue &calib_map = (raw_calib.has("tensor_ranges") && raw_calib.at("tensor_ranges").is_object())
+                                         ? raw_calib.at("tensor_ranges")
+                                         : raw_calib;
 
         /* 1. Add network inputs */
         const JsonValue &inputs = root.at("inputs");

@@ -2,7 +2,11 @@
 import ctypes as c
 import os
 from pathlib import Path
-import numpy as np
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 
 class Range(c.Structure):

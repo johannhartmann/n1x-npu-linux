@@ -17,7 +17,11 @@ from typing import Any
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_LIB_PATH = ROOT / "runtime" / "libn1x_compiler.so"
+DEFAULT_LIB_PATH = (
+    ROOT / "runtime" / "libn1x_compiler.so"
+    if (ROOT / "runtime" / "libn1x_compiler.so").is_file()
+    else Path("/usr/lib/libn1x_compiler.so")
+)
 
 
 class CompilerError(RuntimeError):

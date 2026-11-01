@@ -11,6 +11,7 @@ Additional applications: [denoising and classification](../demo/vision.md).
 ## Understand the implementation
 
 - [cuDLA backend](cudla-backend.md): implemented API, CUDA staging, ownership and allocation behavior.
+- [Heterogeneous ONNX Execution Provider design](designs/n1x-onnx-execution-provider.md): native `t254` DAG compilation, C++ `CHW16`/`CHW32` surface packing, cycle-free graph partitioning, and `INT8` calibration.
 - [Shutdown and reload](shutdown-reload.md): firmware confirmation, lifetime ordering and hardware qualification.
 - [Tool index](../scripts/README.md): operational commands, tests and research tools.
 - [Contributing](../CONTRIBUTING.md): development workflow and verification by change type.

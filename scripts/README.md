@@ -26,6 +26,9 @@ reproduction code and regression evidence, not a batch installer.
 | `npu_trigger.py` | One unbuffered sysfs operation | Root for real hardware paths; no retries |
 | `select_npu_dma_domains.py` | Inspect dedicated IOMMU groups | Default read-only; `--apply` changes only audited unbound groups |
 | `../demo-superres` | Full-image super-resolution launcher | Unprivileged client of the installed, fixed-model RAWIO broker; 512/1024 image runs and reuse verified on P16 |
+| `../demo-onnx` | Heterogeneous ONNX Execution Provider launcher (`demo/ort_demo.py`) | Compiles, partitions, caches, and executes ONNX models (`mnist-12.onnx`, `super-resolution-10.onnx`) in `FP16` or auto-calibrated `INT8` |
+| `qualify_n1x_ort.py` | Physical NPU qualification of `N1xInferenceSession` (`mnist-12.onnx`, `super-resolution-10.onnx`, and 3-stage `DLA->Host->DLA`) | Root, initialized NPU or automatic bounded startup/shutdown |
+| `build_arch_module_package.py` | Build pinned `n1x-npu-bootstrap-rtx-spark` Arch package (`n1x_npu_bootstrap.ko`, `libn1x_{dla,compiler,ort}.so`, `n1x-{compile,ort-run}`, `n1x-npu.service`) | Clean `driver/`, `include/`, and `runtime/` trees; `makepkg` |
 
 Use [setup](../docs/setup.md) for ordering and [status](../docs/status.md) for
 which stages have physical evidence. None of the input/model helpers starts

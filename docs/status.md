@@ -1,6 +1,6 @@
 # Current support and qualification status
 
-Updated 2026-10-29. This is the current summary; dated research documents retain
+Updated 2026-11-01. This is the current summary; dated research documents retain
 their earlier observations and failed experiments. Source-code implementation,
 offline tests and physical execution are separate evidence levels.
 
@@ -112,16 +112,35 @@ grayscale conversion and noise subtraction. Neither is a full NPU-only pipeline
 or evidence of a speed/energy advantage. Exact results, timings and their scope
 are in the [vision receipt](evidence/vision-hardware-2026-10-29.json).
 
+## Native `t254` compiler, `INT8` quantization and Heterogeneous ONNX Execution Provider
+
+The repository now includes:
+
+- **In-process `t254` Ahead-of-Time Compiler** ([`runtime/n1x_compile.cpp`](../runtime/n1x_compile.cpp), `libn1x_compiler.so`, `n1x-compile`, [`runtime/n1x_compiler.py`](../runtime/n1x_compiler.py)): Compiles JSON DAGs and ONNX subgraphs (`Conv`, `Gemm`/`FullyConnected`, `Relu`, `Clip`, `MaxPool`, `AveragePool`, `GlobalAveragePool`, `Add`, `Sub`, `Mul`, `Concat`, `BatchNormalization`, `Scale`, `Sigmoid`, `Tanh`) directly into `.nvda` FlatBuffers loadables in `FP16` and `INT8` (per-tensor and per-channel quantization).
+- **C-Backed Heterogeneous ONNX Execution Provider** ([`runtime/n1x_ort.cpp`](../runtime/n1x_ort.cpp), `libn1x_ort.so`, `n1x-ort-run`, [`runtime/n1x_ort.py`](../runtime/n1x_ort.py), [design document](designs/n1x-onnx-execution-provider.md)):
+  - Vectorized C++17 `FP32` $\leftrightarrow$ `CHW16` (`FP16`) / `CHW32` (`INT8`) surface packing and unpacking.
+  - Canonical ONNX graph rewrites (`auto_pad` resolution, `Conv+Add` fusion, `Flatten/Reshape+MatMul+Add` $\rightarrow$ `Gemm`, opset-10 `Reshape->Transpose->Reshape` $\rightarrow$ `DepthToSpace`).
+  - Cycle-free topological `DLAStage` + `HostStage` graph partitioning with SHA-256 `.nvda` disk caching and automatic multi-sample `INT8` calibration.
+  - Physical qualification on `/dev/accel/accel0` ([hardware receipt](evidence/n1x-ort-hardware-2026-11-01.json)):
+    - `mnist-12.onnx` (1-stage full-graph DLA `.nvda`, `2,975,356` B): `FP16` max abs error `0.005589`, RMSE `0.002614` (`0.782 ms` initial `EXEC`, `0.354 ms` `REEXEC_IO`); auto-calibrated `INT8` cosine similarity `0.999853` (`top-1` exact match).
+    - `super-resolution-10.onnx` (2-stage heterogeneous `DLAStage` 4-Conv backbone + `HostStage` `DepthToSpace`): `FP16` max abs error `0.001510`, RMSE `0.000244` across `[1, 1, 192, 192]` (`1.646 ms` initial `EXEC`, `1.029 ms` `REEXEC_IO`).
+    - 3-stage `DLA -> Host -> DLA` pipeline: `FP16` max abs error `0.000137`, auto-calibrated `INT8` MAE `0.000538`.
+- **Dynamic NPU Frequency Scaling** ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)): Exposes `/sys/bus/platform/devices/NVDA200A:00/npu_freq_khz` (`892.8 MHz` default up to `1500 MHz` boost, reducing physical 64-tile super-resolution time from `224.2 ms` to `97.1 ms`, `2.31x` speedup).
+
 ## Remaining limits
 
 Uncertain DMA/firmware errors remain fail-closed and require reboot. Automatic
-recovery, suspend/resume, asynchronous scheduling, CUDA Graphs, zero-copy,
-arbitrary TensorRT engines and general ONNX compilation are unsupported.
-The two successful healthy reload cycles do not validate these paths.
+recovery, suspend/resume, asynchronous scheduling, CUDA Graphs, zero-copy and
+arbitrary TensorRT engine deserialization are unsupported. Non-DLA ONNX operators
+(`DepthToSpace`, `ReduceMean`, `Resize`, `Softmax`, dynamic `Reshape`/`Transpose`)
+execute on the host CPU via `N1xInferenceSession`'s heterogeneous partitioner.
+The two successful healthy reload cycles do not validate fault recovery paths.
 
 ## Announcement scope
 
 The verified scope is experimental Linux N1X/DLA support on this P16, with
-cuDLA inference, bounded healthy shutdown/reload qualification, complete
-super-resolution and denoising images, and ResNet-18 classification. Vendor inputs and generated loadables are acquired
+cuDLA inference, native `t254` `FP16`/`INT8` compilation, heterogeneous ONNX
+Execution Provider partitioning (`N1xInferenceSession`), bounded healthy
+shutdown/reload qualification, complete super-resolution and denoising images,
+and ResNet-18 classification. Vendor inputs and generated loadables are acquired
 locally. The [setup](setup.md) and [demo](../demo/README.md) explain reproduction.

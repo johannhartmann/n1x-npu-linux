@@ -34,10 +34,12 @@ from onnx.reference import ReferenceEvaluator
 from n1x_compiler import CompilerError, compile_dag, onnx_to_dag
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ORT_LIB_PATH = ROOT / "runtime" / "libn1x_ort.so"
-DEFAULT_CACHE_DIR = Path(
-    os.environ.get("N1X_ORT_CACHE_DIR", str(Path.home() / ".cache" / "n1x" / "ort"))
+DEFAULT_ORT_LIB_PATH = (
+    ROOT / "runtime" / "libn1x_ort.so"
+    if (ROOT / "runtime" / "libn1x_ort.so").is_file()
+    else Path("/usr/lib/libn1x_ort.so")
 )
+DEFAULT_CACHE_DIR = Path.home() / ".cache" / "n1x" / "ort"
 
 
 class N1xOrtError(RuntimeError):
@@ -1089,10 +1091,27 @@ def calibrate_onnx_model(
     """Run calibration samples through `model_or_path` and collect per-tensor max_abs ranges."""
     canon_model, shape_map = canonicalize_onnx_model(model_or_path, input_shapes=input_shapes)
     inst_model = copy.deepcopy(canon_model)
+    rewritten_nodes: list[onnx.NodeProto] = []
+    for idx, n in enumerate(inst_model.graph.node):
+        if n.op_type == "Gemm" and n.input:
+            in_a = n.input[0]
+            if len(shape_map.get(in_a, ())) > 2:
+                flat_out = f"{in_a}__calib_flat_{idx}"
+                rewritten_nodes.append(
+                    helper.make_node("Flatten", inputs=[in_a], outputs=[flat_out], axis=1)
+                )
+                n_copy = copy.deepcopy(n)
+                n_copy.input[0] = flat_out
+                rewritten_nodes.append(n_copy)
+                continue
+        rewritten_nodes.append(n)
+    del inst_model.graph.node[:]
+    inst_model.graph.node.extend(rewritten_nodes)
+
     existing_outs = {o.name for o in inst_model.graph.output}
     for n in inst_model.graph.node:
         for out in n.output:
-            if out and out not in existing_outs:
+            if out and not out.endswith("__calib_flat_" + str(out.split("_")[-1])) and out not in existing_outs:
                 inst_model.graph.output.append(
                     helper.make_tensor_value_info(out, TensorProto.FLOAT, shape_map.get(out))
                 )
@@ -1125,7 +1144,11 @@ def calibrate_onnx_model(
             val = float(np.max(np.abs(arr_np))) if arr_np.size else 1.0
             max_abs_map[name] = max(max_abs_map.get(name, 1e-5), val, 1e-5)
 
-    return {"tensor_ranges": max_abs_map}
+    calib_dict: dict[str, Any] = {
+        name: {"dynamic_range": [-val, val]} for name, val in max_abs_map.items()
+    }
+    calib_dict["tensor_ranges"] = max_abs_map
+    return calib_dict
 
 
 @dataclass
@@ -1441,6 +1464,20 @@ class N1xInferenceSession:
                 st.dla_module = mod
             else:
                 st.host_runner = _HostStageRunner(st.submodel)
+
+    def close(self) -> None:
+        for st in getattr(self, "_stages", ()):
+            if st.dla_module is not None:
+                st.dla_module.close()
+
+    def __enter__(self) -> "N1xInferenceSession":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
 
     def get_inputs(self) -> list[N1xNodeArg]:
         return list(self._inputs)

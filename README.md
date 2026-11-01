@@ -58,6 +58,9 @@ research tools, not a generic distribution/kernel installer.
 | Healthy shutdown and module reload | Two cycles with zero retained backing, normal unload and successful inference after reload |
 | Complete 3× super-resolution | 512×512 → 1536×1536 and 1024×1024 → 3072×3072; 461 DLA windows and whole-image reference checks |
 | DnCNN denoising and ResNet-18 classification | [Six image runs, 657 NPU submissions](docs/evidence/vision-hardware-2026-10-29.json); independent numerical checks and bounded reuse across images |
+| Native `t254` compiler (`libn1x_compiler.so`) & `INT8` / DAG lowering | In-process compilation of `FP16` and `INT8` (per-tensor & per-channel) multi-branch DAGs into `.nvda` loadables |
+| Heterogeneous ONNX Execution Provider (`libn1x_ort.so`, `N1xInferenceSession`) | [Design & qualification](docs/designs/n1x-onnx-execution-provider.md): C++ `CHW16`/`CHW32` surface packing, cycle-free `DLA + Host` graph partitioning, `INT8` auto-calibration, and `REEXEC_IO` reuse |
+| Dynamic frequency scaling (`npu_freq_khz`) | HFRP clock scaling from `892.8 MHz` to `1500 MHz` (`2.31x` measured throughput increase on physical NPU) |
 
 [Exact versions, hashes and measurements](docs/evidence/npu-hardware-2026-10-28.json)
 · [Current limits](docs/status.md)
@@ -73,8 +76,8 @@ Ordinary broker exit is not that shutdown boundary: successful allocations are
 reused within a session and remain retained afterward. A new session is
 preflighted against the remaining budget and fails before submission if the
 complete selected model set cannot fit.
-Automatic suspend/resume, failed-channel recovery, general ONNX/TensorRT model
-compilation, asynchronous scheduling and CUDA Graphs are unsupported.
+Automatic suspend/resume, failed-channel recovery, arbitrary TensorRT engine
+deserialization, asynchronous scheduling and CUDA Graphs are unsupported.
 
 ## Get started
 
@@ -116,13 +119,13 @@ unprivileged image/validation application
 
 | Path | Contents |
 | --- | --- |
-| `driver/`, `include/`, `patches/` | Kernel implementation, UAPI and scoped kernel patches |
-| `runtime/` | cuDLA backend, model materialization and application bindings |
-| `demo/` | Super-resolution, denoising and classification examples |
-| `scripts/`, `tests/` | Operational commands, research tools and regression harnesses |
-| `docs/` | Maintained setup, architecture and support guides |
-| `docs/evidence/` | Immutable measurement and reproduction receipts |
-| `docs/research/` | Detailed protocol, firmware, compiler and historical boot investigations |
+| [`driver/`](driver/README.md), [`include/`](include/README.md), `patches/` | Kernel implementation (`n1x_npu_bootstrap.ko`), UAPI (`uapi/n1x_dla_accel.h`), compiler/ORT C ABIs (`n1x_compiler.h`, `n1x_ort.h`) and scoped kernel patches |
+| [`runtime/`](runtime/README.md) | Native `t254` compiler (`libn1x_compiler.so`), C-backed ONNX Execution Provider (`libn1x_ort.so`, `n1x_ort.py`), cuDLA backend (`libnvcudla.so`), and `.nvda` materialization |
+| [`demo/`](demo/README.md) | Super-resolution, denoising, classification, and heterogeneous ONNX (`./demo-onnx`) examples |
+| [`scripts/`](scripts/README.md), `tests/` | Operational commands, research tools and regression harnesses |
+| [`docs/`](docs/README.md) | Maintained setup, architecture designs (`docs/designs/`) and support guides |
+| [`docs/evidence/`](docs/evidence/README.md) | Immutable measurement and reproduction receipts |
+| [`docs/research/`](docs/research/README.md) | Detailed protocol, firmware, compiler and historical boot investigations |
 
 [Documentation index](docs/README.md) · [Tool index](scripts/README.md) · [Development guide](CONTRIBUTING.md)
 

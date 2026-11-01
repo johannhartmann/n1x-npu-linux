@@ -88,8 +88,20 @@ void set_err(char *err_buf, size_t err_buf_len, const char *msg) {
 }
 
 int open_default_accel_device() {
-    if (const char *path = std::getenv("N1X_DLA_DEVICE")) {
-        return n1x_dla_open(path);
+    if (const char *env_path = std::getenv("N1X_DLA_DEVICE")) {
+        static constexpr const char *kAllowedDevices[] = {
+            "/dev/accel/accel0",
+            "/dev/accel/accel1",
+            "/dev/accel/accel2",
+            "/dev/accel/accel3",
+            "/dev/modeled-npu-only",
+        };
+        for (const char *allowed : kAllowedDevices) {
+            if (std::strcmp(env_path, allowed) == 0) {
+                return n1x_dla_open(allowed);
+            }
+        }
+        return -EINVAL;
     }
     glob_t paths{};
     if (glob("/dev/accel/accel*", 0, nullptr, &paths) != 0) {
