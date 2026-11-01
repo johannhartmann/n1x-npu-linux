@@ -1,0 +1,23 @@
+[Unit]
+Description=Initialize the qualified RTX Spark NPU
+Documentation=https://github.com/johannhartmann/n1x-npu-linux
+After=systemd-modules-load.service
+Before=multi-user.target
+ConditionKernelVersion=7.2.8-23-rtx-spark-npu
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/n1x-npu-start
+RemainAfterExit=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=no
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

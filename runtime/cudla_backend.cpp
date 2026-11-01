@@ -19,10 +19,11 @@
 #include <unistd.h>
 
 namespace {
-struct Registration { CUdeviceptr pointer; size_t bytes; unsigned long long buffer_id; };
+struct Registration { CUdeviceptr pointer; size_t bytes; unsigned long long buffer_id; bool stats=false; };
 struct Device {
     int fd;
     CUcontext context;
+    uint32_t timeout_ms=30000;
     cudlaStatus last=cudlaSuccess;
     std::map<uintptr_t,Registration> memory;
     explicit Device(int f,CUcontext c):fd(f),context(c) {}
@@ -161,8 +162,16 @@ cudlaStatus cudlaDrvDeviceGetAttribute(cudlaDevHandle handle,cudlaDevAttributeTy
     return boundary([&]() -> cudlaStatus {
         if(!device(handle)) return cudlaErrorInvalidDevice;
         if(!out) return cudlaErrorInvalidParam;
-        if(type!=CUDLA_UNIFIED_ADDRESSING) return cudlaErrorUnsupportedOperation;
-        out->unifiedAddressingSupported=0; return cudlaSuccess;
+        switch(type) {
+        case CUDLA_UNIFIED_ADDRESSING:
+            out->unifiedAddressingSupported=0;
+            return cudlaSuccess;
+        case CUDLA_DEVICE_VERSION:
+            out->deviceVersion=0x0200U;
+            return cudlaSuccess;
+        default:
+            return cudlaErrorUnsupportedOperation;
+        }
     });
 }
 cudlaStatus cudlaDrvModuleLoadFromMemory(cudlaDevHandle handle,const uint8_t *bytes,size_t size,cudlaModule *out,uint32_t flags) {
@@ -188,7 +197,7 @@ cudlaStatus cudlaDrvModuleGetAttributes(cudlaModule handle,cudlaModuleAttributeT
         switch(type) {
         case CUDLA_NUM_INPUT_TENSORS: out->numInputTensors=m->model.inputs.size(); break;
         case CUDLA_NUM_OUTPUT_TENSORS: out->numOutputTensors=m->model.outputs.size(); break;
-        case CUDLA_NUM_OUTPUT_TASK_STATISTICS: out->numOutputTensors=0; break;
+        case CUDLA_NUM_OUTPUT_TASK_STATISTICS: out->numOutputTensors=m->model.stats.present?1:0; break;
         case CUDLA_INPUT_TENSOR_DESCRIPTORS:
             if(!out->inputTensorDesc) return cudlaErrorInvalidParam;
             for(size_t i=0;i<m->model.inputs.size();i++) out->inputTensorDesc[i]=m->model.inputs[i].desc;
@@ -196,6 +205,10 @@ cudlaStatus cudlaDrvModuleGetAttributes(cudlaModule handle,cudlaModuleAttributeT
         case CUDLA_OUTPUT_TENSOR_DESCRIPTORS:
             if(!out->outputTensorDesc) return cudlaErrorInvalidParam;
             for(size_t i=0;i<m->model.outputs.size();i++) out->outputTensorDesc[i]=m->model.outputs[i].desc;
+            break;
+        case CUDLA_OUTPUT_TASK_STATISTICS_DESCRIPTORS:
+            if(!out->outputTensorDesc || !m->model.stats.present) return cudlaErrorInvalidParam;
+            out->outputTensorDesc[0]=m->model.stats.desc;
             break;
         default: return cudlaErrorUnsupportedOperation;
         }
@@ -214,14 +227,14 @@ cudlaStatus cudlaDrvMemRegister(cudlaDevHandle handle,const uint64_t *pointer,si
         Device *d=device(handle); if(!d) return cudlaErrorInvalidDevice;
         if(d->last!=cudlaSuccess) return d->last;
         if(!out) return cudlaErrorInvalidParam;
-        if(flags) return cudlaErrorUnsupportedOperation;
+        if(flags!=CUDLA_READ_WRITE_PERM && flags!=CUDLA_TASK_STATISTICS) return cudlaErrorUnsupportedOperation;
         if(!current(*d)) return cudlaErrorCuda;
         auto ptr=static_cast<CUdeviceptr>(reinterpret_cast<uintptr_t>(pointer));
         unsigned long long id=0;
         if(!allocation(*d,ptr,size,&id)) return cudlaErrorInvalidAddress;
         for(const auto& entry:d->memory) if(entry.second.pointer==ptr) return cudlaErrorMemoryRegistered;
         if(d->memory.size()>=4096) return cudlaErrorOutOfResources;
-        auto key=token(); d->memory.emplace(key,Registration{ptr,size,id});
+        auto key=token(); d->memory.emplace(key,Registration{ptr,size,id,flags==CUDLA_TASK_STATISTICS});
         *out=reinterpret_cast<uint64_t*>(key); return cudlaSuccess;
     });
 }
@@ -242,11 +255,13 @@ cudlaStatus cudlaDrvSubmitTask(cudlaDevHandle handle,const cudlaTask *tasks,uint
         Device *d=device(handle); if(!d) return cudlaErrorInvalidDevice;
         if(d->last!=cudlaSuccess) return d->last;
         if(!tasks || !count) return cudlaErrorInvalidParam;
-        if(count!=1 || flags || tasks->waitEvents || tasks->signalEvents) return cudlaErrorUnsupportedOperation;
+        if(count!=1 || (flags&~(CUDLA_SUBMIT_NOOP|CUDLA_SUBMIT_SKIP_LOCK_ACQUIRE)) ||
+           tasks->waitEvents || tasks->signalEvents) return cudlaErrorUnsupportedOperation;
         Module *m=module(tasks->moduleHandle);
         if(!m || m->owner!=reinterpret_cast<uintptr_t>(handle)) return cudlaErrorInvalidModule;
+        const bool want_stats=m->model.stats.present && tasks->numOutputTensors==m->model.outputs.size()+1;
         if(!tasks->inputTensor || !tasks->outputTensor || tasks->numInputTensors!=m->model.inputs.size() ||
-           tasks->numOutputTensors!=m->model.outputs.size()) return cudlaErrorInvalidParam;
+           (tasks->numOutputTensors!=m->model.outputs.size() && !want_stats)) return cudlaErrorInvalidParam;
         if(!current(*d)) return cudlaErrorCuda;
         auto stream=static_cast<CUstream>(raw_stream);
         CUstreamCaptureStatus capture; CUcontext stream_context=nullptr;
@@ -260,12 +275,24 @@ cudlaStatus cudlaDrvSubmitTask(cudlaDevHandle handle,const cudlaTask *tasks,uint
             for(size_t i=0;i<tensors.size();i++) {
                 auto p=output?tasks->outputTensor[i]:tasks->inputTensor[i];
                 auto it=d->memory.find(reinterpret_cast<uintptr_t>(p));
-                if(it==d->memory.end() || it->second.bytes<tensors[i].desc.size) return cudlaErrorInvalidAddress;
+                if(it==d->memory.end() || it->second.stats || it->second.bytes<tensors[i].desc.size)
+                    return cudlaErrorInvalidAddress;
                 unsigned long long id=0;
                 if(!allocation(*d,it->second.pointer,it->second.bytes,&id) || id!=it->second.buffer_id) return cudlaErrorInvalidAddress;
                 bindings.push_back(it->second);
             }
         }
+        Registration stats_reg{};
+        if(want_stats) {
+            auto it=d->memory.find(reinterpret_cast<uintptr_t>(tasks->outputTensor[m->model.outputs.size()]));
+            if(it==d->memory.end() || !it->second.stats || it->second.bytes<m->model.stats.desc.size)
+                return cudlaErrorInvalidAddress;
+            unsigned long long id=0;
+            if(!allocation(*d,it->second.pointer,it->second.bytes,&id) || id!=it->second.buffer_id)
+                return cudlaErrorInvalidAddress;
+            stats_reg=it->second;
+        }
+        if(flags&CUDLA_SUBMIT_NOOP) return cudlaSuccess;
         n1x_dla_accel_info info{}; int err=n1x_dla_info(d->fd,&info);
         if(err) return cudlaErrorOs;
         auto required=(m->model.image.size()+8192+4095)&~size_t(4095);
@@ -310,9 +337,22 @@ cudlaStatus cudlaDrvSubmitTask(cudlaDevHandle handle,const cudlaTask *tasks,uint
             err=n1x_dla_read(d->fd,result.job_id,t.offset,image+t.offset,t.desc.size);
             if(err) return d->last=kernel_error(err);
         }
+        if(want_stats) {
+            n1x_dla_accel_stats stats_info{};
+            err=n1x_dla_stats(d->fd,result.job_id,m->model.stats.offset,m->model.stats.desc.size,&stats_info);
+            if(!err)
+                err=n1x_dla_read(d->fd,result.job_id,m->model.stats.offset,
+                                 image+m->model.stats.offset,m->model.stats.desc.size);
+            if(err) return d->last=kernel_error(err);
+        }
         for(size_t i=0;i<outputs.size();i++) {
             const auto& t=m->model.outputs[i];
             if(cuMemcpyHtoDAsync(outputs[i].pointer,image+t.offset,t.desc.size,stream)!=CUDA_SUCCESS) {copy_error=true; break;}
+        }
+        if(!copy_error && want_stats) {
+            if(cuMemcpyHtoDAsync(stats_reg.pointer,image+m->model.stats.offset,
+                                 m->model.stats.desc.size,stream)!=CUDA_SUCCESS)
+                copy_error=true;
         }
         if(cuStreamSynchronize(stream)!=CUDA_SUCCESS) {
             host.quarantine(m->model.image.size()); return d->last=cudlaErrorCuda;
@@ -329,7 +369,15 @@ cudlaStatus cudlaDrvImportExternalSemaphore(cudlaDevHandle,const cudlaExternalSe
     return cudlaErrorUnsupportedOperation;
 }
 cudlaStatus cudlaDrvGetNvSciSyncAttributes(uint64_t*,uint32_t) { return cudlaErrorUnsupportedOperation; }
-cudlaStatus cudlaDrvSetTaskTimeoutInMs(cudlaDevHandle,uint32_t) { return cudlaErrorUnsupportedOperation; }
+cudlaStatus cudlaDrvSetTaskTimeoutInMs(cudlaDevHandle handle,uint32_t timeout) {
+    return boundary([&]() -> cudlaStatus {
+        Device *d=device(handle); if(!d) return cudlaErrorInvalidDevice;
+        if(d->last!=cudlaSuccess) return d->last;
+        if(!timeout || timeout>1000000U) return cudlaErrorInvalidParam;
+        d->timeout_ms=timeout;
+        return cudlaSuccess;
+    });
+}
 cudlaStatus cudlaDrvGetExternalExportTable(const cudlaExternalEtbl**,uint32_t) { return cudlaErrorUnsupportedOperation; }
 // Private prototype/table not yet recovered. This entry does not inspect
 // arguments or write through pointers; it consistently declines the feature.

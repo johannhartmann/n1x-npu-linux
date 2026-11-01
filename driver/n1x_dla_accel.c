@@ -16,12 +16,18 @@
 #include <drm/drm_ioctl.h>
 #include <drm/drm_managed.h>
 #include "n1x_dla_accel.h"
+#include "n1x_dla_command.h"
+#include "n1x_dla_statistics.h"
 #include "n1x_dla_task.h"
 #include "uapi/n1x_dla_accel.h"
 
 #define N1X_JOB_PREFIX 8192U
 #define N1X_JOB_FENCE 256U
+#define N1X_JOB_PREEMPT_FENCE 260U
 #define N1X_JOB_ADDRESSES 512U
+#define N1X_JOB_PREEMPT_REQ 4608U
+#define N1X_JOB_CONTEXT_HEADER 5120U
+#define N1X_JOB_CHECKPOINT 5376U
 struct n1x_accel_job {
     struct list_head link;
     struct n1x_dla_job task;
@@ -37,6 +43,7 @@ struct n1x_dla_accel {
     struct mutex lock;
     struct list_head jobs;
     n1x_dla_accel_submit submit;
+    const struct n1x_dla_accel_control_ops *control;
     u64 last_id;
     size_t retained;
     u32 count;
@@ -69,13 +76,17 @@ static int info_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 {
     struct n1x_dla_accel *accel = to_accel(drm);
     struct n1x_dla_accel_info *info = data;
+    u32 caps = N1X_DLA_CAP_RAWIO_REQUIRED | N1X_DLA_CAP_RETAIN_UNTIL_REBOOT |
+               N1X_DLA_CAP_REEXEC_IO | N1X_DLA_CAP_CONTROLLED_STOP |
+               N1X_DLA_CAP_STATISTICS;
     if (!capable(CAP_SYS_RAWIO))
         return -EPERM;
     mutex_lock(&accel->lock);
+    if (accel->control)
+        caps |= N1X_DLA_CAP_PREEMPT;
     *info = (struct n1x_dla_accel_info){
         .abi_version = N1X_DLA_ABI_VERSION,
-        .capabilities = N1X_DLA_CAP_RAWIO_REQUIRED | N1X_DLA_CAP_RETAIN_UNTIL_REBOOT |
-                        N1X_DLA_CAP_REEXEC_IO | N1X_DLA_CAP_CONTROLLED_STOP,
+        .capabilities = caps,
         .max_image_bytes = N1X_DLA_MAX_IMAGE, .max_addresses = N1X_DLA_MAX_ADDRESSES,
         .retained_bytes = accel->retained, .retain_limit = N1X_DLA_RETAIN_LIMIT,
         .retained_jobs = accel->count, .max_jobs = N1X_DLA_MAX_JOBS,
@@ -98,7 +109,7 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 
     if (!capable(CAP_SYS_RAWIO))
         return -EPERM;
-    if (req->flags || req->job_id || req->status || req->completed ||
+    if ((req->flags & ~N1X_DLA_EXEC_RESUMABLE) || req->job_id || req->status || req->completed ||
         !req->image_ptr || !req->ranges_ptr || !req->writable_ranges_ptr || !req->image_bytes ||
         req->image_bytes > N1X_DLA_MAX_IMAGE || !req->num_addresses ||
         req->num_addresses > N1X_DLA_MAX_ADDRESSES || !req->num_writable_ranges ||
@@ -161,6 +172,10 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
         err = -ENODEV;
         goto free_job;
     }
+    if ((req->flags & N1X_DLA_EXEC_RESUMABLE) && (!accel->control || !accel->control->start)) {
+        err = -EOPNOTSUPP;
+        goto free_job;
+    }
     if (accel->count >= N1X_DLA_MAX_JOBS || bytes > N1X_DLA_RETAIN_LIMIT - accel->retained) {
         err = -ENOSPC;
         goto free_job;
@@ -195,15 +210,27 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
     args.num_addresses = req->num_addresses;
     args.timeout = 1000000;
     err = n1x_dla_build_address_list(job->task.buffer + N1X_JOB_ADDRESSES,
-                                    N1X_JOB_PREFIX - N1X_JOB_ADDRESSES,
+                                    N1X_JOB_PREEMPT_REQ - N1X_JOB_ADDRESSES,
                                     addresses, req->num_addresses);
-    if (!err)
+    if (!err && (req->flags & N1X_DLA_EXEC_RESUMABLE)) {
+        job->task.resumable = true;
+        err = n1x_dla_build_context_header(job->task.buffer + N1X_JOB_CONTEXT_HEADER,
+                                          256, job->task.dma + N1X_JOB_CHECKPOINT, 0);
+        if (!err)
+            err = n1x_dla_build_context_fenced_task_v2(job->task.buffer, 256, &args,
+                                                      job->task.dma + N1X_JOB_FENCE, 0,
+                                                      job->task.dma + N1X_JOB_CONTEXT_HEADER, 1);
+    } else if (!err) {
         err = n1x_dla_build_fenced_task_v2(job->task.buffer, 256, &args,
                                           job->task.dma + N1X_JOB_FENCE, 0);
+    }
     if (err)
         goto free_dma;
     ops = (struct n1x_dla_job_ops){job, publish, read_fence};
-    err = accel->submit(drm->dev, &job->task, &ops);
+    if (req->flags & N1X_DLA_EXEC_RESUMABLE)
+        err = accel->control->start(drm->dev, &job->task, &ops);
+    else
+        err = accel->submit(drm->dev, &job->task, &ops);
     if (!job->task.attempted) {
         if (!err)
             err = -EIO;
@@ -219,7 +246,9 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
     accel->count++;
     writable = NULL;
     req->job_id = job->id;
-    req->status = job->task.error = err;
+    if (!(req->flags & N1X_DLA_EXEC_RESUMABLE))
+        job->task.error = err;
+    req->status = err;
     req->completed = !err && job->task.verified;
     mutex_unlock(&accel->lock);
     kfree(addresses);
@@ -394,14 +423,177 @@ free_copies:
     kfree(patches);
     return err;
 }
+static int stats_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
+{
+    struct n1x_dla_accel *accel = to_accel(drm);
+    struct n1x_dla_accel_stats *req = data;
+    struct n1x_dla_statistics parsed;
+    struct n1x_accel_job *job;
+    int err = -ENOENT;
+    if (!capable(CAP_SYS_RAWIO))
+        return -EPERM;
+    if (!req->job_id || !req->bytes || req->count || req->metadata_offset ||
+        req->metadata_stride || req->data_offset || req->data_stride || req->reserved)
+        return -EINVAL;
+    mutex_lock(&accel->lock);
+    list_for_each_entry(job, &accel->jobs, link) {
+        if (job->id != req->job_id || job->owner != file)
+            continue;
+        if (job->task.error || !job->task.verified) {
+            err = -EIO;
+            break;
+        }
+        if (req->offset >= job->image_bytes || req->bytes > job->image_bytes - req->offset) {
+            err = -EINVAL;
+            break;
+        }
+        dma_rmb();
+        err = n1x_dla_parse_statistics(job->task.buffer + N1X_JOB_PREFIX + req->offset,
+                                       req->bytes, &parsed);
+        if (!err) {
+            req->count = parsed.count;
+            req->metadata_offset = parsed.metadata_offset;
+            req->metadata_stride = parsed.metadata_stride;
+            req->data_offset = parsed.data_offset;
+            req->data_stride = parsed.data_stride;
+        }
+        break;
+    }
+    mutex_unlock(&accel->lock);
+    return err;
+}
+static int snapshot_preempt(void *context, struct n1x_dla_preempt_snapshot *out)
+{
+    struct n1x_accel_job *job = context;
+    u8 *p = job->task.buffer;
+    out->checkpoint = le64_to_cpu(READ_ONCE(*(__le64 *)(p + N1X_JOB_CHECKPOINT + 24)));
+    out->task_fence = le32_to_cpu(READ_ONCE(*(__le32 *)(p + N1X_JOB_FENCE)));
+    out->preempt_fence = le32_to_cpu(READ_ONCE(*(__le32 *)(p + N1X_JOB_PREEMPT_FENCE)));
+    dma_rmb();
+    return 0;
+}
+static int control_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
+{
+    struct n1x_dla_accel *accel = to_accel(drm);
+    struct n1x_dla_accel_control *req = data;
+    struct n1x_dla_preempt_result result = {0};
+    struct n1x_dla_preempt_ops preempt_ops;
+    struct n1x_dla_job_ops job_ops;
+    struct n1x_accel_job *job = NULL, *candidate;
+    u32 seq;
+    int err = -ENOENT;
+    if (!capable(CAP_SYS_RAWIO))
+        return -EPERM;
+    if (!req->job_id || req->action < N1X_DLA_CONTROL_START ||
+        req->action > N1X_DLA_CONTROL_RESUME || req->reserved || req->status ||
+        req->outcome || req->accepted || req->suspended || req->completed ||
+        req->preempt_completed)
+        return -EINVAL;
+    mutex_lock(&accel->lock);
+    if (accel->unplugged || accel->stopped) {
+        err = -ENODEV;
+        goto unlock;
+    }
+    if (!accel->control) {
+        err = -EOPNOTSUPP;
+        goto unlock;
+    }
+    list_for_each_entry(candidate, &accel->jobs, link)
+        if (candidate->id == req->job_id && candidate->owner == file) {
+            job = candidate;
+            break;
+        }
+    if (!job)
+        goto unlock;
+    if (!job->task.resumable) {
+        err = -EOPNOTSUPP;
+        goto unlock;
+    }
+    job_ops = (struct n1x_dla_job_ops){job, publish, read_fence};
+    preempt_ops = (struct n1x_dla_preempt_ops){job, snapshot_preempt};
+    switch (req->action) {
+    case N1X_DLA_CONTROL_START:
+        if (!accel->control->start) {
+            err = -EOPNOTSUPP;
+            goto unlock;
+        }
+        if (job->task.attempted && !job->task.polls && !job->task.accepted &&
+            !job->task.verified && !job->task.suspended &&
+            job->task.error == -EINPROGRESS)
+            err = 0;
+        else
+            err = accel->control->start(drm->dev, &job->task, &job_ops);
+        break;
+    case N1X_DLA_CONTROL_POLL:
+        if (!accel->control->poll) {
+            err = -EOPNOTSUPP;
+            goto unlock;
+        }
+        err = accel->control->poll(drm->dev, &job->task, &job_ops);
+        break;
+    case N1X_DLA_CONTROL_PREEMPT:
+        if (!accel->control->preempt) {
+            err = -EOPNOTSUPP;
+            goto unlock;
+        }
+        if (job->task.preempt_sequence == U32_MAX) {
+            err = -EOVERFLOW;
+            goto unlock;
+        }
+        seq = job->task.preempt_sequence + 1;
+        WRITE_ONCE(*(__le32 *)(job->task.buffer + N1X_JOB_PREEMPT_FENCE), cpu_to_le32(~seq));
+        err = n1x_dla_build_preempt_request(job->task.buffer + N1X_JOB_PREEMPT_REQ,
+                                            N1X_DLA_PREEMPT_REQUEST_BYTES,
+                                            job->task.dma + N1X_JOB_PREEMPT_REQ,
+                                            job->task.dma + N1X_JOB_PREEMPT_FENCE,
+                                            ~seq, seq);
+        if (err)
+            goto unlock;
+        dma_wmb();
+        err = accel->control->preempt(drm->dev, &job->task, &preempt_ops,
+                                      job->task.dma + N1X_JOB_PREEMPT_REQ, seq, &result);
+        req->outcome = result.outcome;
+        break;
+    case N1X_DLA_CONTROL_RESUME:
+        if (!accel->control->resume) {
+            err = -EOPNOTSUPP;
+            goto unlock;
+        }
+        err = accel->control->resume(drm->dev, &job->task, &preempt_ops);
+        break;
+    }
+    req->status = err;
+    req->accepted = job->task.accepted;
+    req->suspended = job->task.suspended;
+    req->completed = job->task.verified;
+    req->preempt_completed = job->task.preempt_completed;
+    err = 0;
+unlock:
+    mutex_unlock(&accel->lock);
+    return err;
+}
+void n1x_dla_accel_set_control(struct n1x_dla_accel *accel,
+                               const struct n1x_dla_accel_control_ops *control)
+{
+    if (!accel)
+        return;
+    mutex_lock(&accel->lock);
+    accel->control = control;
+    mutex_unlock(&accel->lock);
+}
 static void postclose(struct drm_device *drm, struct drm_file *file)
 {
     struct n1x_dla_accel *accel = to_accel(drm);
     struct n1x_accel_job *job;
     mutex_lock(&accel->lock);
     list_for_each_entry(job, &accel->jobs, link)
-        if (job->owner == file)
+        if (job->owner == file) {
+            if (job->task.resumable && !job->task.verified &&
+                (!job->task.error || job->task.error == -EINPROGRESS) &&
+                accel->control && accel->control->fail)
+                accel->control->fail(drm->dev, &job->task, -ECANCELED);
             job->owner = NULL;
+        }
     mutex_unlock(&accel->lock);
 }
 int n1x_dla_accel_stop(struct n1x_dla_accel *accel, int (*stop)(struct device *))
@@ -450,6 +642,8 @@ static const struct drm_ioctl_desc accel_ioctls[] = {
     DRM_IOCTL_DEF_DRV(N1X_DLA_EXEC, exec_ioctl, 0),
     DRM_IOCTL_DEF_DRV(N1X_DLA_READ, read_ioctl, 0),
     DRM_IOCTL_DEF_DRV(N1X_DLA_REEXEC, reexec_ioctl, 0),
+    DRM_IOCTL_DEF_DRV(N1X_DLA_STATS, stats_ioctl, 0),
+    DRM_IOCTL_DEF_DRV(N1X_DLA_CONTROL, control_ioctl, 0),
 };
 static const struct drm_driver accel_driver = {
     .driver_features = DRIVER_COMPUTE_ACCEL,

@@ -38,6 +38,7 @@ test-p16-start:
 	$(PYTHON) scripts/test_hfrp_setup.py
 	$(PYTHON) scripts/test_npu_dma_domains.py
 	$(PYTHON) scripts/test_qualify_p16_start.py
+	$(PYTHON) scripts/test_npu_autostart.py
 	$(PYTHON) scripts/test_linux_lpwr_config.py
 	$(PYTHON) scripts/test_native_loadable.py
 	$(PYTHON) scripts/test_dla_runtime.py
@@ -66,6 +67,7 @@ test-portable: test
 	$(PYTHON) scripts/test_p16_reload.py
 	$(PYTHON) scripts/test_npu_trigger.py
 	$(PYTHON) scripts/test_qualify_p16_start.py
+	$(PYTHON) scripts/test_npu_autostart.py
 # Device-free convolution compiler bridge; preserves the pinned ReLU directory.
 test-conv:
 	$(PYTHON) scripts/probe_native_graph.py --model conv1x1
@@ -268,15 +270,22 @@ test-vendor: test
 kernel-check:
 	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" n1x_dla_vbios.o n1x_dla_ring.o n1x_hfrp.o n1x_hfrp_setup.o n1x_dla_control.o n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_job.o n1x_dla_preempt.o n1x_dla_job_control.o n1x_dla_response.o n1x_dla_statistics.o n1x_dla_model.o n1x_sroot.o
 clean:
-	rm -f tests/test_firmware runtime/libn1x_dla.so runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke runtime/cudla/n1x-dla-broker
+	rm -f tests/test_firmware runtime/libn1x_dla.so runtime/libn1x_compiler.so runtime/n1x-compile runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke runtime/cudla/n1x-dla-broker
 
 module:
 	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" modules
 
-.PHONY: runtime
-runtime: runtime/libn1x_dla.so
+.PHONY: runtime compiler test-compiler
+runtime: runtime/libn1x_dla.so runtime/libn1x_compiler.so runtime/n1x-compile
+compiler: runtime/libn1x_compiler.so runtime/n1x-compile
 runtime/libn1x_dla.so: runtime/n1x_dla.c runtime/n1x_dla.h include/uapi/n1x_dla_accel.h
 	$(CC) $(CFLAGS) -fPIC -shared -Iinclude runtime/n1x_dla.c -o $@
+runtime/libn1x_compiler.so: runtime/n1x_compiler_shim.cpp runtime/n1x_compile.cpp include/n1x_compiler.h
+	$(CXX) -std=c++17 $(CFLAGS) -ffixed-x18 -fPIC -shared -Iinclude runtime/n1x_compiler_shim.cpp runtime/n1x_compile.cpp -ldl -lpthread -lcrypto -o $@
+runtime/n1x-compile: runtime/n1x_compile.cpp include/n1x_compiler.h runtime/libn1x_compiler.so
+	$(CXX) -std=c++17 $(CFLAGS) -DN1X_COMPILE_CLI_MAIN -Iinclude runtime/n1x_compile.cpp -Lruntime -ln1x_compiler -Wl,-rpath,'$$ORIGIN' -o $@
+test-compiler: compiler
+	$(PYTHON) scripts/test_n1x_compiler.py
 
 # Locally acquired official headers/library; never installs a replacement for
 # NVIDIA's public libcudla. The backend stays in this isolated directory.
@@ -285,12 +294,13 @@ CUDA_ROOT ?= /opt/cuda
 .PHONY: cudla
 cudla: runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke runtime/cudla/n1x-dla-broker
 .PHONY: test-cudla
-test-cudla: cudla
+test-cudla: cudla compiler
 	$(PYTHON) scripts/test_cudla_model.py
 	$(PYTHON) scripts/test_cudla_broker.py
 	$(PYTHON) scripts/test_cudla_broker_security.py
 	$(PYTHON) scripts/test_qualify_cudla.py
 	$(PYTHON) scripts/test_cudla_cuda_transport.py
+	$(PYTHON) scripts/test_n1x_compiler.py
 runtime/cudla/libnvcudla.so: runtime/cudla_backend.cpp runtime/cudla_model.cpp runtime/cudla_model.hpp runtime/n1x_dla.h runtime/n1x_cudla_private.h include/uapi/n1x_dla_accel.h runtime/libn1x_dla.so $(CUDLA_PACKAGE)/include/cudla.h $(CUDA_ROOT)/include/cuda.h
 	mkdir -p runtime/cudla
 	$(CXX) -std=c++17 $(CFLAGS) -fPIC -shared -Iinclude -I$(CUDLA_PACKAGE)/include -I$(CUDA_ROOT)/include runtime/cudla_backend.cpp runtime/cudla_model.cpp -Lruntime -ln1x_dla -L$(CUDA_ROOT)/lib64/stubs -lcuda -Wl,-rpath,'$$ORIGIN/..' -Wl,-soname,libnvcudla.so -Wl,-z,defs -o $@

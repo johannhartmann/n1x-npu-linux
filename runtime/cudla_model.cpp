@@ -190,6 +190,13 @@ Model::Model(const uint8_t *data,size_t bytes) {
             need(offsets[i]<=size && b.bytes<=size-offsets[i],"initializer extent");
             copies.push_back({offset+offsets[i],b.offset,b.bytes});
             if(!b.interface) { raw++; high=std::max(high,offsets[i]+b.bytes); }
+            if(names[i]=="task-0-stats" && b.interface==1 && b.bytes>=28 &&
+               names[i].size()<sizeof(stats.desc.name)) {
+                stats.present=true;
+                stats.offset=offset+offsets[i];
+                stats.desc.size=b.bytes;
+                std::memcpy(stats.desc.name,names[i].data(),names[i].size());
+            }
             property |= names[i].rfind("property_",0)==0;
         }
         if(raw) constants.push_back({layout.size()-1,flags,high,raw==names.size()&&!property});

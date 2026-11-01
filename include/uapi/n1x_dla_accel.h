@@ -22,6 +22,9 @@
  * releases it. The retention flag keeps its historical name for compatibility.
  */
 #define N1X_DLA_CAP_CONTROLLED_STOP 8U
+#define N1X_DLA_CAP_STATISTICS 16U
+#define N1X_DLA_CAP_PREEMPT 32U
+#define N1X_DLA_EXEC_RESUMABLE 1U
 struct n1x_dla_accel_info {
     __u32 abi_version, capabilities;
     __u32 max_image_bytes, max_addresses;
@@ -61,12 +64,34 @@ struct n1x_dla_accel_reexec {
     __s32 status;
     __u32 completed;
 };
+struct n1x_dla_accel_stats {
+    __u64 job_id, offset, bytes;
+    __u32 count;
+    __u32 metadata_offset, metadata_stride;
+    __u32 data_offset, data_stride;
+    __u32 reserved;
+};
+#define N1X_DLA_CONTROL_START 1U
+#define N1X_DLA_CONTROL_POLL 2U
+#define N1X_DLA_CONTROL_PREEMPT 3U
+#define N1X_DLA_CONTROL_RESUME 4U
+struct n1x_dla_accel_control {
+    __u64 job_id;
+    __u32 action, reserved;
+    __s32 status;
+    __u32 outcome;
+    __u32 accepted, suspended, completed, preempt_completed;
+};
 #define DRM_N1X_DLA_INFO 0x00
 #define DRM_N1X_DLA_EXEC 0x01
 #define DRM_N1X_DLA_READ 0x02
 #define DRM_N1X_DLA_REEXEC 0x03
+#define DRM_N1X_DLA_STATS 0x04
+#define DRM_N1X_DLA_CONTROL 0x05
 #define DRM_IOCTL_N1X_DLA_INFO DRM_IOR(DRM_COMMAND_BASE + DRM_N1X_DLA_INFO, struct n1x_dla_accel_info)
 #define DRM_IOCTL_N1X_DLA_EXEC DRM_IOWR(DRM_COMMAND_BASE + DRM_N1X_DLA_EXEC, struct n1x_dla_accel_exec)
 #define DRM_IOCTL_N1X_DLA_READ DRM_IOW(DRM_COMMAND_BASE + DRM_N1X_DLA_READ, struct n1x_dla_accel_read)
 #define DRM_IOCTL_N1X_DLA_REEXEC DRM_IOWR(DRM_COMMAND_BASE + DRM_N1X_DLA_REEXEC, struct n1x_dla_accel_reexec)
+#define DRM_IOCTL_N1X_DLA_STATS DRM_IOWR(DRM_COMMAND_BASE + DRM_N1X_DLA_STATS, struct n1x_dla_accel_stats)
+#define DRM_IOCTL_N1X_DLA_CONTROL DRM_IOWR(DRM_COMMAND_BASE + DRM_N1X_DLA_CONTROL, struct n1x_dla_accel_control)
 #endif

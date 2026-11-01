@@ -35,10 +35,13 @@ def main():
 #include <string.h>
 #include <errno.h>
 #include "n1x_dla_job.h"
+#include "n1x_dla_command.h"
+#include "n1x_dla_statistics.h"
 #include "n1x_dla_task.h"
 #include "n1x_dla_accel.h"
 #include "uapi/n1x_dla_accel.h"
-typedef __u8 u8;typedef __u32 u32;typedef __u64 u64;typedef __u32 __le32;
+typedef __u8 u8;typedef __u32 u32;typedef __u64 u64;typedef __u32 __le32;typedef __u64 __le64;
+#define U32_MAX UINT32_MAX
 #define U64_MAX UINT64_MAX
 #define CAP_SYS_RAWIO 17
 #define GFP_KERNEL 0
@@ -48,6 +51,7 @@ typedef __u8 u8;typedef __u32 u32;typedef __u64 u64;typedef __u32 __le32;
 #define WRITE_ONCE(x,v) ((x)=(v))
 #define cpu_to_le32(x) (x)
 #define le32_to_cpu(x) (x)
+#define le64_to_cpu(x) (x)
 #define u64_to_user_ptr(x) ((void *)(uintptr_t)(x))
 #define container_of(p,t,m) ((t *)((char *)(p)-offsetof(t,m)))
 #define ERR_PTR(x) ((void *)(intptr_t)(x))
@@ -107,6 +111,22 @@ static int cases;
 static int stop_error,stops;
 static int stopped_hardware(struct device *d)
 {assert(d==&device && accel.lock.locked && accel.stopped);stops++;return stop_error;}
+static int ctrl_start(struct device *d,struct n1x_dla_job *t,const struct n1x_dla_job_ops *ops)
+{assert(d==&device && t && ops);t->attempted=true;t->accepted=true;t->error=-EINPROGRESS;return 0;}
+static int ctrl_poll(struct device *d,struct n1x_dla_job *t,const struct n1x_dla_job_ops *ops)
+{assert(d==&device && t && ops);t->verified=true;t->error=0;return 0;}
+static int ctrl_preempt(struct device *d,struct n1x_dla_job *t,const struct n1x_dla_preempt_ops *ops,
+ __u64 req_dma,__u32 seq,struct n1x_dla_preempt_result *res)
+{assert(d==&device && t && ops && req_dma && seq);
+ t->preempt_sequence=seq;t->suspended=true;t->preempt_completed=true;t->error=-EINPROGRESS;
+ res->outcome=N1X_DLA_PREEMPT_CHECKPOINT;return 0;}
+static int ctrl_resume(struct device *d,struct n1x_dla_job *t,const struct n1x_dla_preempt_ops *ops)
+{assert(d==&device && t && ops);t->suspended=false;t->error=-EINPROGRESS;return 0;}
+static int ctrl_fail(struct device *d,struct n1x_dla_job *t,int error)
+{assert(d==&device && t && error<0);t->error=error;return 0;}
+static const struct n1x_dla_accel_control_ops ctrl_ops={
+ .start=ctrl_start,.poll=ctrl_poll,.preempt=ctrl_preempt,.resume=ctrl_resume,.fail=ctrl_fail
+};
 static u64 word64(const u8 *p) {u64 v=0;for(int i=0;i<8;i++)v|=(u64)p[i]<<(8*i);return v;}
 static int backend(struct device *d,struct n1x_dla_job *task,const struct n1x_dla_job_ops *ops)
 {
@@ -175,7 +195,7 @@ int main(int argc,char **argv)
  assert(read_ioctl(&accel.drm,&read,&owner)==-EPERM);
  for(int mode=0;mode<11;mode++){
   reset_request();
-  switch(mode){case 0:req.flags=1;break;case 1:req.job_id=1;break;
+  switch(mode){case 0:req.flags=2;break;case 1:req.job_id=1;break;
   case 2:req.status=-EIO;break;case 3:req.completed=1;break;case 4:req.image_ptr=0;break;
   case 5:req.ranges_ptr=0;break;case 6:req.writable_ranges_ptr=0;break;case 7:req.image_bytes=0;break;
   case 8:req.image_bytes=N1X_DLA_MAX_IMAGE+1;break;case 9:req.num_addresses=513;break;
@@ -183,6 +203,7 @@ int main(int argc,char **argv)
   /* Invalid caller output fields are unchanged on rejected ioctls. */
   assert(exec_ioctl(&accel.drm,&req,&owner)==-EINVAL);cases++;
  }
+ reset_request();req.flags=N1X_DLA_EXEC_RESUMABLE;check(-EOPNOTSUPP);
  reset_request();req.num_addresses=0;check(-EINVAL);
  reset_request();req.num_writable_ranges=0;check(-EINVAL);
  reset_request();ranges[1].offset=UINT64_MAX;check(-EINVAL);
@@ -250,11 +271,36 @@ int main(int argc,char **argv)
  again=(struct n1x_dla_accel_reexec){.job_id=req.job_id,.patches_ptr=(uintptr_t)&patch,.num_patches=1};
  assert(reexec_ioctl(&accel.drm,&again,&owner)==-EIO);
  assert(!info_ioctl(&accel.drm,&info,&owner)&&info.retained_jobs==2&&info.retained_bytes==24576);
- assert(info.abi_version==2&&info.capabilities==15&&info.reserved==0);
+ assert(info.abi_version==2&&info.capabilities==31&&info.reserved==0);
+ struct n1x_dla_accel_stats st={.job_id=1,.offset=0,.bytes=28736};
+ privileged=false;assert(stats_ioctl(&accel.drm,&st,&owner)==-EPERM);privileged=true;
+ assert(stats_ioctl(&accel.drm,&st,&owner)==-ENOENT);
+ n1x_dla_accel_set_control(&accel,&ctrl_ops);
+ assert(!info_ioctl(&accel.drm,&info,&owner)&&info.capabilities==63);
+ image_bytes=32768;reset_request();ranges[0].bytes=32768;ranges[1]=(struct n1x_dla_accel_range){0,128};
+ u8 *sb=image+1024;memset(sb,0,28736);
+ sb[0]=0x00;sb[1]=0x03;sb[4]=2;sb[8]=4;sb[12]=0x00;sb[13]=0x18;sb[16]=28;
+ sb[20]=0x00;sb[21]=0x04;sb[24]=0x40;sb[25]=0x60;
+ for(u32 idx=0;idx<4;idx++){u32 off=24640+idx*0x400;memcpy(sb+28+idx*0x1800+0x1108,&off,4);}
+ req.flags=N1X_DLA_EXEC_RESUMABLE;check(0);
+ u64 resumable_id=req.job_id;assert(resumable_id&&!req.completed&&req.status==0);
+ st=(struct n1x_dla_accel_stats){.job_id=resumable_id,.offset=1024,.bytes=28736};
+ assert(stats_ioctl(&accel.drm,&st,&owner)==-EIO);
+ struct n1x_dla_accel_control ctrl={.job_id=resumable_id,.action=N1X_DLA_CONTROL_START};
+ privileged=false;assert(control_ioctl(&accel.drm,&ctrl,&owner)==-EPERM);privileged=true;
+ assert(!control_ioctl(&accel.drm,&ctrl,&owner)&&ctrl.accepted&&!ctrl.completed);
+ ctrl=(struct n1x_dla_accel_control){.job_id=resumable_id,.action=N1X_DLA_CONTROL_PREEMPT};
+ assert(!control_ioctl(&accel.drm,&ctrl,&owner)&&ctrl.suspended&&ctrl.preempt_completed&&ctrl.outcome==N1X_DLA_PREEMPT_CHECKPOINT);
+ ctrl=(struct n1x_dla_accel_control){.job_id=resumable_id,.action=N1X_DLA_CONTROL_RESUME};
+ assert(!control_ioctl(&accel.drm,&ctrl,&owner)&&!ctrl.suspended&&!ctrl.completed);
+ ctrl=(struct n1x_dla_accel_control){.job_id=resumable_id,.action=N1X_DLA_CONTROL_POLL};
+ assert(!control_ioctl(&accel.drm,&ctrl,&owner)&&ctrl.completed&&!ctrl.status);
+ assert(!stats_ioctl(&accel.drm,&st,&owner)&&st.count==4&&st.metadata_offset==28&&st.data_offset==24640);
+ image_bytes=4096;
  /* An uncertain stop must retain every job and block all future execution. */
  stop_error=-ETIMEDOUT;int before_stop=frees;
  assert(n1x_dla_accel_stop(&accel,stopped_hardware)==-ETIMEDOUT && stops==1);
- assert(accel.count==2 && accel.retained==24576 && frees==before_stop);
+ assert(accel.count==3 && accel.retained==65536 && frees==before_stop);
  reset_request();check(-ENODEV);
  again=(struct n1x_dla_accel_reexec){.job_id=read.job_id,.patches_ptr=(uintptr_t)&patch,.num_patches=1};
  assert(reexec_ioctl(&accel.drm,&again,&owner)==-ENODEV);
@@ -262,11 +308,11 @@ int main(int argc,char **argv)
   * The real bootstrap refuses retry after failure (separately fault-tested). */
  stop_error=0;u64 last=accel.last_id;
  assert(!n1x_dla_accel_stop(&accel,stopped_hardware) && stops==2);
- assert(!accel.count && !accel.retained && frees==before_stop+2 && accel.last_id==last);
+ assert(!accel.count && !accel.retained && frees==before_stop+3 && accel.last_id==last);
  assert(accel.jobs.next==&accel.jobs && accel.jobs.prev==&accel.jobs);
  assert(read_ioctl(&accel.drm,&read,&owner)==-ENOENT);
  postclose(&accel.drm,&owner);assert(!accel.lock.locked);
- assert(!n1x_dla_accel_stop(&accel,stopped_hardware) && frees==before_stop+2);
+ assert(!n1x_dla_accel_stop(&accel,stopped_hardware) && frees==before_stop+3);
  printf("%d exact accel EXEC cases plus READ/INFO/ownership/close checks passed; no hardware access\n",cases);
 }
 '''
@@ -276,6 +322,7 @@ int main(int argc,char **argv)
         subprocess.run(shlex.split(os.environ.get('CC', 'cc')) + [
             '-O2', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
             '-I'+str(ROOT/'include'), str(code), str(ROOT/'driver/n1x_dla_task.c'),
+            str(ROOT/'driver/n1x_dla_command.c'), str(ROOT/'driver/n1x_dla_statistics.c'),
             '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
         sys.path.insert(0, str(ROOT/'runtime'))

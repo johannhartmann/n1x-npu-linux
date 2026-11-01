@@ -42,6 +42,13 @@ def check():
         issues.append('installed NPU module targets a different kernel')
     else:
         facts.append(f'Packaged NPU module: {module}')
+    unit = Path('/usr/lib/systemd/system/n1x-npu.service')
+    if not unit.is_file():
+        issues.append('packaged n1x-npu.service is missing')
+    elif command('systemctl', 'is-enabled', 'n1x-npu.service') != 'enabled':
+        issues.append('n1x-npu.service is not enabled for qualified-kernel boot')
+    else:
+        facts.append('Qualified NPU boot service: enabled')
     loaded = Path('/sys/module/n1x_npu_bootstrap/srcversion')
     if loaded.is_file() and module.is_file():
         installed_version = command('modinfo', '-F', 'srcversion', str(module))
@@ -49,6 +56,11 @@ def check():
             issues.append('loaded and packaged NPU modules differ; reboot before hardware use')
     elif loaded.is_file():
         issues.append('NPU module is loaded but has no persistent installed copy')
+    if running == KERNEL:
+        if command('systemctl', 'is-active', 'n1x-npu.service') != 'active':
+            issues.append('qualified NPU boot service is not active')
+        if not Path('/dev/accel/accel0').is_char_device():
+            issues.append('qualified /dev/accel/accel0 node is missing')
     nvidia_package = command('pacman', '-Q', 'nvidia-utils')
     nvidia_module = command('modinfo', '-k', KERNEL, '-F', 'version', 'nvidia')
     if not nvidia_package or not nvidia_module:
@@ -74,9 +86,8 @@ def check_boot():
         return ['Cannot read /boot/limine.conf; run --boot with root privileges']
     content = menu.read_text()
     defaults = re.findall(r'^default_entry:\s*(.*?)\s*$', content, re.M)
-    if defaults not in (["Omarchy/linux-p16-asus-23-npu2"],
-                        ["Omarchy/linux-rtx-spark-npu"]):
-        issues.append('default is neither the known-working NPU2 entry nor the RTX Spark NPU candidate')
+    if defaults != ["Omarchy/linux-rtx-spark-npu"]:
+        issues.append('default is not the qualified RTX Spark NPU entry')
     if not re.search(r'^\s*//linux-rtx-spark-npu\s*$', content, re.M):
         issues.append('managed NPU boot entry missing')
     images = re.findall(r'boot\(\):(/EFI/Linux/[^#\s]+)#([a-f0-9]{128})', content)

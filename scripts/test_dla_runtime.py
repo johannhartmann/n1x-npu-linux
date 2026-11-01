@@ -11,7 +11,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'runtime'))
-from n1x_dla import Info, Result, Range
+from n1x_dla import Info, Result, Range, Stats, Control
 
 
 def main():
@@ -40,8 +40,14 @@ int __wrap_ioctl(int fd,unsigned long request,...)
  if(request==DRM_IOCTL_N1X_DLA_EXEC){struct n1x_dla_accel_exec *r=data;
   assert(r->image_ptr&&r->ranges_ptr&&r->writable_ranges_ptr&&r->image_bytes==16&&r->num_addresses==1);
   assert(r->num_writable_ranges==1);
-  assert(!r->job_id&&!r->status&&!r->completed&&!r->flags);
-  r->job_id=8;r->status=mode==4?-ETIMEDOUT:0;r->completed=mode==5?0:1;return 0;}
+  assert(!r->job_id&&!r->status&&!r->completed&&!(r->flags&~N1X_DLA_EXEC_RESUMABLE));
+  r->job_id=8;r->status=mode==4?-ETIMEDOUT:0;r->completed=mode==5?0:(r->flags?0:1);return 0;}
+ if(request==DRM_IOCTL_N1X_DLA_STATS){struct n1x_dla_accel_stats *s=data;
+  assert(s->job_id==8&&s->offset==64&&s->bytes==320&&!s->count&&!s->reserved);
+  s->count=4;s->metadata_offset=28;s->metadata_stride=0x1800;s->data_offset=24640;s->data_stride=0x400;return 0;}
+ if(request==DRM_IOCTL_N1X_DLA_CONTROL){struct n1x_dla_accel_control *c=data;
+  assert(c->job_id==8&&c->action==N1X_DLA_CONTROL_POLL&&!c->reserved&&!c->status);
+  c->status=0;c->accepted=1;c->completed=1;return 0;}
  assert(request==DRM_IOCTL_N1X_DLA_READ);
  struct n1x_dla_accel_read *r=data;assert(r->job_id==8&&r->offset==3&&r->bytes==1&&!r->reserved);
  *(unsigned char *)(uintptr_t)r->data_ptr=0x5a;return 0;
@@ -59,14 +65,22 @@ int main(void)
   assert(result.job_id==(mode==3?0:8));
  }
  mode=0;assert(!n1x_dla_submit(73,image,16,&range,1,&range,1,&result)&&result.job_id==8);
+ assert(!n1x_dla_submit_flags(73,image,16,&range,1,&range,1,N1X_DLA_EXEC_RESUMABLE,&result)&&result.job_id==8&&!result.completed);
+ assert(n1x_dla_submit_flags(73,image,16,&range,1,&range,1,2,&result)==-EINVAL);
+ struct n1x_dla_accel_stats stats;
+ assert(!n1x_dla_stats(73,8,64,320,&stats)&&stats.count==4&&stats.data_offset==24640);
+ assert(n1x_dla_stats(73,0,64,320,&stats)==-EINVAL&&n1x_dla_stats(73,8,64,0,&stats)==-EINVAL);
+ struct n1x_dla_accel_control ctrl;
+ assert(!n1x_dla_control(73,8,N1X_DLA_CONTROL_POLL,&ctrl)&&ctrl.accepted==1&&ctrl.completed==1);
+ assert(n1x_dla_control(73,0,N1X_DLA_CONTROL_POLL,&ctrl)==-EINVAL);
  assert(!n1x_dla_read(73,8,3,&out,1)&&out==0x5a);
  mode=3;int before=calls;assert(n1x_dla_read(73,8,3,&out,1)==-EINTR&&calls==before+1);
  assert(n1x_dla_open(NULL)==-EINVAL&&n1x_dla_info(73,NULL)==-EINVAL);
  assert(n1x_dla_submit(73,NULL,16,&range,1,&range,1,&result)==-EINVAL);
  assert(n1x_dla_submit(73,image,16,&range,1,NULL,0,&result)==-EINVAL);
  assert(n1x_dla_read(73,8,0,&out,0)==-EINVAL);
- printf("{\"info\":%zu,\"result\":%zu,\"range\":%zu,\"job_offset\":%zu,\"status_offset\":%zu}\n",
- sizeof(struct n1x_dla_accel_info),sizeof(result),sizeof(range),offsetof(struct n1x_dla_accel_exec,job_id),offsetof(struct n1x_dla_accel_exec,status));
+ printf("{\"info\":%zu,\"result\":%zu,\"range\":%zu,\"stats\":%zu,\"control\":%zu,\"job_offset\":%zu,\"status_offset\":%zu}\n",
+ sizeof(struct n1x_dla_accel_info),sizeof(result),sizeof(range),sizeof(stats),sizeof(ctrl),offsetof(struct n1x_dla_accel_exec,job_id),offsetof(struct n1x_dla_accel_exec,status));
 }
 '''
     with tempfile.TemporaryDirectory(prefix='n1x-runtime-') as tmp:
@@ -78,7 +92,8 @@ int main(void)
             '-Wl,--wrap=open,--wrap=close,--wrap=ioctl', '-o', str(binary)], check=True)
         layout = json.loads(subprocess.check_output([str(binary)], text=True))
     assert layout == dict(info=ctypes.sizeof(Info), result=ctypes.sizeof(Result),
-                         range=ctypes.sizeof(Range), job_offset=Result.job_id.offset,
+                         range=ctypes.sizeof(Range), stats=ctypes.sizeof(Stats),
+                         control=ctypes.sizeof(Control), job_offset=Result.job_id.offset,
                          status_offset=Result.status.offset)
     print('C/Python ABI layout, driver/version checks, execution errors and no-retry semantics passed; no hardware access')
 

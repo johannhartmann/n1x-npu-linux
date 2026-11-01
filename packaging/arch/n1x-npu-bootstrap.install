@@ -1,5 +1,7 @@
 post_install() {
   depmod -a 7.2.8-23-rtx-spark-npu
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  printf '%s\n' 'Enable n1x-npu.service only after physical qualification.'
 }
 
 post_upgrade() {
@@ -10,4 +12,5 @@ post_remove() {
   if [[ -d /usr/lib/modules/7.2.8-23-rtx-spark-npu ]]; then
     depmod -a 7.2.8-23-rtx-spark-npu
   fi
+  systemctl daemon-reload >/dev/null 2>&1 || true
 }

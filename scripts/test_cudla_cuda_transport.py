@@ -79,6 +79,13 @@ int n1x_dla_read(int fd,unsigned long long job,unsigned long long offset,void *o
  if(fail("read"))return -EIO;
  memset(out,0x37,bytes);return 0;
 }
+int n1x_dla_stats(int fd,unsigned long long job,unsigned long long offset,unsigned long long bytes,
+ struct n1x_dla_accel_stats *s) {
+ assert(fd>=0&&job==saved_id&&offset+bytes<=saved_bytes);event("STATS");
+ memset(s,0,sizeof(*s));s->job_id=job;s->offset=offset;s->bytes=bytes;
+ s->count=4;s->metadata_offset=28;s->metadata_stride=0x1800;
+ s->data_offset=24640;s->data_stride=0x400;return 0;
+}
 '''
 
 CUDA_FAULTS=r'''

@@ -14,14 +14,29 @@ Build the source-pinned module package with matching headers:
 python3 scripts/build_arch_module_package.py
 ```
 
-The builder exports the committed driver and headers into a fresh directory
+The builder exports the committed driver, headers and boot-service files into a fresh directory
 under `results/arch-module-package/` and checks the compiled module's kernel
 release. Review the resulting PKGBUILD and package, then install the package
 file with `sudo pacman -U /absolute/path/to/the-built-package.pkg.tar.zst` in a terminal.
-It places only `n1x_npu_bootstrap.ko` in the
-versioned module tree and runs `depmod`. It does not autoload the module,
-install firmware, start the NPU or change boot entries. Its dependency prevents
-removal of the audited kernel while this driver package is installed.
+It places `n1x_npu_bootstrap.ko` in the versioned module tree, runs `depmod`,
+and installs `n1x-npu.service` plus its fail-closed starter. It does not install
+vendor firmware, enable the service or change boot entries. Its dependency
+prevents removal of the audited kernel while this driver package is installed.
+
+Do not enable automatic startup until the exact machine has completed the
+manual startup, inference and checked shutdown/reload qualification in
+[setup](setup.md). On that qualified machine, enable it once:
+
+```sh
+sudo systemctl enable n1x-npu.service
+```
+
+The unit is ignored on every kernel except `7.2.8-23-rtx-spark-npu`. On the
+qualified kernel it verifies the P16/BIOS identity and firmware hashes, selects
+only the two audited isolated DMA domains, loads the module with immutable
+options and executes the verified sequence through `bypass_task`. It has no
+retry or force-unload path. A failure remains pinned for inspection until
+reboot, just like the manual qualifier.
 
 Set the hook's `repo=` variable in `config/omarchy-npu-post-update` to the
 quoted absolute path of your checkout. Then install the user-level hook once:
@@ -61,7 +76,8 @@ same audited kernel first, as documented in [shutdown/reload](shutdown-reload.md
 3. Build a new, uniquely named kernel and headers package, external NVIDIA
    modules and an independent UKI. Verify module vermagic, initramfs contents,
    EFI digest, Limine entry and fallback before manual boot.
-4. Boot the new kernel without automatically loading the research NPU driver.
+4. Keep `n1x-npu.service` disabled and boot the new kernel without automatically
+   loading the research NPU driver.
    Check input, display, storage, NVIDIA and SROOT DMA on the physical board.
 5. Update the driver's explicit kernel gate and package release only after
    review. Rebuild the module and rerun offline regression plus bounded

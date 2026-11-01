@@ -150,51 +150,99 @@ std::vector<uint8_t> read_model(int directory,const std::string& id,ModelInfo& i
 
 struct Module {
     cudlaDevHandle device{}; cudlaModule handle{};
-    CUdeviceptr input{},output{}; uint64_t *input_handle{},*output_handle{};
-    cudlaModuleTensorDescriptor in{},out{};
+    std::vector<CUdeviceptr> inputs{},outputs{};
+    std::vector<uint64_t*> input_handles{},output_handles{};
+    std::vector<cudlaModuleTensorDescriptor> ins{},outs{};
+    uint64_t total_input_bytes{},total_output_bytes{};
     Module(cudlaDevHandle d,std::vector<uint8_t>& model,size_t tensor_bytes):device(d) {
-        dla_check(cudlaModuleLoadFromMemory(device,model.data(),model.size(),&handle,0));
-        cudlaModuleAttribute attribute{};
-        dla_check(cudlaModuleGetAttributes(handle,CUDLA_NUM_INPUT_TENSORS,&attribute));
-        if(attribute.numInputTensors!=1) throw std::runtime_error("broker requires one model input");
-        dla_check(cudlaModuleGetAttributes(handle,CUDLA_NUM_OUTPUT_TENSORS,&attribute));
-        if(attribute.numOutputTensors!=1) throw std::runtime_error("broker requires one model output");
-        attribute.inputTensorDesc=&in;
-        dla_check(cudlaModuleGetAttributes(handle,CUDLA_INPUT_TENSOR_DESCRIPTORS,&attribute));
-        attribute.outputTensorDesc=&out;
-        dla_check(cudlaModuleGetAttributes(handle,CUDLA_OUTPUT_TENSOR_DESCRIPTORS,&attribute));
-        if(!in.size || !out.size || in.size>max_tensor_bytes || out.size>max_tensor_bytes ||
-           in.size>max_total_tensor_bytes-out.size ||
-           tensor_bytes>max_total_tensor_bytes-static_cast<size_t>(in.size+out.size))
-            throw std::runtime_error("invalid broker tensor size");
-        cuda_check(cuMemAlloc(&input,in.size)); cuda_check(cuMemAlloc(&output,out.size));
-        dla_check(cudlaMemRegister(device,reinterpret_cast<uint64_t*>(input),in.size,&input_handle,0));
-        dla_check(cudlaMemRegister(device,reinterpret_cast<uint64_t*>(output),out.size,&output_handle,0));
+        try {
+            dla_check(cudlaModuleLoadFromMemory(device,model.data(),model.size(),&handle,0));
+            cudlaModuleAttribute attribute{};
+            dla_check(cudlaModuleGetAttributes(handle,CUDLA_NUM_INPUT_TENSORS,&attribute));
+            if(attribute.numInputTensors<1 || attribute.numInputTensors>64)
+                throw std::runtime_error("broker requires 1..64 model inputs");
+            ins.resize(attribute.numInputTensors);
+            dla_check(cudlaModuleGetAttributes(handle,CUDLA_NUM_OUTPUT_TENSORS,&attribute));
+            if(attribute.numOutputTensors<1 || attribute.numOutputTensors>64)
+                throw std::runtime_error("broker requires 1..64 model outputs");
+            outs.resize(attribute.numOutputTensors);
+            attribute.inputTensorDesc=ins.data();
+            dla_check(cudlaModuleGetAttributes(handle,CUDLA_INPUT_TENSOR_DESCRIPTORS,&attribute));
+            attribute.outputTensorDesc=outs.data();
+            dla_check(cudlaModuleGetAttributes(handle,CUDLA_OUTPUT_TENSOR_DESCRIPTORS,&attribute));
+            for(const auto& d_in:ins) {
+                if(!d_in.size || d_in.size>max_tensor_bytes ||
+                   d_in.size>max_total_tensor_bytes-total_input_bytes)
+                    throw std::runtime_error("invalid broker tensor size");
+                total_input_bytes+=d_in.size;
+            }
+            for(const auto& d_out:outs) {
+                if(!d_out.size || d_out.size>max_tensor_bytes ||
+                   d_out.size>max_total_tensor_bytes-total_output_bytes ||
+                   total_input_bytes>max_total_tensor_bytes-total_output_bytes)
+                    throw std::runtime_error("invalid broker tensor size");
+                total_output_bytes+=d_out.size;
+            }
+            if(tensor_bytes>max_total_tensor_bytes-static_cast<size_t>(total_input_bytes+total_output_bytes))
+                throw std::runtime_error("invalid broker tensor size");
+            inputs.resize(ins.size(),0); input_handles.resize(ins.size(),nullptr);
+            outputs.resize(outs.size(),0); output_handles.resize(outs.size(),nullptr);
+            for(size_t i=0;i<ins.size();i++) {
+                cuda_check(cuMemAlloc(&inputs[i],ins[i].size));
+                dla_check(cudlaMemRegister(device,reinterpret_cast<uint64_t*>(inputs[i]),ins[i].size,&input_handles[i],0));
+            }
+            for(size_t i=0;i<outs.size();i++) {
+                cuda_check(cuMemAlloc(&outputs[i],outs[i].size));
+                dla_check(cudlaMemRegister(device,reinterpret_cast<uint64_t*>(outputs[i]),outs[i].size,&output_handles[i],0));
+            }
+        } catch(...) {
+            cleanup();
+            throw;
+        }
+    }
+    void cleanup() noexcept {
+        for(auto *h:input_handles) if(h) cudlaMemUnregister(device,h);
+        for(auto *h:output_handles) if(h) cudlaMemUnregister(device,h);
+        input_handles.clear(); output_handles.clear();
+        if(handle) { cudlaModuleUnload(handle,0); handle=nullptr; }
+        for(auto p:inputs) if(p) cuMemFree(p);
+        for(auto p:outputs) if(p) cuMemFree(p);
+        inputs.clear(); outputs.clear();
     }
     Module(const Module&)=delete; Module& operator=(const Module&)=delete;
     Module(Module&& other) noexcept:
-        device(other.device),handle(other.handle),input(other.input),output(other.output),
-        input_handle(other.input_handle),output_handle(other.output_handle),in(other.in),out(other.out) {
-        other.handle=nullptr;other.input=other.output=0;other.input_handle=other.output_handle=nullptr;
+        device(other.device),handle(other.handle),inputs(std::move(other.inputs)),outputs(std::move(other.outputs)),
+        input_handles(std::move(other.input_handles)),output_handles(std::move(other.output_handles)),
+        ins(std::move(other.ins)),outs(std::move(other.outs)),
+        total_input_bytes(other.total_input_bytes),total_output_bytes(other.total_output_bytes) {
+        other.handle=nullptr;
     }
     Module& operator=(Module&&)=delete;
-    ~Module() {
-        if(input_handle) cudlaMemUnregister(device,input_handle);
-        if(output_handle) cudlaMemUnregister(device,output_handle);
-        if(handle) cudlaModuleUnload(handle,0);
-        if(input) cuMemFree(input);
-        if(output) cuMemFree(output);
-    }
+    ~Module() { cleanup(); }
     std::vector<uint8_t> run(const std::vector<uint8_t>& data,CUstream stream) {
-        if(data.size()!=in.size) throw std::runtime_error("broker input size mismatch");
-        cuda_check(cuMemcpyHtoD(input,data.data(),data.size()));
-        cuda_check(cuMemsetD8(output,0xa5,out.size)); cuda_check(cuCtxSynchronize());
-        const uint64_t *inputs[]={input_handle}; uint64_t *outputs[]={output_handle};
-        cudlaTask task{};task.moduleHandle=handle;task.inputTensor=inputs;task.outputTensor=outputs;
-        task.numInputTensors=task.numOutputTensors=1;
+        if(data.size()!=total_input_bytes) throw std::runtime_error("broker input size mismatch");
+        size_t in_cursor=0;
+        for(size_t i=0;i<ins.size();i++) {
+            cuda_check(cuMemcpyHtoD(inputs[i],data.data()+in_cursor,ins[i].size));
+            in_cursor+=ins[i].size;
+        }
+        for(size_t i=0;i<outs.size();i++) {
+            cuda_check(cuMemsetD8(outputs[i],0xa5,outs[i].size));
+        }
+        cuda_check(cuCtxSynchronize());
+        std::vector<const uint64_t*> in_ptrs(input_handles.begin(),input_handles.end());
+        cudlaTask task{};task.moduleHandle=handle;
+        task.inputTensor=in_ptrs.data();task.outputTensor=output_handles.data();
+        task.numInputTensors=static_cast<uint32_t>(ins.size());
+        task.numOutputTensors=static_cast<uint32_t>(outs.size());
         dla_check(cudlaSubmitTask(device,&task,1,stream,0));
         cuda_check(cuStreamSynchronize(stream)); dla_check(cudlaGetLastError(device));
-        std::vector<uint8_t> result(out.size);cuda_check(cuMemcpyDtoH(result.data(),output,result.size()));
+        std::vector<uint8_t> result(total_output_bytes);
+        size_t out_cursor=0;
+        for(size_t i=0;i<outs.size();i++) {
+            cuda_check(cuMemcpyDtoH(result.data()+out_cursor,outputs[i],outs[i].size));
+            out_cursor+=outs[i].size;
+        }
         return result;
     }
 };
@@ -265,8 +313,9 @@ int main(int argc,char **argv) {
         size_t tensor_bytes=0,retained_bytes=0;
         for(size_t i=0;i<images.size();i++) {
             modules.emplace_back(device,images[i],tensor_bytes);
-            tensor_bytes+=static_cast<size_t>(modules.back().in.size+modules.back().out.size);
-            model_info[i].input_bytes=modules.back().in.size;model_info[i].output_bytes=modules.back().out.size;
+            tensor_bytes+=static_cast<size_t>(modules.back().total_input_bytes+modules.back().total_output_bytes);
+            model_info[i].input_bytes=modules.back().total_input_bytes;
+            model_info[i].output_bytes=modules.back().total_output_bytes;
             uint64_t image_bytes=0;
             if(n1x_cudla_materialized_image_size(images[i].data(),images[i].size(),&image_bytes) ||
                image_bytes>SIZE_MAX-job_prefix_bytes-(page_bytes-1))
@@ -300,7 +349,7 @@ int main(int argc,char **argv) {
                 if(err) throw std::runtime_error("accel info failed "+std::to_string(err));
                 response(info_command,&info,sizeof(info));continue;
             }
-            if(request.code>=modules.size() || request.bytes!=modules[request.code].in.size)
+            if(request.code>=modules.size() || request.bytes!=modules[request.code].total_input_bytes)
                 throw std::runtime_error("invalid inference request");
             std::vector<uint8_t> input(request.bytes);exact_protocol_read(input.data(),input.size());
             auto output=modules[request.code].run(input,stream);response(request.code,output.data(),output.size());
