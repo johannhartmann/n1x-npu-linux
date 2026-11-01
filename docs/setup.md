@@ -125,11 +125,14 @@ The [offline reproduction receipt](evidence/offline-reproduction-2026-10-28.json
 a clean source export with no pre-existing model/capture outputs, Python 3.12
 and all four expected loadable hashes. It does not establish physical execution.
 
-This is a fixture compiler workflow, not a general ONNX-to-N1X compiler. It
-refuses existing output directories to preserve previous captures and qualified
-artifacts. Use a separate checkout for a rebuild; do not delete evidence from
-an unsuccessful hardware run. Commands and complete compiler output are saved
-in `results/model-build.jsonl` and `results/model-build.log`.
+`scripts/build_models.py` is the hash-pinned fixture workflow used to reproduce
+those exact checked artifacts; it refuses existing output directories to preserve
+previous captures (`results/model-build.jsonl` and `results/model-build.log`).
+For general in-process `t254` compilation (`FP16` and `INT8` multi-branch DAGs)
+and heterogeneous `DLA + Host` ONNX execution without Unicorn emulation, `make runtime`
+builds `runtime/libn1x_compiler.so` (`runtime/n1x-compile`) and `runtime/libn1x_ort.so`
+(`runtime/n1x-ort-run`, [`runtime/n1x_ort.py`](../runtime/n1x_ort.py), [`./demo-onnx`](../demo-onnx));
+see the [ONNX Execution Provider design](designs/n1x-onnx-execution-provider.md).
 
 The generated paths include `results/native-compile-t254/relu.nvda`, the
 corresponding `-conv1x1`, `-conv1x1_relu` and `-superres` directories,

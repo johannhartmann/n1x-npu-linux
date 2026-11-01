@@ -14,12 +14,16 @@ Build the source-pinned module package with matching headers:
 python3 scripts/build_arch_module_package.py
 ```
 
-The builder exports the committed driver, headers and boot-service files into a fresh directory
-under `results/arch-module-package/` and checks the compiled module's kernel
-release. Review the resulting PKGBUILD and package, then install the package
-file with `sudo pacman -U /absolute/path/to/the-built-package.pkg.tar.zst` in a terminal.
+The builder exports the committed driver, userspace runtime, headers and
+boot-service files into a fresh directory under `results/arch-module-package/`
+and checks the compiled module's kernel release. Review the resulting PKGBUILD
+and package, then install the package file with
+`sudo pacman -U /absolute/path/to/the-built-package.pkg.tar.xz` in a terminal.
 It places `n1x_npu_bootstrap.ko` in the versioned module tree, runs `depmod`,
-and installs `n1x-npu.service` plus its fail-closed starter. It does not install
+installs `n1x-npu.service` plus its fail-closed starter, and installs the
+userspace libraries (`libn1x_dla.so`, `libn1x_compiler.so`, `libn1x_ort.so`),
+CLI tools (`n1x-compile`, `n1x-ort-run`), C headers (`/usr/include/n1x_*.h`),
+and Python runtime modules (`/usr/lib/n1x-npu/python/`). It does not install
 vendor firmware, enable the service or change boot entries. Its dependency
 prevents removal of the audited kernel while this driver package is installed.
 

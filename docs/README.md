@@ -6,7 +6,8 @@
 2. [Super-resolution demo](../demo/README.md): run a complete image and inspect its output and reference metrics.
 3. [Support status](status.md): measured behavior and remaining limits.
 
-Additional applications: [denoising and classification](../demo/vision.md).
+Additional applications: [denoising and classification](../demo/vision.md) ·
+[heterogeneous ONNX Execution Provider demos (`./demo-onnx`)](../demo/README.md#heterogeneous-onnx-execution-provider-demo-demo-onnx).
 
 ## Understand the implementation
 
