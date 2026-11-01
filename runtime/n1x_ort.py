@@ -834,7 +834,7 @@ def _propagate_shapes(
             "DequantizeLinear",
         ) and sh0:
             shape_map[out] = list(sh0)
-        elif op in ("Add", "Sub", "Mul", "Max", "Min"):
+        elif op in ("Add", "Sub", "Mul", "Div", "Max", "Min"):
             if sh0:
                 shape_map[out] = list(sh0)
             elif len(node.input) > 1 and node.input[1] in shape_map:
@@ -965,7 +965,7 @@ def is_node_dla_supported(
             and 1 <= strides[1] <= 8
         )
 
-    if op in ("Add", "Sub", "Mul", "Max", "Min"):
+    if op in ("Add", "Sub", "Mul", "Div", "Max", "Min"):
         if len(node.input) != 2:
             return False
         in1 = node.input[1]
@@ -975,11 +975,15 @@ def is_node_dla_supported(
         if not sh0 or len(sh0) not in (2, 4):
             return False
         if in1 in const_map:
-            if op not in ("Add", "Sub", "Mul"):
+            if op not in ("Add", "Sub", "Mul", "Div"):
                 return False
             c_arr = const_map[in1]
+            if op == "Div" and np.any(c_arr == 0):
+                return False
             c_dim = sh0[1]
             return c_arr.size in (1, c_dim)
+        if op == "Div":
+            return False
         sh1 = shape_map.get(in1)
         return sh1 == sh0 and len(sh0) == 4
 

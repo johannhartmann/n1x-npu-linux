@@ -27,10 +27,12 @@ from onnx.reference import ReferenceEvaluator
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "demo"))
 
 from n1x_dla import Device as Transport
 from n1x_ort import InferenceSession, canonicalize_onnx_model
 from npu_trigger import TRIGGERS, trigger
+from ort_demo import FERPLUS_LABELS, build_ferplus_gallery
 from select_npu_dma_domains import apply as apply_dma, plan as plan_dma
 from test_n1x_ort import _build_three_stage_onnx
 
@@ -270,6 +272,69 @@ def qualify_three_stage(tmpdir: str) -> dict:
     }
 
 
+def qualify_emotion_ferplus8(tmpdir: str) -> dict | None:
+    em_path = ROOT / "sources" / "demo-research" / "emotion-ferplus-8.onnx"
+    if not em_path.is_file():
+        return None
+    ref_eval = ReferenceEvaluator(onnx.load(str(em_path)))
+    gallery = build_ferplus_gallery()
+    calib_samples = [{"Input3": arr} for _, arr in gallery]
+    feed0 = calib_samples[0]
+
+    with InferenceSession(
+        em_path,
+        providers=[("N1xExecutionProvider", {"cache_dir": tmpdir}), "CPUExecutionProvider"],
+    ) as sess_fp16:
+        t0 = time.monotonic()
+        out_fp16_0 = sess_fp16.run(None, feed0)[0]
+        exec_ms = (time.monotonic() - t0) * 1000.0
+        t1 = time.monotonic()
+        out_fp16_0_re = sess_fp16.run(None, feed0)[0]
+        reexec_ms = (time.monotonic() - t1) * 1000.0
+        np.testing.assert_array_equal(out_fp16_0, out_fp16_0_re)
+        summary_fp16 = sess_fp16.get_partition_summary()
+        gallery_matches = 0
+        for _, face_arr in gallery:
+            npu_l = sess_fp16.run(None, {"Input3": face_arr})[0].reshape(-1)
+            cpu_l = np.asarray(ref_eval.run(None, {"Input3": face_arr})[0], dtype=np.float32).reshape(-1)
+            if int(np.argmax(npu_l)) == int(np.argmax(cpu_l)):
+                gallery_matches += 1
+
+    with InferenceSession(
+        em_path,
+        providers=[
+            (
+                "N1xExecutionProvider",
+                {"precision": "int8", "calibration_data": calib_samples, "cache_dir": tmpdir},
+            ),
+            "CPUExecutionProvider",
+        ],
+    ) as sess_int8:
+        out_int8_0 = sess_int8.run(None, feed0)[0]
+        summary_int8 = sess_int8.get_partition_summary()
+
+    ref_0 = np.asarray(ref_eval.run(None, feed0)[0], dtype=np.float32)
+    fp16_err = float(np.max(np.abs(out_fp16_0 - ref_0)))
+    fp16_rmse = float(np.sqrt(np.mean((out_fp16_0 - ref_0) ** 2)))
+    v_ref = ref_0.reshape(-1).astype(np.float64)
+    v_i8 = out_int8_0.reshape(-1).astype(np.float64)
+    cos_sim = float(np.dot(v_ref, v_i8) / (np.linalg.norm(v_ref) * np.linalg.norm(v_i8)))
+    top1_label = FERPLUS_LABELS[int(np.argmax(out_fp16_0))]
+    return {
+        "model_sha256": _sha256(em_path),
+        "fp16_nvda_bytes": summary_fp16["stages"][0]["nvda_bytes"],
+        "int8_nvda_bytes": summary_int8["stages"][0]["nvda_bytes"],
+        "fp16_max_abs_err": fp16_err,
+        "fp16_rmse": fp16_rmse,
+        "fp16_exec_ms": round(exec_ms, 3),
+        "fp16_reexec_ms": round(reexec_ms, 3),
+        "int8_cosine_sim": round(cos_sim, 6),
+        "top1_label": top1_label,
+        "gallery_top1_matches": f"{gallery_matches}/{len(gallery)}",
+        "used_resubmit": summary_fp16["stages"][0]["used_resubmit"],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-json", type=Path, help="Optional JSON receipt output path")
@@ -291,6 +356,7 @@ def main() -> None:
             mnist_res = qualify_mnist12(tmpdir)
             sr_res = qualify_superres10(tmpdir)
             three_stage_res = qualify_three_stage(tmpdir)
+            emotion_res = qualify_emotion_ferplus8(tmpdir)
         with Transport(ACCEL_NODE) as transport:
             transport_after = transport.info()
     finally:
@@ -313,6 +379,7 @@ def main() -> None:
         "transport_after": transport_after,
         "mnist12": mnist_res,
         "superres10": sr_res,
+        "emotion_ferplus8": emotion_res,
         "three_stage_dla_host_dla": three_stage_res,
         "shutdown": shutdown_info,
     }

@@ -37,6 +37,7 @@ from n1x_ort import (
 
 MNIST_ONNX = ROOT / "sources" / "demo-research" / "mnist-12.onnx"
 SUPERRES_ONNX = ROOT / "sources" / "demo-research" / "super-resolution-10.onnx"
+EMOTION_ONNX = ROOT / "sources" / "demo-research" / "emotion-ferplus-8.onnx"
 ORT_RUN_BIN = ROOT / "runtime" / "n1x-ort-run"
 
 
@@ -236,6 +237,22 @@ class TestN1xOrt(unittest.TestCase):
             self.assertEqual(summary["stages"][0]["kind"], "DLA")
             self.assertEqual(summary["stages"][1]["kind"], "Host")
             self.assertEqual([op for op, _ in summary["stages"][1]["ops"]], ["DepthToSpace"])
+
+    def test_emotion_ferplus8_single_stage_partition(self) -> None:
+        if not EMOTION_ONNX.is_file():
+            self.skipTest(f"{EMOTION_ONNX} not present")
+        canon, shape_map = canonicalize_onnx_model(EMOTION_ONNX)
+        self.assertEqual(shape_map["Plus692_Output_0"], [1, 8])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sess = N1xInferenceSession(
+                EMOTION_ONNX,
+                providers=[("N1xExecutionProvider", {"cache_dir": tmpdir}), "CPUExecutionProvider"],
+            )
+            summary = sess.get_partition_summary()
+            self.assertEqual(summary["num_stages"], 1)
+            self.assertEqual(summary["dla_stages"], 1)
+            self.assertEqual(summary["host_stages"], 0)
+            self.assertGreater(summary["stages"][0]["nvda_bytes"], 20_000_000)
 
     def test_multi_stage_partition_and_int8_auto_calibration(self) -> None:
         model = _build_three_stage_onnx()

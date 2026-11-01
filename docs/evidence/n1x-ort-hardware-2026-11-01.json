@@ -5,8 +5,8 @@
   "boot_id": "ef2d77df-b2c7-4cda-8ace-e8cf1a511b2b",
   "platform_profile": "balanced",
   "artifacts": {
-    "libn1x_ort_sha256": "1f1faa96cd3f34ab951d8402a8f70d21e02679d75df2b67fde0d8425353a0016",
-    "libn1x_compiler_sha256": "fd041f029b77b4d77a5c1b514e2d012274c2e423ce902a07a34156c46e872d4f",
+    "libn1x_ort_sha256": "1e467487f226bfa585fc82018bbd2f838bf89815225847a7d8d3bfcbddb323cd",
+    "libn1x_compiler_sha256": "289227fe116959f67af7a672cf15d2f960b6cd867e11923c3b7a91851bb013ea",
     "libn1x_dla_sha256": "18d10a2472c94c2ef3d9c579e4198efc6dbeed32479e83feb7701a860ec48443"
   },
   "transport_before": {
@@ -25,9 +25,9 @@
     "capabilities": 63,
     "max_image_bytes": 33554432,
     "max_addresses": 512,
-    "retained_bytes": 22360064,
+    "retained_bytes": 58015744,
     "retain_limit": 67108864,
-    "retained_jobs": 7,
+    "retained_jobs": 9,
     "max_jobs": 128,
     "reserved": 0
   },
@@ -38,8 +38,8 @@
     "nvda_bytes": 2975356,
     "fp16_max_abs_err": 0.005588531494140625,
     "fp16_rmse": 0.0026139612309634686,
-    "fp16_exec_ms": 0.782,
-    "fp16_reexec_ms": 0.354,
+    "fp16_exec_ms": 0.833,
+    "fp16_reexec_ms": 0.332,
     "int8_cosine_sim": 0.9998530745506287,
     "top1_match": true,
     "used_resubmit": true,
@@ -90,11 +90,24 @@
     ],
     "fp16_max_abs_err": 0.0015102624893188477,
     "fp16_rmse": 0.00024402543203905225,
-    "fp16_exec_ms": 1.646,
-    "fp16_reexec_ms": 1.029,
+    "fp16_exec_ms": 1.357,
+    "fp16_reexec_ms": 1.037,
     "dla_stages": 1,
     "host_stages": 1,
     "nvda_bytes": 3193548,
+    "used_resubmit": true
+  },
+  "emotion_ferplus8": {
+    "model_sha256": "a2a2ba6a335a3b29c21acb6272f962bd3d47f84952aaffa03b60986e04efa61c",
+    "fp16_nvda_bytes": 21210412,
+    "int8_nvda_bytes": 12465324,
+    "fp16_max_abs_err": 0.0013403892517089844,
+    "fp16_rmse": 0.0008110199123620987,
+    "fp16_exec_ms": 4.146,
+    "fp16_reexec_ms": 2.077,
+    "int8_cosine_sim": 0.99993,
+    "top1_label": "happiness",
+    "gallery_top1_matches": "6/6",
     "used_resubmit": true
   },
   "three_stage_dla_host_dla": {

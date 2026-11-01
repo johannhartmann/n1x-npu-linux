@@ -122,8 +122,9 @@ The repository now includes:
   - Canonical ONNX graph rewrites (`auto_pad` resolution, `Conv+Add` fusion, `Flatten/Reshape+MatMul+Add` $\rightarrow$ `Gemm`, opset-10 `Reshape->Transpose->Reshape` $\rightarrow$ `DepthToSpace`).
   - Cycle-free topological `DLAStage` + `HostStage` graph partitioning with SHA-256 `.nvda` disk caching and automatic multi-sample `INT8` calibration.
   - Physical qualification on `/dev/accel/accel0` ([hardware receipt](evidence/n1x-ort-hardware-2026-11-01.json)):
-    - `mnist-12.onnx` (1-stage full-graph DLA `.nvda`, `2,975,356` B): `FP16` max abs error `0.005589`, RMSE `0.002614` (`0.782 ms` initial `EXEC`, `0.354 ms` `REEXEC_IO`); auto-calibrated `INT8` cosine similarity `0.999853` (`top-1` exact match).
-    - `super-resolution-10.onnx` (2-stage heterogeneous `DLAStage` 4-Conv backbone + `HostStage` `DepthToSpace`): `FP16` max abs error `0.001510`, RMSE `0.000244` across `[1, 1, 192, 192]` (`1.646 ms` initial `EXEC`, `1.029 ms` `REEXEC_IO`).
+    - `mnist-12.onnx` (1-stage full-graph DLA `.nvda`, `2,975,356` B): `FP16` max abs error `0.005589`, RMSE `0.002614` (`0.833 ms` initial `EXEC`, `0.332 ms` `REEXEC_IO`); auto-calibrated `INT8` cosine similarity `0.999853` (`top-1` exact match).
+    - `emotion-ferplus-8.onnx` (1-stage full-graph 37-node DLA `.nvda`, `21,210,412` B `FP16` / `12,465,324` B `INT8`): `FP16` max abs error `0.001340`, RMSE `0.000811` (`4.146 ms` initial `EXEC`, `2.077 ms` `REEXEC_IO`); auto-calibrated `INT8` cosine similarity `0.999930` (`6/6` expression gallery `top-1` matches).
+    - `super-resolution-10.onnx` (2-stage heterogeneous `DLAStage` 4-Conv backbone + `HostStage` `DepthToSpace`): `FP16` max abs error `0.001510`, RMSE `0.000244` across `[1, 1, 192, 192]` (`1.357 ms` initial `EXEC`, `1.037 ms` `REEXEC_IO`).
     - 3-stage `DLA -> Host -> DLA` pipeline: `FP16` max abs error `0.000137`, auto-calibrated `INT8` MAE `0.000538`.
 - **Dynamic NPU Frequency Scaling** ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)): Exposes `/sys/bus/platform/devices/NVDA200A:00/npu_freq_khz` (`892.8 MHz` default up to `1500 MHz` boost, reducing physical 64-tile super-resolution time from `224.2 ms` to `97.1 ms`, `2.31x` speedup).
 
