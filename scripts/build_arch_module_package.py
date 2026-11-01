@@ -9,7 +9,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGING = ROOT / 'packaging/arch'
 OUTPUT = ROOT / 'results/arch-module-package'
-SOURCES = ('driver', 'include', 'README.md', 'scripts/npu_autostart.py',
+SOURCES = ('driver', 'include', 'runtime', 'README.md', 'scripts/npu_autostart.py',
            'packaging/systemd/n1x-npu.service')
 
 
@@ -18,7 +18,7 @@ def run(*args, **kwargs):
 
 
 def main():
-    for tree in ('driver', 'include'):
+    for tree in ('driver', 'include', 'runtime'):
         run('git', 'diff', '--quiet', 'HEAD', '--', tree)
     revision = subprocess.check_output(
         ['git', 'rev-parse', '--short=8', 'HEAD'], cwd=ROOT, text=True).strip()

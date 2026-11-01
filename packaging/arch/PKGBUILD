@@ -21,6 +21,21 @@ build() {
     printf 'Wrong module release: %s\n' "$actual" >&2
     return 1
   }
+  local src="${srcdir}/npu-source"
+  cc -O2 -g -Wall -Wextra -Werror -fPIC -shared -I"${src}/include" \
+    "${src}/runtime/n1x_dla.c" -o "${src}/runtime/libn1x_dla.so"
+  g++ -std=c++17 -O2 -g -Wall -Wextra -Werror -ffixed-x18 -fPIC -shared -I"${src}/include" \
+    "${src}/runtime/n1x_compiler_shim.cpp" "${src}/runtime/n1x_compile.cpp" \
+    -ldl -lpthread -lcrypto -o "${src}/runtime/libn1x_compiler.so"
+  g++ -std=c++17 -O2 -g -Wall -Wextra -Werror -DN1X_COMPILE_CLI_MAIN -I"${src}/include" \
+    "${src}/runtime/n1x_compile.cpp" -L"${src}/runtime" -ln1x_compiler \
+    -Wl,-rpath,/usr/lib -o "${src}/runtime/n1x-compile"
+  g++ -std=c++17 -O2 -g -Wall -Wextra -Werror -fPIC -shared -I"${src}/include" -I"${src}/runtime" \
+    "${src}/runtime/n1x_ort.cpp" "${src}/runtime/cudla_model.cpp" \
+    -L"${src}/runtime" -ln1x_dla -Wl,-rpath,/usr/lib -o "${src}/runtime/libn1x_ort.so"
+  g++ -std=c++17 -O2 -g -Wall -Wextra -Werror -DN1X_ORT_CLI_MAIN -I"${src}/include" -I"${src}/runtime" \
+    "${src}/runtime/n1x_ort.cpp" -L"${src}/runtime" -ln1x_ort \
+    -Wl,-rpath,/usr/lib -o "${src}/runtime/n1x-ort-run"
 }
 
 package() {
@@ -32,4 +47,22 @@ package() {
     "${pkgdir}/usr/libexec/n1x-npu-start"
   install -Dm644 "${srcdir}/npu-source/packaging/systemd/n1x-npu.service" \
     "${pkgdir}/usr/lib/systemd/system/n1x-npu.service"
+  install -Dm755 "${srcdir}/npu-source/runtime/libn1x_dla.so" \
+    "${pkgdir}/usr/lib/libn1x_dla.so"
+  install -Dm755 "${srcdir}/npu-source/runtime/libn1x_compiler.so" \
+    "${pkgdir}/usr/lib/libn1x_compiler.so"
+  install -Dm755 "${srcdir}/npu-source/runtime/libn1x_ort.so" \
+    "${pkgdir}/usr/lib/libn1x_ort.so"
+  install -Dm755 "${srcdir}/npu-source/runtime/n1x-compile" \
+    "${pkgdir}/usr/bin/n1x-compile"
+  install -Dm755 "${srcdir}/npu-source/runtime/n1x-ort-run" \
+    "${pkgdir}/usr/bin/n1x-ort-run"
+  install -Dm644 "${srcdir}/npu-source/runtime/n1x_dla.h" \
+    "${pkgdir}/usr/include/n1x_dla.h"
+  install -Dm644 "${srcdir}/npu-source/include/n1x_compiler.h" \
+    "${pkgdir}/usr/include/n1x_compiler.h"
+  install -Dm644 "${srcdir}/npu-source/include/n1x_ort.h" \
+    "${pkgdir}/usr/include/n1x_ort.h"
+  install -Dm644 "${srcdir}/npu-source/include/uapi/n1x_dla_accel.h" \
+    "${pkgdir}/usr/include/uapi/n1x_dla_accel.h"
 }
