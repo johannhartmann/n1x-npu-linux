@@ -43,8 +43,14 @@ FERPLUS_LABELS = (
 MODEL_ALIASES = {
     "emotion": ROOT / "sources" / "demo-research" / "emotion-ferplus-8.onnx",
     "ferplus": ROOT / "sources" / "demo-research" / "emotion-ferplus-8.onnx",
+    "emotion-ferplus-8.onnx": ROOT / "sources" / "demo-research" / "emotion-ferplus-8.onnx",
+    "sources/demo-research/emotion-ferplus-8.onnx": ROOT / "sources" / "demo-research" / "emotion-ferplus-8.onnx",
     "mnist": ROOT / "sources" / "demo-research" / "mnist-12.onnx",
+    "mnist-12.onnx": ROOT / "sources" / "demo-research" / "mnist-12.onnx",
+    "sources/demo-research/mnist-12.onnx": ROOT / "sources" / "demo-research" / "mnist-12.onnx",
     "superres": ROOT / "sources" / "demo-research" / "super-resolution-10.onnx",
+    "super-resolution-10.onnx": ROOT / "sources" / "demo-research" / "super-resolution-10.onnx",
+    "sources/demo-research/super-resolution-10.onnx": ROOT / "sources" / "demo-research" / "super-resolution-10.onnx",
 }
 
 
@@ -163,11 +169,14 @@ def _build_default_inputs(
     return calib_samples[0], calib_samples
 
 
-def _resolve_model_arg(raw_model: str) -> Path:
-    alias = MODEL_ALIASES.get(raw_model.lower())
-    if alias is not None:
-        return alias.resolve()
-    return Path(raw_model).resolve()
+def _resolve_model_arg(raw_model: str) -> Path | None:
+    key = raw_model.strip().lower()
+    if key in MODEL_ALIASES:
+        return MODEL_ALIASES[key]
+    for name, path in MODEL_ALIASES.items():
+        if key.endswith("/" + name):
+            return path
+    return None
 
 
 def main() -> None:
@@ -175,8 +184,8 @@ def main() -> None:
     parser.add_argument(
         "--model",
         type=str,
-        default=str(ROOT / "sources" / "demo-research" / "mnist-12.onnx"),
-        help="Path or alias ('emotion', 'mnist', 'superres') to ONNX model",
+        default="mnist",
+        help="Demo model alias or filename ('emotion', 'mnist', 'superres')",
     )
     parser.add_argument(
         "--precision",
@@ -198,8 +207,8 @@ def main() -> None:
     args = parser.parse_args()
 
     model_path = _resolve_model_arg(args.model)
-    if not model_path.is_file():
-        parser.error(f"ONNX model not found: {model_path}")
+    if model_path is None or not model_path.is_file():
+        parser.error(f"Unsupported or missing ONNX demo model: {args.model}")
 
     dest = args.output_dir.resolve()
     dest.mkdir(parents=True, exist_ok=False)
