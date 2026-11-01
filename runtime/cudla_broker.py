@@ -40,23 +40,69 @@ def _descriptor(tensor):
 
 class Module:
     def __init__(self, device, index, model):
-        if len(model.inputs) != 1 or len(model.outputs) != 1:
-            raise ValueError('broker supports exactly one input and output')
+        if not (1 <= len(model.inputs) <= 64 and 1 <= len(model.outputs) <= 64):
+            raise ValueError('broker supports 1..64 inputs and outputs')
         self.device, self.index = device, index
-        self.input, self.output = _descriptor(model.inputs[0]), _descriptor(model.outputs[0])
+        self.inputs = [_descriptor(t) for t in model.inputs]
+        self.outputs = [_descriptor(t) for t in model.outputs]
+        self.input, self.output = self.inputs[0], self.outputs[0]
+        self.total_input_bytes = sum(d.size for d in self.inputs)
+        self.total_output_bytes = sum(d.size for d in self.outputs)
         self.failed = False
+
+    def describe(self):
+        def _fmt(desc):
+            return {
+                'name': desc.name.decode('utf-8', errors='replace'),
+                'size': int(desc.size),
+                'shape': list(desc.shape),
+                'dataFormat': int(desc.codes[0]),
+                'dataType': int(desc.codes[1]),
+                'dataCategory': int(desc.codes[2]),
+                'pixelFormat': int(desc.codes[3]),
+                'pixelMapping': int(desc.codes[4]),
+                'stride': [int(x) for x in desc.strides],
+            }
+        return {
+            'inputs': [_fmt(d) for d in self.inputs],
+            'outputs': [_fmt(d) for d in self.outputs],
+            'total_input_bytes': self.total_input_bytes,
+            'total_output_bytes': self.total_output_bytes,
+        }
 
     def packed(self, data):
         if self.failed:
             raise RuntimeError('module stopped after a previous failure')
         try:
-            return self.device._request(self.index, bytes(data), self.output.size)
+            return self.device._request(self.index, bytes(data), self.total_output_bytes)
         except Exception:
             self.failed = True
             raise
 
     def __call__(self, data):
-        return unpack_tensor(self.packed(pack_tensor(data, self.input)), self.output)
+        if len(self.inputs) == 1 and not isinstance(data, (dict, list, tuple)):
+            packed_in = bytes(pack_tensor(data, self.input))
+        elif isinstance(data, dict):
+            chunks = []
+            for d in self.inputs:
+                key = d.name.decode('utf-8', errors='replace')
+                if key not in data:
+                    raise ValueError(f'missing input tensor {key}')
+                chunks.append(bytes(pack_tensor(data[key], d)))
+            packed_in = b''.join(chunks)
+        else:
+            if len(data) != len(self.inputs):
+                raise ValueError('input tensor count mismatch')
+            packed_in = b''.join(bytes(pack_tensor(arr, d)) for arr, d in zip(data, self.inputs))
+        raw_out = self.packed(packed_in)
+        if len(self.outputs) == 1:
+            return unpack_tensor(raw_out, self.output)
+        results = []
+        cursor = 0
+        for d in self.outputs:
+            results.append(unpack_tensor(raw_out[cursor:cursor + d.size], d))
+            cursor += d.size
+        return results
 
 
 class Device:
@@ -98,7 +144,9 @@ class Device:
         self.modules = []
         for index, (_, _, model, digest) in enumerate(self.definitions):
             input_bytes, output_bytes, installed_digest = MODEL_INFO.unpack_from(records, index*MODEL_INFO.size)
-            if len(model.inputs) != 1 or len(model.outputs) != 1 or input_bytes != model.inputs[0].bytes or output_bytes != model.outputs[0].bytes:
+            expected_in = sum(t.bytes for t in model.inputs)
+            expected_out = sum(t.bytes for t in model.outputs)
+            if not model.inputs or not model.outputs or input_bytes != expected_in or output_bytes != expected_out:
                 self._abort_startup('installed model tensor metadata differs')
             if installed_digest != digest:
                 self._abort_startup('installed model hash differs from the reviewed local artifact')

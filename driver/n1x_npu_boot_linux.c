@@ -14,6 +14,7 @@
 #include <linux/dmi.h>
 #include <linux/firmware.h>
 #include <linux/io.h>
+#include <linux/interrupt.h>
 #include <linux/iommu.h>
 #include <linux/iommu-dma.h>
 #include <linux/module.h>
@@ -21,12 +22,14 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/utsname.h>
+#include <linux/wait.h>
 #include "n1x_dla_boot.h"
 #include "n1x_dla_command.h"
 #include "n1x_dla_control.h"
 #include "n1x_dla_registers.h"
 #include "n1x_dla_task.h"
 #include "n1x_dla_job.h"
+#include "n1x_dla_job_control.h"
 #include "n1x_dla_accel.h"
 #include "n1x_hfrp_setup.h"
 
@@ -93,6 +96,23 @@ MODULE_PARM_DESC(enable_accel, "Register experimental RAWIO-only accel API; expl
 static bool strict_platform = true;
 module_param(strict_platform, bool, 0400);
 MODULE_PARM_DESC(strict_platform, "Require exact P16 BIOS-300 DMI/kernel/ROM-hash pins (default true; false uses capability/PCIR/HFRP-v1.5+ checks)");
+
+static bool opt_enable_irq;
+module_param_named(enable_irq, opt_enable_irq, bool, 0400);
+MODULE_PARM_DESC(enable_irq, "Enable Windows KMD (0xd49800) SWGEN0/SWGEN1 interrupt mask state machine and waitqueue wakeup (default false)");
+
+static bool enable_preempt;
+module_param(enable_preempt, bool, 0400);
+MODULE_PARM_DESC(enable_preempt, "Permit HAL-1 preemption enablement (0x31c) and resumable job control (default false)");
+
+static DECLARE_WAIT_QUEUE_HEAD(boot_waitq);
+static atomic_t boot_irq_count = ATOMIC_INIT(0);
+static bool boot_irq_registered;
+static struct {
+	struct n1x_dla_control_result transaction;
+	bool attempted, accepted;
+	int error;
+} boot_preempt;
 
 struct n1x_boot_endpoint {
 	struct device *dev;
@@ -268,9 +288,59 @@ static int n1x_boot_write(void *context, u32 logical, u32 value)
 	return 0;
 }
 
+static int n1x_boot_write_irq_enable(struct n1x_boot_endpoint *endpoint, u32 value)
+{
+	u32 offset;
+	int err;
+
+	if (!endpoint || endpoint->sroot)
+		return -EINVAL;
+	err = n1x_dla_register_offset(N1X_DLA_MAP_WINDOWS_1, 0xd20,
+				      endpoint->bytes, &offset);
+	if (err)
+		return err;
+	writel(value, endpoint->base + offset);
+	return 0;
+}
+
+/* Windows KMD 0xd49800 top-half: mask owned active bits via 0xd24 to silence
+ * the level-triggered GIC line (GSI 234) and wake any waiting poller.
+ */
+static irqreturn_t n1x_boot_irq_handler(int irq, void *data)
+{
+	struct n1x_boot_endpoint *endpoint = data;
+	u32 pending = 0, owned = 0, saved = 0;
+
+	(void)irq;
+	if (!endpoint || endpoint->sroot || !boot_hfrp.powered || boot_stopping)
+		return IRQ_NONE;
+	if (n1x_boot_read(endpoint, 8, &pending) ||
+	    n1x_boot_read(endpoint, 0xd2c, &owned) ||
+	    n1x_boot_read(endpoint, 0xd28, &saved))
+		return IRQ_NONE;
+	if (!(pending & (owned & saved)) && !(pending & 0xc0))
+		return IRQ_NONE;
+	n1x_boot_write(endpoint, 0xd24, saved & owned);
+	atomic_inc(&boot_irq_count);
+	wake_up_all(&boot_waitq);
+	return IRQ_HANDLED;
+}
+
 static void n1x_boot_delay(void *context, u32 interval_us)
 {
-	(void)context;
+	if (opt_enable_irq && boot_irq_registered && context == boot_dla &&
+	    interval_us >= 1000) {
+		int before = atomic_read(&boot_irq_count);
+		u32 owned = 0, saved = 0;
+
+		if (!n1x_boot_read(boot_dla, 0xd2c, &owned) &&
+		    !n1x_boot_read(boot_dla, 0xd28, &saved))
+			n1x_boot_write_irq_enable(boot_dla, saved | (0xc0U & owned));
+		wait_event_timeout(boot_waitq,
+				   atomic_read(&boot_irq_count) != before,
+				   max(1UL, usecs_to_jiffies(interval_us)));
+		return;
+	}
 	usleep_range(interval_us, interval_us + 100);
 }
 
@@ -1395,7 +1465,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 		return -ENODEV;
 	}
 	size = sysfs_emit(buf,
-		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x lpwr_enabled=%u lpwr_attempted=%u lpwr_error=%d lpwr_accepted=%u lpwr_reply_valid=%u lpwr_reply=%#x lpwr_retained=%u task_enabled=%u task_attempted=%u task_error=%d task_response_valid=%u task_reply=%#x task_data=%#x task_accepted=%u task_signal_seen=%u task_fence=%#x task_pending=%#x task_verified=%u task_retained=%u task_idle_notifications=%u task_idle_blocked=%u task_fence_value=%#x queue_poisoned=%u\n",
+		"dla_bound=%u sroot_bound=%u enabled=%u attempted=%u error=%d reply_valid=%u reply=%#x idle_observed=%u dma_retained=%u ping_enabled=%u ping_attempted=%u ping_error=%d ping_verified=%u ping_word=%#x ping_retained=%u config_enabled=%u config_attempted=%u config_error=%d config_valid=%u config_reply_valid=%u config_reply=%#x config_retained=%u region5_enabled=%u region5_attempted=%u region5_error=%d region5_registered=%u region5_retained=%u config_apply_enabled=%u config_apply_attempted=%u config_apply_error=%d config_apply_accepted=%u config_apply_reply_valid=%u config_apply_reply=%#x lpwr_enabled=%u lpwr_attempted=%u lpwr_error=%d lpwr_accepted=%u lpwr_reply_valid=%u lpwr_reply=%#x lpwr_retained=%u task_enabled=%u task_attempted=%u task_error=%d task_response_valid=%u task_reply=%#x task_data=%#x task_accepted=%u task_signal_seen=%u task_fence=%#x task_pending=%#x task_verified=%u task_retained=%u task_idle_notifications=%u task_idle_blocked=%u task_fence_value=%#x queue_poisoned=%u irq_enabled=%u irq_registered=%u irq_count=%u preempt_enabled=%u preempt_attempted=%u preempt_error=%d preempt_accepted=%u preempt_reply_valid=%u preempt_reply=%#x\n",
 		!!boot_dla, !!boot_sroot, enable_upload, boot_attempted, boot_error,
 		boot_result.reply_valid, boot_result.reply.header,
 		boot_result.idle_observed, !!boot_buffer, enable_ping, boot_ping.attempted,
@@ -1412,7 +1482,11 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 		boot_task.response.word, boot_task.response.data, boot_task.accepted, boot_task.signal_seen,
 		boot_task.fence, boot_task.pending, boot_task.verified, !!boot_task.buffer,
 		boot_task.idle_notifications, boot_task.idle_blocked,
-		boot_task.fence_value, boot_queue.poisoned);
+		boot_task.fence_value, boot_queue.poisoned,
+		opt_enable_irq, boot_irq_registered, atomic_read(&boot_irq_count),
+		enable_preempt, boot_preempt.attempted, boot_preempt.error,
+		boot_preempt.accepted, boot_preempt.transaction.response_valid,
+		boot_preempt.transaction.response.word);
 	mutex_unlock(&boot_lock);
 	return size;
 }
@@ -1686,12 +1760,36 @@ static ssize_t start_store(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR_WO(start);
 
+static int n1x_boot_enable_preempt_once(void);
+
+static ssize_t preempt_store(struct device *dev, struct device_attribute *attr,
+			     const char *buf, size_t count)
+{
+	int err;
+
+	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "enable"))
+		return -EPERM;
+	mutex_lock(&boot_lock);
+	if (boot_stopping)
+		err = -ESHUTDOWN;
+	else if (!boot_dla || boot_dla->dev != dev)
+		err = -ENODEV;
+	else if (boot_preempt.attempted)
+		err = -EALREADY;
+	else
+		err = n1x_boot_enable_preempt_once();
+	mutex_unlock(&boot_lock);
+	return err ? err : (ssize_t)count;
+}
+static DEVICE_ATTR_WO(preempt);
+
 static struct attribute *boot_attrs[] = {&dev_attr_start.attr, &dev_attr_upload.attr, &dev_attr_ping.attr, &dev_attr_read_config.attr,
 	&dev_attr_shutdown.attr, &dev_attr_shutdown_status.attr,
 	&dev_attr_prepare_hfrp.attr, &dev_attr_hfrp_status.attr, &dev_attr_query_power_state.attr,
 	&dev_attr_relu_probe.attr, &dev_attr_relu_status.attr,
 	&dev_attr_config_snapshot.attr, &dev_attr_init_region5.attr,
-	&dev_attr_apply_config.attr, &dev_attr_apply_lpwr.attr, &dev_attr_bypass_task.attr, &dev_attr_status.attr, NULL};
+	&dev_attr_apply_config.attr, &dev_attr_apply_lpwr.attr, &dev_attr_bypass_task.attr,
+	&dev_attr_preempt.attr, &dev_attr_status.attr, NULL};
 
 static umode_t boot_attr_is_visible(struct kobject *kobj, struct attribute *attr, int n)
 {
@@ -1707,6 +1805,161 @@ static const struct attribute_group boot_group = {
 	.is_visible = boot_attr_is_visible,
 };
 __ATTRIBUTE_GROUPS(boot);
+
+/* Enable HAL-1 preemption (method 0x31c, data=1 -> 0x1c02) while idle. */
+static int n1x_boot_enable_preempt_once(void)
+{
+	struct n1x_dla_io io;
+	u32 pending, attempt;
+	int err;
+
+	if (!enable_preempt || !n1x_boot_machine())
+		return -EPERM;
+	if (!boot_dla || !boot_sroot || !boot_task.verified || !boot_lpwr.accepted ||
+	    !boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid)
+		return -ENODEV;
+	if (boot_preempt.attempted)
+		return boot_preempt.accepted ? 0 : (boot_preempt.error ?: -EIO);
+	err = n1x_boot_drain_task_idle(&boot_task);
+	if (err)
+		return err;
+	err = n1x_boot_read(boot_dla, 8, &pending);
+	if (err)
+		return err;
+	if (pending & 0xc0)
+		return -EBUSY;
+	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+	boot_preempt.attempted = true;
+	boot_preempt.transaction.method_attempted = 1;
+	err = n1x_dla_send_method(&io, 0x31c, 1, 5001, 1000);
+	if (err)
+		goto out;
+	for (attempt = 0; attempt < 5001; attempt++) {
+		err = n1x_dla_take_response(&io, &boot_preempt.transaction.response);
+		if (err != -EAGAIN)
+			break;
+		if (attempt + 1 < 5001)
+			n1x_boot_delay(boot_dla, 1000);
+	}
+	if (err == -EAGAIN)
+		err = -ETIMEDOUT;
+	if (err)
+		goto out;
+	boot_preempt.transaction.response_valid = 1;
+	if (boot_preempt.transaction.response.word != 0x1c02 ||
+	    boot_preempt.transaction.response.data != 1) {
+		err = -EPROTO;
+		goto out;
+	}
+	boot_preempt.accepted = true;
+out:
+	boot_preempt.error = err;
+	if (err)
+		boot_queue.poisoned = true;
+	return err;
+}
+
+static int n1x_boot_accel_ready(struct device *dev)
+{
+	if (boot_stopping || !enable_accel || !enable_preempt ||
+	    !n1x_boot_machine() || !boot_dla || boot_dla->dev != dev ||
+	    !boot_sroot || !boot_task.verified || !boot_lpwr.accepted ||
+	    !boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid ||
+	    (boot_relu.attempted && !boot_relu_numeric))
+		return -ENODEV;
+	return n1x_boot_dma_gate(boot_dla);
+}
+
+static int n1x_boot_accel_start(struct device *dev, struct n1x_dla_job *job,
+				const struct n1x_dla_job_ops *ops)
+{
+	struct n1x_dla_io io;
+	int err;
+
+	mutex_lock(&boot_lock);
+	err = n1x_boot_accel_ready(dev);
+	if (!err && !boot_preempt.accepted)
+		err = n1x_boot_enable_preempt_once();
+	if (!err)
+		err = n1x_boot_drain_task_idle(job);
+	if (!err) {
+		io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+		err = n1x_dla_job_start(&boot_queue, &io, ops, job);
+	}
+	mutex_unlock(&boot_lock);
+	return err;
+}
+
+static int n1x_boot_accel_poll(struct device *dev, struct n1x_dla_job *job,
+			       const struct n1x_dla_job_ops *ops)
+{
+	struct n1x_dla_io io;
+	int err;
+
+	mutex_lock(&boot_lock);
+	err = n1x_boot_accel_ready(dev);
+	if (!err) {
+		io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+		err = n1x_dla_job_poll(&boot_queue, &io, ops, job);
+	}
+	mutex_unlock(&boot_lock);
+	return err;
+}
+
+static int n1x_boot_accel_preempt(struct device *dev, struct n1x_dla_job *job,
+				  const struct n1x_dla_preempt_ops *ops,
+				  u64 request_dma, u32 sequence,
+				  struct n1x_dla_preempt_result *result)
+{
+	struct n1x_dla_io io;
+	int err;
+
+	mutex_lock(&boot_lock);
+	err = n1x_boot_accel_ready(dev);
+	if (!err) {
+		io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+		err = n1x_dla_job_preempt(&boot_queue, &io, ops, job, request_dma, sequence, result);
+	}
+	mutex_unlock(&boot_lock);
+	return err;
+}
+
+static int n1x_boot_accel_resume(struct device *dev, struct n1x_dla_job *job,
+				 const struct n1x_dla_preempt_ops *ops)
+{
+	struct n1x_dla_io io;
+	int err;
+
+	mutex_lock(&boot_lock);
+	err = n1x_boot_accel_ready(dev);
+	if (!err) {
+		io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+		err = n1x_dla_job_resume(&boot_queue, &io, ops, job);
+	}
+	mutex_unlock(&boot_lock);
+	return err;
+}
+
+static int n1x_boot_accel_fail(struct device *dev, struct n1x_dla_job *job, int error)
+{
+	int err;
+
+	mutex_lock(&boot_lock);
+	if (!boot_dla || boot_dla->dev != dev)
+		err = -ENODEV;
+	else
+		err = n1x_dla_job_fail(&boot_queue, job, error);
+	mutex_unlock(&boot_lock);
+	return err;
+}
+
+static const struct n1x_dla_accel_control_ops n1x_boot_control_ops = {
+	.start = n1x_boot_accel_start,
+	.poll = n1x_boot_accel_poll,
+	.preempt = n1x_boot_accel_preempt,
+	.resume = n1x_boot_accel_resume,
+	.fail = n1x_boot_accel_fail,
+};
 
 /* accel->lock is outside boot_lock; sysfs never takes accel->lock. */
 static int n1x_boot_accel_submit(struct device *dev, struct n1x_dla_job *job,
@@ -1786,6 +2039,16 @@ static int n1x_boot_probe(struct platform_device *pdev)
 		endpoint->hfrp = devm_ioremap_resource(dev, &registers);
 		if (IS_ERR(endpoint->hfrp))
 			return PTR_ERR(endpoint->hfrp);
+		if (opt_enable_irq) {
+			int irq = platform_get_irq(pdev, 0);
+
+			if (irq < 0)
+				return irq;
+			err = devm_request_irq(dev, irq, n1x_boot_irq_handler,
+					       IRQF_SHARED, dev_name(dev), endpoint);
+			if (err)
+				return err;
+		}
 	}
 	/* Platform devices start with runtime PM disabled. Keep the normal
 	 * subsystem resume path; do not force ACTIVE or skip its callbacks.
@@ -1798,10 +2061,12 @@ static int n1x_boot_probe(struct platform_device *pdev)
 	if (sroot ? !!boot_sroot : !!boot_dla) {
 		err = -EBUSY;
 	} else {
-		if (sroot)
+		if (sroot) {
 			boot_sroot = endpoint;
-		else
+		} else {
 			boot_dla = endpoint;
+			boot_irq_registered = opt_enable_irq;
+		}
 		platform_set_drvdata(pdev, endpoint);
 	}
 	mutex_unlock(&boot_lock);
@@ -1812,7 +2077,10 @@ static int n1x_boot_probe(struct platform_device *pdev)
 			endpoint->accel = NULL;
 			mutex_lock(&boot_lock);
 			boot_dla = NULL;
+			boot_irq_registered = false;
 			mutex_unlock(&boot_lock);
+		} else if (enable_preempt) {
+			n1x_dla_accel_set_control(endpoint->accel, &n1x_boot_control_ops);
 		}
 	}
 	return err;
@@ -1826,8 +2094,10 @@ static void n1x_boot_remove(struct platform_device *pdev)
 	mutex_lock(&boot_lock);
 	if (boot_sroot && boot_sroot->dev == &pdev->dev)
 		boot_sroot = NULL;
-	if (boot_dla && boot_dla->dev == &pdev->dev)
+	if (boot_dla && boot_dla->dev == &pdev->dev) {
 		boot_dla = NULL;
+		boot_irq_registered = false;
+	}
 	mutex_unlock(&boot_lock);
 }
 

@@ -32,30 +32,43 @@ class Task(c.Structure):
 def tensor_view(backing,descriptor):
     n,channels,h,w=descriptor.shape
     element,line,surface,_,batch,*_=descriptor.strides
-    if n!=1 or min(channels,h,w)<=0 or tuple(descriptor.codes[:2])!=(3,2) or element!=2:
+    fmt,dtype,_,pixel_fmt,*_=descriptor.codes
+    if n!=1 or min(channels,h,w)<=0:
         raise ValueError('unsupported tensor layout')
+    if fmt==3 and dtype==2 and element==2:
+        group_ch,np_dtype=16,'<f2'
+    elif fmt in (3,5) and dtype==4 and element==1:
+        group_ch,np_dtype=(32 if (fmt==5 or pixel_fmt==36) else 16),'<i1'
+    else:
+        raise ValueError('unsupported tensor layout')
+    pixel_group_bytes=group_ch*element
     # Bound the padded-channel view independently of NumPy's stride machinery.
-    groups=(channels+15)//16
-    required=(groups-1)*surface+(h-1)*line+(w-1)*32+32
-    if required>descriptor.size or len(backing)!=descriptor.size or line<w*32 or surface<h*line:
+    groups=(channels+group_ch-1)//group_ch
+    required=(groups-1)*surface+(h-1)*line+(w-1)*pixel_group_bytes+pixel_group_bytes
+    if required>descriptor.size or len(backing)!=descriptor.size or line<w*pixel_group_bytes or surface<h*line:
         raise ValueError('tensor strides outside allocation')
-    return np.ndarray((groups,h,w,16),dtype='<f2',buffer=backing,strides=(surface,line,32,2))
+    return np.ndarray((groups,h,w,group_ch),dtype=np_dtype,buffer=backing,strides=(surface,line,pixel_group_bytes,element))
 
 
 def pack_tensor(data,descriptor):
-    source=np.asarray(data,dtype='<f2')
-    if source.shape!=descriptor.shape or not np.isfinite(source).all():raise ValueError('invalid input tensor')
+    dtype='<i1' if descriptor.codes[1]==4 else '<f2'
+    source=np.asarray(data,dtype=dtype)
+    if source.shape!=descriptor.shape or (dtype=='<f2' and not np.isfinite(source).all()):raise ValueError('invalid input tensor')
     result=bytearray(descriptor.size);view=tensor_view(result,descriptor)
-    for channel in range(descriptor.channels):view[channel//16,:,:,channel%16]=source[0,channel]
+    group_ch=view.shape[3]
+    for channel in range(descriptor.channels):view[channel//group_ch,:,:,channel%group_ch]=source[0,channel]
     return result
 
 
 def unpack_tensor(data,descriptor):
     view=tensor_view(bytearray(data),descriptor)
-    result=np.empty(descriptor.shape,dtype='<f2')
-    for channel in range(descriptor.channels):result[0,channel]=view[channel//16,:,:,channel%16]
-    if not np.isfinite(result).all():raise ValueError('nonfinite DLA result')
-    return result.astype(np.float32)
+    group_ch=view.shape[3]
+    result=np.empty(descriptor.shape,dtype=view.dtype)
+    for channel in range(descriptor.channels):result[0,channel]=view[channel//group_ch,:,:,channel%group_ch]
+    if view.dtype==np.dtype('<f2'):
+        if not np.isfinite(result).all():raise ValueError('nonfinite DLA result')
+        return result.astype(np.float32)
+    return result
 
 
 def bind(library,name,args):

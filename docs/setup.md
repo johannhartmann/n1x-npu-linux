@@ -221,3 +221,28 @@ Only after successful reload and reuse qualification, run the
 [hardware receipt](evidence/npu-hardware-2026-10-28.json). See [status](status.md)
 before making broader hardware claims. Setup, model generation and offline tests do not establish
 successful physical boot, teardown or inference by themselves.
+
+## 7. Enable qualified startup at boot
+
+This step is only for the exact board/BIOS/kernel combination after section 6
+has completed successfully. Install the source-pinned Arch package described in
+[updates](updates.md), then enable its service:
+
+```sh
+sudo systemctl enable n1x-npu.service
+```
+
+On the next boot of `7.2.8-23-rtx-spark-npu`, the service performs the same
+checked sequence through `bypass_task` and leaves `/dev/accel/accel0` ready for
+the root-owned broker. It does not run on a stock or merely similar kernel. It
+does not change the power profile, retry a rejected operation or unload a
+partially initialized module. Check it after reboot with:
+
+```sh
+systemctl status n1x-npu.service
+test -c /dev/accel/accel0
+python3 scripts/check_update_readiness.py
+```
+
+Disable the service before testing a new BIOS, kernel, firmware image or board.
+Keep the known-working P16 and stock Omarchy entries in the boot menu.

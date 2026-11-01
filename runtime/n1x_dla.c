@@ -37,18 +37,28 @@ fail:
     close(fd);
     return err;
 }
+int n1x_dla_submit_flags(int fd, const void *image, unsigned int bytes,
+                         const struct n1x_dla_accel_range *ranges, unsigned int count,
+                         const struct n1x_dla_accel_range *writable, unsigned int writable_count,
+                         unsigned int flags, struct n1x_dla_accel_exec *result)
+{
+    if (!image || !ranges || !writable || !writable_count || !result ||
+        (flags & ~N1X_DLA_EXEC_RESUMABLE)) return -EINVAL;
+    *result = (struct n1x_dla_accel_exec){.image_ptr = (uintptr_t)image,
+        .ranges_ptr = (uintptr_t)ranges, .writable_ranges_ptr = (uintptr_t)writable,
+        .image_bytes = bytes, .num_addresses = count,
+        .num_writable_ranges = writable_count, .flags = flags};
+    if (ioctl(fd, DRM_IOCTL_N1X_DLA_EXEC, result) < 0) return -errno;
+    if (!result->job_id || (!(flags & N1X_DLA_EXEC_RESUMABLE) && !result->status && !result->completed))
+        return -EPROTO;
+    return result->status;
+}
 int n1x_dla_submit(int fd, const void *image, unsigned int bytes,
                    const struct n1x_dla_accel_range *ranges, unsigned int count,
                    const struct n1x_dla_accel_range *writable, unsigned int writable_count,
                    struct n1x_dla_accel_exec *result)
 {
-    if (!image || !ranges || !writable || !writable_count || !result) return -EINVAL;
-    *result = (struct n1x_dla_accel_exec){.image_ptr = (uintptr_t)image,
-        .ranges_ptr = (uintptr_t)ranges, .writable_ranges_ptr = (uintptr_t)writable,
-        .image_bytes = bytes, .num_addresses = count, .num_writable_ranges = writable_count};
-    if (ioctl(fd, DRM_IOCTL_N1X_DLA_EXEC, result) < 0) return -errno;
-    if (!result->job_id || (!result->status && !result->completed)) return -EPROTO;
-    return result->status;
+    return n1x_dla_submit_flags(fd, image, bytes, ranges, count, writable, writable_count, 0, result);
 }
 int n1x_dla_read(int fd, unsigned long long job_id, unsigned long long offset,
                  void *output, unsigned long long bytes)
@@ -75,4 +85,19 @@ int n1x_dla_resubmit(int fd, unsigned long long job_id,
     if (!result->job_id || (!result->status && !result->completed))
         return -EPROTO;
     return result->status;
+}
+int n1x_dla_stats(int fd, unsigned long long job_id, unsigned long long offset,
+                  unsigned long long bytes, struct n1x_dla_accel_stats *stats)
+{
+    if (!job_id || !bytes || !stats) return -EINVAL;
+    *stats = (struct n1x_dla_accel_stats){.job_id = job_id, .offset = offset, .bytes = bytes};
+    return ioctl(fd, DRM_IOCTL_N1X_DLA_STATS, stats) < 0 ? -errno : 0;
+}
+int n1x_dla_control(int fd, unsigned long long job_id, unsigned int action,
+                    struct n1x_dla_accel_control *control)
+{
+    if (!job_id || !action || !control) return -EINVAL;
+    *control = (struct n1x_dla_accel_control){.job_id = job_id, .action = action};
+    if (ioctl(fd, DRM_IOCTL_N1X_DLA_CONTROL, control) < 0) return -errno;
+    return control->status;
 }

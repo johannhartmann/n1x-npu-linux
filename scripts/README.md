@@ -18,6 +18,7 @@ reproduction code and regression evidence, not a batch installer.
 | `test_vision_examples.py` | Original-checkpoint/reference, partition and image-boundary checks | Vision environment and prepared models; CPU only |
 | `../demo-denoise`, `../demo-classify` | DnCNN restoration and ResNet-18 classification | Unprivileged clients of the installed, fixed-model RAWIO broker; [instructions](../demo/vision.md) |
 | `qualify_p16_start.py` | Explicit bounded firmware-startup prefix | Root, exact board/kernel, ROM and firmware; changes NPU state |
+| `npu_autostart.py` | Fail-closed systemd startup through the qualified `bypass_task` state | Root, exact board/BIOS/kernel, pinned firmware and isolated IOMMU groups; no retries |
 | `qualify_cudla.py` | Eight physical numerical jobs; `--reuse` keeps each graph loaded and verifies one allocation per graph | Already initialized NPU and CUDA; root; `--prepare-only` only creates references |
 | `qualify_p16_reload.py` | Stop, cleanup, unload, reload and numerical jobs | Root, exact audited setup; two healthy physical cycles verified on P16 |
 | `qualify_superres_tile.py` | One physical learned-graph window | Root, initialized NPU, CUDA, image/reference venv |

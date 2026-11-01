@@ -15,11 +15,19 @@ int n1x_dla_submit(int fd, const void *image, unsigned int bytes,
                    const struct n1x_dla_accel_range *ranges, unsigned int count,
                    const struct n1x_dla_accel_range *writable, unsigned int writable_count,
                    struct n1x_dla_accel_exec *result);
+int n1x_dla_submit_flags(int fd, const void *image, unsigned int bytes,
+                         const struct n1x_dla_accel_range *ranges, unsigned int count,
+                         const struct n1x_dla_accel_range *writable, unsigned int writable_count,
+                         unsigned int flags, struct n1x_dla_accel_exec *result);
 int n1x_dla_read(int fd, unsigned long long job_id, unsigned long long offset,
                  void *output, unsigned long long bytes);
 int n1x_dla_resubmit(int fd, unsigned long long job_id,
                      const struct n1x_dla_accel_patch *patches, unsigned int count,
                      struct n1x_dla_accel_exec *result);
+int n1x_dla_stats(int fd, unsigned long long job_id, unsigned long long offset,
+                  unsigned long long bytes, struct n1x_dla_accel_stats *stats);
+int n1x_dla_control(int fd, unsigned long long job_id, unsigned int action,
+                    struct n1x_dla_accel_control *control);
 #ifdef __cplusplus
 }
 #endif

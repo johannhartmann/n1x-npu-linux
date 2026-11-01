@@ -62,7 +62,10 @@ research tools, not a generic distribution/kernel installer.
 [Exact versions, hashes and measurements](docs/evidence/npu-hardware-2026-10-28.json)
 · [Current limits](docs/status.md)
 
-This is a manually operated experimental driver. The transport requires
+This is an experimental driver. The packaged `n1x-npu.service` can perform the
+already qualified startup at boot, but only on the exact kernel, board, BIOS,
+firmware hashes and isolated IOMMU topology listed above. It stops at the first
+failed phase and never retries or unloads uncertain state. The transport requires
 `CAP_SYS_RAWIO` and trusted models; metadata checks do not sandbox embedded
 instructions. Healthy shutdown releases retained DMA. Uncertain firmware/DMA
 failures preserve allocations and lifetime references until reboot.
@@ -77,7 +80,8 @@ compilation, asynchronous scheduling and CUDA Graphs are unsupported.
 
 **To use the NPU:** follow [setup and reproduction](docs/setup.md), then the
 [super-resolution demo](demo/README.md). Setup covers the exact platform,
-pinned vendor inputs, offline compilation and explicit hardware startup.
+pinned vendor inputs, offline compilation, initial hardware qualification and
+the optional qualified boot service.
 
 **To explore or contribute without NVIDIA hardware:**
 
