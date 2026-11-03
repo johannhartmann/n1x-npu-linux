@@ -16,8 +16,8 @@
  * Polling policy is 1..5001 attempts, with a nonzero delay for multiple attempts.
  */
 int n1x_sroot_send(const struct n1x_dla_io *io, __u32 stride,
-                   __u8 command, const __u32 *words, __u8 count,
-                   __u32 polls, __u32 interval_us);
+					__u8 command, const __u32 *words, __u8 count,
+					__u32 polls, __u32 interval_us);
 /* Raw reply preserved alongside fields decoded by Windows RVA 0x4f70.
  * Transport success does not imply status == 0. Caller validates command,
  * status, detail and payload against its outstanding request. Output is only
@@ -25,14 +25,14 @@ int n1x_sroot_send(const struct n1x_dla_io *io, __u32 stride,
  * errors leave recovery/ownership with the transaction owner; no auto retry.
  */
 struct n1x_sroot_reply {
-    __u32 header;
-    __u32 words[N1X_SROOT_MAX_WORDS];
-    __u16 status;
-    __u8 command, detail, count;
+	__u32 header;
+	__u32 words[N1X_SROOT_MAX_WORDS];
+	__u16 status;
+	__u8 command, detail, count;
 };
 int n1x_sroot_receive(const struct n1x_dla_io *io, __u32 stride,
-                      struct n1x_sroot_reply *reply,
-                      __u32 polls, __u32 interval_us);
+						struct n1x_sroot_reply *reply,
+						__u32 polls, __u32 interval_us);
 /* Prepare an exclusively owned idle mailbox, following Windows RVA 0x54c0.
  * This intentionally discards stale reply/echo notifications. Never call it
  * with an outstanding request or as proof that DMA has quiesced. All stages
@@ -40,7 +40,7 @@ int n1x_sroot_receive(const struct n1x_dla_io *io, __u32 stride,
  * A nonzero low byte at 11*stride is reported as -EBUSY.
  */
 int n1x_sroot_prepare(const struct n1x_dla_io *io, __u32 stride,
-                      __u32 polls, __u32 interval_us);
+						__u32 polls, __u32 interval_us);
 /* Stage an opaque method-2 image and build command 0x18's three words.
  * Caller supplies CPU-accessible DMA storage and its logical device address;
  * words must not overlap image/storage. Image/storage may overlap (memmove).
@@ -53,9 +53,9 @@ int n1x_sroot_prepare(const struct n1x_dla_io *io, __u32 stride,
  * Returns without modifying outputs on invalid input. Does not submit/free DMA.
  */
 int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
-                          const __u8 *image, size_t size,
-                          __u64 dma_address, __u32 dma_minimum,
-                          __u32 dma_maximum, __u32 words[3]);
+							const __u8 *image, size_t size,
+							__u64 dma_address, __u32 dma_minimum,
+							__u32 dma_maximum, __u32 words[3]);
 /* One serialized prepare -> TX/echo -> RX transaction. Caller owns an idle
  * mailbox for the entire call, any DMA storage, and any global deadline.
  * Each polling stage uses the supplied bounded budget. No retries, DMA frees
@@ -65,9 +65,9 @@ int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
  * After an attempted write, an error leaves delivery/ownership uncertain.
  */
 int n1x_sroot_exchange(const struct n1x_dla_io *io, __u32 stride,
-                       __u8 command, const __u32 *words, __u8 count,
-                       struct n1x_sroot_reply *reply,
-                       __u32 polls, __u32 interval_us);
+						__u8 command, const __u32 *words, __u8 count,
+						struct n1x_sroot_reply *reply,
+						__u32 polls, __u32 interval_us);
 /* Build the separate reinitialization command's payload. Windows input is
  * little-endian tag (4 bytes, implicit mode 1), or tag + mode (8 bytes).
  * Accepted modes are 1/2; output is [tag, 0, mode], sent with command 0x1a.

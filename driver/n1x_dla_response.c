@@ -10,52 +10,52 @@
 #define SWGEN1 (1U << 7)
 
 int n1x_dla_take_response(const struct n1x_dla_io *io,
-                          struct n1x_dla_response *response)
+							struct n1x_dla_response *response)
 {
-    struct n1x_dla_response captured;
-    __u32 status;
-    int err;
-    if (!io || !io->read32 || !io->write32 || !response)
-        return -EINVAL;
-    err = io->read32(io->context, IRQSTAT, &status);
-    if (err)
-        return err;
-    if (!(status & SWGEN1))
-        return -EAGAIN;
-    err = io->read32(io->context, MAILBOX0, &captured.word);
-    if (err)
-        return err;
-    err = io->read32(io->context, MAILBOX1, &captured.data);
-    if (err)
-        return err;
-    /* L4T R38.4 ISR ordering; HAL-1 RV32 and T35x RV64 wait for this ACK.
-     * HAL-1 firmware sets SWGEN1 in IRQMSET before each mailbox response.
-     */
-    err = io->write32(io->context, IRQMCLR, SWGEN1);
-    if (err)
-        return err;
-    err = io->write32(io->context, IRQSCLR, SWGEN1);
-    if (err)
-        return err;
-    err = io->write32(io->context, MAILBOX0, N1X_DLA_RESPONSE_ACK);
-    if (err)
-        return err;
-    *response = captured;
-    return 0;
+	struct n1x_dla_response captured;
+	__u32 status;
+	int err;
+	if (!io || !io->read32 || !io->write32 || !response)
+		return -EINVAL;
+	err = io->read32(io->context, IRQSTAT, &status);
+	if (err)
+		return err;
+	if (!(status & SWGEN1))
+		return -EAGAIN;
+	err = io->read32(io->context, MAILBOX0, &captured.word);
+	if (err)
+		return err;
+	err = io->read32(io->context, MAILBOX1, &captured.data);
+	if (err)
+		return err;
+	/* L4T R38.4 ISR ordering; HAL-1 RV32 and T35x RV64 wait for this ACK.
+	 * HAL-1 firmware sets SWGEN1 in IRQMSET before each mailbox response.
+	 */
+	err = io->write32(io->context, IRQMCLR, SWGEN1);
+	if (err)
+		return err;
+	err = io->write32(io->context, IRQSCLR, SWGEN1);
+	if (err)
+		return err;
+	err = io->write32(io->context, MAILBOX0, N1X_DLA_RESPONSE_ACK);
+	if (err)
+		return err;
+ *response = captured;
+	return 0;
 }
 
 int n1x_dla_decode_response(const struct n1x_dla_response *response,
-                           struct n1x_dla_response_fields *fields)
+							struct n1x_dla_response_fields *fields)
 {
-    struct n1x_dla_response_fields decoded;
+	struct n1x_dla_response_fields decoded;
 
-    if (!response || !fields)
-        return -EINVAL;
-    decoded.message = response->word & 0xff;
-    decoded.command = (response->word >> 8) & 0xff;
-    decoded.status = (response->word >> 16) & 0xff;
-    decoded.upper = response->word >> 24;
-    decoded.data = response->data;
-    *fields = decoded;
-    return 0;
+	if (!response || !fields)
+		return -EINVAL;
+	decoded.message = response->word & 0xff;
+	decoded.command = (response->word >> 8) & 0xff;
+	decoded.status = (response->word >> 16) & 0xff;
+	decoded.upper = response->word >> 24;
+	decoded.data = response->data;
+ *fields = decoded;
+	return 0;
 }

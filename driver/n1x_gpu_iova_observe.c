@@ -32,16 +32,16 @@ static int __init n1x_gpu_iova_init(void)
 	};
 
 	if (!dmi_match(DMI_SYS_VENDOR, "ASUS") ||
-	    !dmi_match(DMI_PRODUCT_NAME, "ProArt P16 H7607BA") ||
-	    !dmi_match(DMI_BIOS_VERSION, "H7607BA.300") ||
-	    strcmp(utsname()->release, "7.2.8-23-rtx-spark-npu"))
+		!dmi_match(DMI_PRODUCT_NAME, "ProArt P16 H7607BA") ||
+		!dmi_match(DMI_BIOS_VERSION, "H7607BA.300") ||
+		strcmp(utsname()->release, "7.2.8-23-rtx-spark-npu"))
 		return -ENODEV;
 	pdev = pci_get_domain_bus_and_slot(0x000f, 1, PCI_DEVFN(0, 0));
 	if (!pdev)
 		return -ENODEV;
 	device_lock(&pdev->dev);
 	if (pdev->vendor != PCI_VENDOR_ID_NVIDIA || pdev->device != 0x2e03 ||
-	    !pdev->dev.driver || strcmp(pdev->dev.driver->name, "nvidia")) {
+		!pdev->dev.driver || strcmp(pdev->dev.driver->name, "nvidia")) {
 		ret = -ENODEV;
 		goto out;
 	}
@@ -54,10 +54,10 @@ static int __init n1x_gpu_iova_init(void)
 	 * unaudited driver's possible hardware translation request.
 	 */
 	if (!domain->ops || !domain->ops->iova_to_phys || !pdev->dev.iommu ||
-	    !pdev->dev.iommu->iommu_dev || !pdev->dev.iommu->iommu_dev->dev ||
-	    !pdev->dev.iommu->iommu_dev->dev->parent ||
-	    strcmp(dev_driver_string(pdev->dev.iommu->iommu_dev->dev->parent),
-		   "arm-smmu-v3")) {
+		!pdev->dev.iommu->iommu_dev || !pdev->dev.iommu->iommu_dev->dev ||
+		!pdev->dev.iommu->iommu_dev->dev->parent ||
+		strcmp(dev_driver_string(pdev->dev.iommu->iommu_dev->dev->parent),
+			"arm-smmu-v3")) {
 		ret = -EOPNOTSUPP;
 		goto out;
 	}

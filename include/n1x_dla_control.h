@@ -4,9 +4,9 @@
 #include "n1x_dla_response.h"
 
 struct n1x_dla_control_result {
-    struct n1x_dla_response response;
-    __u8 method_attempted;
-    __u8 response_valid;
+	struct n1x_dla_response response;
+	__u8 method_attempted;
+	__u8 response_valid;
 };
 /* Serialized, polled HAL-1 DMA control transaction for commands 11/21/22/23/24.
  * Task command 7 is deliberately excluded: its 0x702 reply is acceptance, not
@@ -30,6 +30,6 @@ struct n1x_dla_control_result {
  * and response stage has a separate bounded Linux poll budget.
  */
 int n1x_dla_control_command(const struct n1x_dla_io *io, __u8 command,
-                            __u64 dma_address, __u32 polls, __u32 interval_us,
-                            struct n1x_dla_control_result *result);
+							__u64 dma_address, __u32 polls, __u32 interval_us,
+							struct n1x_dla_control_result *result);
 #endif

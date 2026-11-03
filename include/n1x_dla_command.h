@@ -11,7 +11,7 @@
  * Poll policy is the same bounded Linux policy as n1x_dla_start_core.
  */
 int n1x_dla_send_method(const struct n1x_dla_io *io, __u32 method,
-                       __u32 data, __u32 polls, __u32 interval_us);
+						__u32 data, __u32 polls, __u32 interval_us);
 /* Serialize the verified 16-byte region record: printf (1), trace (3), or HAL-1 ring (5).
  * Address/size validity and DMA ownership are caller responsibilities. The
  * coherent command record must itself be 256-byte aligned and addressable by
@@ -25,7 +25,7 @@ int n1x_dla_send_method(const struct n1x_dla_io *io, __u32 method,
  * as a Linux API policy. Output remains unchanged on error.
  */
 int n1x_dla_build_region(__u8 *out, size_t out_size, __u32 region,
-                         __u64 address, __u32 bytes);
+						__u64 address, __u32 bytes);
 /* Serialize the raw HAL-1 command-23 payload built by Windows RVA d45390.
  * Byte 0 is 1; byte 1 normalizes context byte 0x47d. If context u32 0x490
  * is nonzero, LE u32 at offset 2 is provider field +0xf4 multiplied by 2000,
@@ -36,7 +36,7 @@ int n1x_dla_build_region(__u8 *out, size_t out_size, __u32 region,
  * At least 40 output bytes are required; invalid output remains unchanged.
  */
 int n1x_dla_build_command23(__u8 *out, size_t out_size, __u8 context_47d,
-                            __u32 context_490, __u32 provider_f4);
+							__u32 context_490, __u32 provider_f4);
 
 #define N1X_DLA_CONFIG_BYTES 252U
 /* Modify a previously exported HAL-1 config in place, matching Windows d47830
@@ -66,6 +66,6 @@ int n1x_dla_prepare_default_config(__u8 *buffer, size_t buffer_size);
  * On failure output is unchanged; bytes after 512 are untouched.
  */
 int n1x_dla_build_preempt_request(__u8 *out, size_t out_size, __u64 dma,
-                                  __u64 fence, __u32 submitted, __u32 sequence);
+									__u64 fence, __u32 submitted, __u32 sequence);
 
 #endif

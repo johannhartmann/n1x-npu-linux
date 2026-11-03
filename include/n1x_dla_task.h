@@ -7,10 +7,10 @@
 #define N1X_DLA_CONTEXT_HEADER_BYTES 64
 #define N1X_DLA_CHECKPOINT_BYTES 32
 struct n1x_dla_task_args {
-    __u64 next;
-    __u64 address_list;
-    __u64 timeout;
-    __u16 num_addresses;
+	__u64 next;
+	__u64 address_list;
+	__u64 timeout;
+	__u16 num_addresses;
 };
 /* Build a queue-0 v2 descriptor with no actions, flags or extensions. Pure
  * serialization; the common header is accepted by both HAL-1 RV32 and T35x
@@ -19,7 +19,7 @@ struct n1x_dla_task_args {
  * keep them alive until completion/quiescence. Output is unchanged on failure.
  */
 int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
-                         const struct n1x_dla_task_args *args);
+						const struct n1x_dla_task_args *args);
 /* Adds a terminal WRITE_SEM postaction: logical descriptor size 96 bytes,
  * backing allocation 256 bytes for HAL-1 cache-block reads. Caller must place
  * the descriptor at a 256-byte-aligned device address and map all 256 bytes.
@@ -31,8 +31,8 @@ int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
  * Same lifetime and unchanged-on-failure rules as the basic serializer.
  */
 int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
-                                const struct n1x_dla_task_args *args,
-                                __u64 fence_address, __u32 fence_value);
+								const struct n1x_dla_task_args *args,
+								__u64 fence_address, __u32 fence_value);
 /* HAL-1 context transport, qualified against original firmware in RAM only.
  * Header byte 0 is 1, byte 1 copies the caller's vendor context tag (semantics
  * not inferred), and LE u64 at +4 addresses a separate 32-byte checkpoint.
@@ -43,7 +43,7 @@ int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
  * Output is unchanged on failure, and bytes after the 64-byte header are untouched.
  */
 int n1x_dla_build_context_header(__u8 *out, size_t out_size,
-                                 __u64 checkpoint, __u8 context_tag);
+								__u64 checkpoint, __u8 context_tag);
 /* Fenced single-task v2 descriptor with context-header flag bit 2 and optional
  * restore flag bit 1. restore must be 0 or 1. Header address is nonzero,
  * 256-aligned and backed by 256 mapped bytes within 36 bits. Address list and
@@ -54,9 +54,9 @@ int n1x_dla_build_context_header(__u8 *out, size_t out_size,
  * Output is unchanged on failure; args may overlap output.
  */
 int n1x_dla_build_context_fenced_task_v2(__u8 *out, size_t out_size,
-                                        const struct n1x_dla_task_args *args,
-                                        __u64 fence_address, __u32 fence_value,
-                                        __u64 context_header, __u8 restore);
+										const struct n1x_dla_task_args *args,
+										__u64 fence_address, __u32 fence_value,
+										__u64 context_header, __u8 restore);
 /* Single-task transport qualification descriptor: same fenced v2 layout,
  * with flags bit 0 at byte 41 set (BYPASS_EXEC). The raw HAL-1 executor skips
  * network/instruction execution, but still runs scheduler/postactions and can
@@ -70,8 +70,8 @@ int n1x_dla_build_context_fenced_task_v2(__u8 *out, size_t out_size,
  * Output unchanged on invalid input, including overlapping args/output.
  */
 int n1x_dla_build_bypass_fenced_task_v2(__u8 *out, size_t out_size,
-                                       const struct n1x_dla_task_args *args,
-                                       __u64 fence_address, __u32 fence_value);
+										const struct n1x_dla_task_args *args,
+										__u64 fence_address, __u32 fence_value);
 /* Cached-path address list (1..512 entries), padded for T35x DMA reads;
  * the same layout also passes HAL-1, which requests exactly count*8 bytes.
  * Source and output must not overlap. DMA mapping/alignment, model index bounds
@@ -82,21 +82,21 @@ int n1x_dla_build_bypass_fenced_task_v2(__u8 *out, size_t out_size,
  */
 size_t n1x_dla_address_list_bytes(__u16 count);
 int n1x_dla_build_address_list(__u8 *out, size_t out_size,
-                              const __u64 *addresses, __u16 count);
+								const __u64 *addresses, __u16 count);
 struct n1x_dla_buffer_range {
-    __u64 address;
-    __u64 bytes;
+	__u64 address;
+	__u64 bytes;
 };
 struct n1x_dla_memory_view {
-    struct n1x_dla_buffer_range mapping;
-    __u64 logical_bytes;
+	struct n1x_dla_buffer_range mapping;
+	__u64 logical_bytes;
 };
 struct n1x_dla_model_address {
-    __u64 offset, bytes;
-    __u16 memory_index;
+	__u64 offset, bytes;
+	__u16 memory_index;
 };
 struct n1x_dla_task_buffer {
-    __u64 address, logical_bytes, mapped_bytes;
+	__u64 address, logical_bytes, mapped_bytes;
 };
 /* Resolve dense model-address indices into task-local order. The memory and
  * address arrays must already be indexed by their validated model IDs.
@@ -109,17 +109,17 @@ struct n1x_dla_task_buffer {
  * Output is unchanged on failure; no allocation, DMA or device operations.
  */
 int n1x_dla_resolve_task_buffers(struct n1x_dla_task_buffer *out,
-                                 size_t out_count,
-                                 const struct n1x_dla_memory_view *memories,
-                                 __u16 num_memories,
-                                 const struct n1x_dla_model_address *addresses,
-                                 __u16 num_addresses,
-                                 const __u16 *task_indices,
-                                 __u16 num_task_addresses);
+								size_t out_count,
+								const struct n1x_dla_memory_view *memories,
+								__u16 num_memories,
+								const struct n1x_dla_model_address *addresses,
+								__u16 num_addresses,
+								const __u16 *task_indices,
+								__u16 num_task_addresses);
 struct n1x_dla_il_range {
-    __u64 address;
-    __u32 dma_bytes;
-    __u16 instructions;
+	__u64 address;
+	__u32 dma_bytes;
+	__u16 instructions;
 };
 /* Validate one recovered 12-byte IL slice (index/offset/count), including all
  * firmware cache reads. Does not validate instruction opcodes, their embedded
@@ -128,7 +128,7 @@ struct n1x_dla_il_range {
  * error. Reserved slice bytes are not interpreted.
  */
 int n1x_dla_validate_il_slice(struct n1x_dla_il_range *out,
-                              const __u8 *slice, size_t slice_size,
-                              const struct n1x_dla_buffer_range *buffers,
-                              __u16 num_buffers);
+								const __u8 *slice, size_t slice_size,
+								const struct n1x_dla_buffer_range *buffers,
+								__u16 num_buffers);
 #endif

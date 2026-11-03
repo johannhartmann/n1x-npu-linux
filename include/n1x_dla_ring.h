@@ -23,5 +23,5 @@
  * to zero without changing output and may use output=NULL, capacity=0.
  */
 int n1x_dla_region5_history(const __u8 *ring, size_t ring_size,
-                           __u8 *output, size_t output_capacity, __u32 *count);
+							__u8 *output, size_t output_capacity, __u32 *count);
 #endif

@@ -16,7 +16,7 @@ def main():
     original = windows(pefile.PE(str(path), fast_load=True))
     assert original['builder_status'] == 0
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
-    constants = source[source.index('#define N1X_REGION5_ALLOC'):source.index('static bool enable_upload;')]
+    constants = source[source.index('#define N1X_REGION5_ALLOC'):source.index('static bool autostart')]
     function = source[source.index('static int n1x_boot_init_region5_once('):
                       source.index('static ssize_t init_region5_store(')]
     harness = r'''

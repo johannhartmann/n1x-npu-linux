@@ -5,23 +5,23 @@
 
 /* Observations, not numerical correctness or DMA-quiescence guarantees. */
 enum n1x_dla_preempt_outcome {
-    N1X_DLA_PREEMPT_UNRESOLVED,
-    N1X_DLA_PREEMPT_CHECKPOINT,
-    N1X_DLA_PREEMPT_TASK_FENCE,
+	N1X_DLA_PREEMPT_UNRESOLVED,
+	N1X_DLA_PREEMPT_CHECKPOINT,
+	N1X_DLA_PREEMPT_TASK_FENCE,
 };
 struct n1x_dla_preempt_snapshot {
-    __u64 checkpoint; /* LE u64 checkpoint +24, acquired from coherent backing */
-    __u32 task_fence, preempt_fence;
+	__u64 checkpoint; /* LE u64 checkpoint +24, acquired from coherent backing */
+	__u32 task_fence, preempt_fence;
 };
 struct n1x_dla_preempt_ops {
-    void *context;
-    int (*snapshot)(void *context, struct n1x_dla_preempt_snapshot *snapshot);
+	void *context;
+	int (*snapshot)(void *context, struct n1x_dla_preempt_snapshot *snapshot);
 };
 struct n1x_dla_preempt_result {
-    struct n1x_dla_response response;
-    struct n1x_dla_preempt_snapshot snapshot;
-    __u32 attempted, response_valid, idle_notifications;
-    enum n1x_dla_preempt_outcome outcome;
+	struct n1x_dla_response response;
+	struct n1x_dla_preempt_snapshot snapshot;
+	__u32 attempted, response_valid, idle_notifications;
+	enum n1x_dla_preempt_outcome outcome;
 };
 /* Private HAL-1 control primitive; not called by EXEC. Caller owns the device
  * lock, an accepted context-enabled task and preemption enabled while idle.
@@ -43,7 +43,7 @@ struct n1x_dla_preempt_result {
  * Result is initialized on entry; attempted includes ambiguous delivery errors.
  */
 int n1x_dla_preempt(const struct n1x_dla_io *io,
-                    const struct n1x_dla_preempt_ops *ops, __u64 dma,
-                    __u32 task_fence, __u32 sequence,
-                    struct n1x_dla_preempt_result *result);
+					const struct n1x_dla_preempt_ops *ops, __u64 dma,
+					__u32 task_fence, __u32 sequence,
+					struct n1x_dla_preempt_result *result);
 #endif

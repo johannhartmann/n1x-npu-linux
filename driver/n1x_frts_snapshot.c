@@ -44,12 +44,12 @@ void __init n1x_frts_snapshot_early(void)
 	 * No PCI/ACPI binding, MMIO, register writes, source writes or DMA.
 	 */
 	if (!efi_enabled(EFI_BOOT) ||
-	    memblock_is_region_reserved(FRTS_CANDIDATE, FRTS_BYTES))
+		memblock_is_region_reserved(FRTS_CANDIDATE, FRTS_BYTES))
 		goto rejected;
 	for_each_mem_region(region) {
 		if (region->base <= FRTS_CANDIDATE &&
-		    FRTS_CANDIDATE + FRTS_BYTES <= region->base + region->size &&
-		    region->flags == MEMBLOCK_NONE) {
+			FRTS_CANDIDATE + FRTS_BYTES <= region->base + region->size &&
+			region->flags == MEMBLOCK_NONE) {
 			ordinary_ram = true;
 			break;
 		}
@@ -65,13 +65,13 @@ void __init n1x_frts_snapshot_early(void)
 	offset = get_unaligned_le32(header + 32);
 	size = get_unaligned_le32(header + 36);
 	if (memcmp(header, "GFWI", 4) || offset < sizeof(header) ||
-	    offset >= FRTS_BYTES || !size || size > FRTS_BYTES - offset) {
+		offset >= FRTS_BYTES || !size || size > FRTS_BYTES - offset) {
 		pr_info("n1x-frts: candidate has no bounded GFWI ROM member\n");
 		goto unmap;
 	}
 	memcpy(snapshot, source, sizeof(snapshot));
 	if (memcmp(snapshot, header, sizeof(header)) ||
-	    memcmp(snapshot, source, sizeof(snapshot))) {
+		memcmp(snapshot, source, sizeof(snapshot))) {
 		memzero_explicit(snapshot, sizeof(snapshot));
 		pr_info("n1x-frts: candidate changed during capture\n");
 		goto unmap;
