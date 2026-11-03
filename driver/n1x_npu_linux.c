@@ -114,7 +114,8 @@ static ssize_t dma_state_show(struct device *dev,
 			size += sysfs_emit_at(buf, size, "stream_id[%u]=0x%x\n", i, spec->ids[i]);
 	return size;
 }
-static DEVICE_ATTR(dma_state, 0400, dma_state_show, NULL);
+static struct device_attribute dev_attr_dma_state =
+	__ATTR(dma_state, 0400, dma_state_show, NULL);
 
 static ssize_t registers_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
@@ -142,7 +143,8 @@ static ssize_t registers_show(struct device *dev,
 	}
 	return size;
 }
-static DEVICE_ATTR(registers, 0400, registers_show, NULL);
+static struct device_attribute dev_attr_registers =
+	__ATTR(registers, 0400, registers_show, NULL);
 
 static struct attribute *n1x_attrs[] = {
 	&dev_attr_dma_state.attr,

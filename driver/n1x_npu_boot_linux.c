@@ -21,7 +21,6 @@
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
-#include <linux/utsname.h>
 #include <linux/wait.h>
 #include "n1x_dla_boot.h"
 #include "n1x_dla_command.h"
@@ -33,7 +32,6 @@
 #include "n1x_dla_accel.h"
 #include "n1x_hfrp_setup.h"
 
-#define N1X_BOOT_KERNEL "7.2.8-23-rtx-spark-npu"
 #define N1X_BOARD_FIRMWARE "nvidia/n1x/p16-bios300-physical.rom"
 #define N1X_BOOT_FIRMWARE "nvidia/n1x/p16-sroot-v0.bin"
 #define N1X_BOOT_FALLBACK_FIRMWARE "nvidia/n1x/p16-sroot-v1.bin"
@@ -213,8 +211,7 @@ static bool n1x_boot_machine(void)
 {
 	if (!strict_platform)
 		return true;
-	return !strcmp(init_uts_ns.name.release, N1X_BOOT_KERNEL) &&
-		dmi_match(DMI_SYS_VENDOR, "ASUS") &&
+	return dmi_match(DMI_SYS_VENDOR, "ASUS") &&
 		dmi_match(DMI_PRODUCT_NAME, "ProArt P16 H7607BA") &&
 		dmi_match(DMI_BIOS_VERSION, "H7607BA.300");
 }
@@ -2443,6 +2440,3 @@ MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("NVIDIA N1X (GB10/T264) NPU DRM compute accelerator driver");
 MODULE_FIRMWARE(N1X_BOOT_FIRMWARE);
 MODULE_FIRMWARE(N1X_BOOT_FALLBACK_FIRMWARE);
-MODULE_FIRMWARE(N1X_BOARD_FIRMWARE);
-
-MODULE_FIRMWARE(N1X_RELU_FIRMWARE);
