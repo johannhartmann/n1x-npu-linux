@@ -168,7 +168,7 @@ def main():
         record(action='select dedicated DMA domains')
         apply(rows)
         record(action='load manual bootstrap, all triggers opt-in')
-        subprocess.run(['/usr/bin/insmod', str(module), 'enable_hfrp=1', 'enable_upload=1',
+        subprocess.run(['/usr/bin/insmod', str(module), 'autostart=0', 'enable_hfrp=1', 'enable_upload=1',
                         'enable_ping=1', 'enable_region5=1', 'enable_config_snapshot=1',
                         'enable_config_apply=1', 'enable_lpwr_config=1', 'enable_bypass_task=1',
                         'enable_relu_probe=1', 'enable_accel='+str(int(args.enable_accel)),

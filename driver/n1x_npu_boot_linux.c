@@ -49,49 +49,53 @@
 #define N1X_REGION5_BYTES (((N1X_REGION5_ALLOC - N1X_REGION5_OFFSET - 8U) / \
 			   N1X_REGION5_STRIDE) * N1X_REGION5_STRIDE + 8U)
 
-static bool enable_upload;
-module_param(enable_upload, bool, 0400);
-MODULE_PARM_DESC(enable_upload, "Permit root's explicit one-attempt upload trigger (default false)");
+static bool autostart = true;
+module_param(autostart, bool, 0400);
+MODULE_PARM_DESC(autostart, "Automatically run full NPU bring-up in C once both endpoints probe (default true)");
 
-static bool enable_hfrp;
+static bool enable_upload = true;
+module_param(enable_upload, bool, 0400);
+MODULE_PARM_DESC(enable_upload, "Permit SROOT firmware upload phase (default true)");
+
+static bool enable_hfrp = true;
 module_param(enable_hfrp, bool, 0400);
-MODULE_PARM_DESC(enable_hfrp, "Permit one explicit board-policy HFRP prepare/power-on attempt (default false)");
+MODULE_PARM_DESC(enable_hfrp, "Permit board-policy HFRP prepare/power-on phase (default true)");
 
 static unsigned int firmware_variant;
 module_param(firmware_variant, uint, 0400);
 MODULE_PARM_DESC(firmware_variant, "Pinned remapper-1 image: 0=initial, 1=Windows fallback; no automatic retry (default 0)");
 
-static bool enable_ping;
+static bool enable_ping = true;
 module_param(enable_ping, bool, 0400);
-MODULE_PARM_DESC(enable_ping, "Permit one explicit DMA-word ping after successful upload phase (default false)");
+MODULE_PARM_DESC(enable_ping, "Permit DMA-word ping after upload phase (default true)");
 
-static bool enable_config_snapshot;
+static bool enable_config_snapshot = true;
 module_param(enable_config_snapshot, bool, 0400);
-MODULE_PARM_DESC(enable_config_snapshot, "Permit one explicit command-22 snapshot after DMA ping (default false)");
+MODULE_PARM_DESC(enable_config_snapshot, "Permit command-22 config snapshot after DMA ping (default true)");
 
-static bool enable_region5;
+static bool enable_region5 = true;
 module_param(enable_region5, bool, 0400);
-MODULE_PARM_DESC(enable_region5, "Permit one explicit region-5 initialization after DMA ping (default false)");
+MODULE_PARM_DESC(enable_region5, "Permit region-5 initialization after DMA ping (default true)");
 
-static bool enable_config_apply;
+static bool enable_config_apply = true;
 module_param(enable_config_apply, bool, 0400);
-MODULE_PARM_DESC(enable_config_apply, "Permit one explicit default config import after export/region-5 qualification (default false)");
+MODULE_PARM_DESC(enable_config_apply, "Permit default config import after region-5 (default true)");
 
-static bool enable_lpwr_config;
+static bool enable_lpwr_config = true;
 module_param(enable_lpwr_config, bool, 0400);
-MODULE_PARM_DESC(enable_lpwr_config, "Permit one explicit command-23 board-policy config import (default false)");
+MODULE_PARM_DESC(enable_lpwr_config, "Permit command-23 board-policy LPWR config import (default true)");
 
-static bool enable_bypass_task;
+static bool enable_bypass_task = true;
 module_param(enable_bypass_task, bool, 0400);
-MODULE_PARM_DESC(enable_bypass_task, "Permit one explicit single bypass task after config qualification (default false)");
+MODULE_PARM_DESC(enable_bypass_task, "Permit initial bypass task verification (default true)");
 
 static bool enable_relu_probe;
 module_param(enable_relu_probe, bool, 0400);
-MODULE_PARM_DESC(enable_relu_probe, "Permit one pinned FP16 ReLU numerical probe after verified bypass (default false)");
+MODULE_PARM_DESC(enable_relu_probe, "Permit optional pinned FP16 ReLU numerical probe after bypass (default false)");
 
-static bool enable_accel;
+static bool enable_accel = true;
 module_param(enable_accel, bool, 0400);
-MODULE_PARM_DESC(enable_accel, "Register experimental RAWIO-only accel API; explicit startup still required (default false)");
+MODULE_PARM_DESC(enable_accel, "Register /dev/accel/accel* DRM accelerator device (default true)");
 
 static bool strict_platform;
 module_param(strict_platform, bool, 0400);
@@ -2082,6 +2086,19 @@ static int n1x_boot_probe(struct platform_device *pdev)
 			boot_irq_registered = opt_enable_irq;
 		}
 		platform_set_drvdata(pdev, endpoint);
+		if (autostart && boot_dla && boot_sroot && !boot_hfrp.attempted) {
+			int start_err = n1x_boot_start_once();
+
+			if (start_err)
+				dev_err(boot_dla->dev,
+					"automatic startup failed (%d); device remains fail-closed\n",
+					start_err);
+			else
+				dev_info(boot_dla->dev,
+					 "N1X NPU initialized in-kernel (HFRP v%u.%u, %u kHz)\n",
+					 boot_hfrp.version.major, boot_hfrp.version.minor,
+					 boot_hfrp.policy.frequency_khz);
+		}
 	}
 	mutex_unlock(&boot_lock);
 	if (!err && !sroot && enable_accel) {
@@ -2153,6 +2170,7 @@ static const struct dev_pm_ops n1x_boot_pm = {
 	.poweroff = n1x_boot_suspend,
 };
 static const struct acpi_device_id n1x_boot_ids[] = {{"NVDA200A", 0}, {"NVDA8600", 0}, {}};
+MODULE_DEVICE_TABLE(acpi, n1x_boot_ids);
 static struct platform_driver n1x_boot_driver = {
 	.probe = n1x_boot_probe,
 	.remove = n1x_boot_remove,

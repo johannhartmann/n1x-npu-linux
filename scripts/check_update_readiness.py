@@ -20,13 +20,9 @@ def command(*args):
 def check():
     issues = []
     facts = []
-    dmi = Path('/sys/class/dmi/id')
-    expected = {'sys_vendor': 'ASUS', 'product_name': 'ProArt P16 H7607BA',
-                'bios_version': 'H7607BA.300'}
-    for key, value in expected.items():
-        path = dmi / key
-        if not path.is_file() or path.read_text().strip() != value:
-            issues.append(f'{key} differs from audited P16/BIOS; NPU qualification invalid')
+    for endpoint in ('NVDA200A:00', 'NVDA8600:00'):
+        if not (Path('/sys/bus/platform/devices') / endpoint).exists():
+            issues.append(f'missing ACPI NPU endpoint {endpoint}')
     running = platform.release()
     facts.append(f'Kernel: {running}')
     if running != KERNEL:

@@ -9,7 +9,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGING = ROOT / 'packaging/arch'
 OUTPUT = ROOT / 'results/arch-module-package'
-SOURCES = ('driver', 'include', 'runtime', 'README.md', 'scripts/npu_autostart.py',
+SOURCES = ('driver', 'include', 'runtime', 'README.md',
+           'packaging/udev/99-n1x-npu.rules',
            'packaging/systemd/n1x-npu.service')
 
 
