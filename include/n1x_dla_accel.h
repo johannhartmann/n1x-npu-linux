@@ -33,4 +33,5 @@ void n1x_dla_accel_unregister(struct n1x_dla_accel *);
  * Does not invalidate live drm_file objects or their module references.
  */
 int n1x_dla_accel_stop(struct n1x_dla_accel *, int (*stop)(struct device *));
+void n1x_dla_accel_resume(struct n1x_dla_accel *);
 #endif

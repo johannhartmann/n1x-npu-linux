@@ -304,6 +304,7 @@ int main(int argc,char **argv)
  stop_error=-ETIMEDOUT;int before_stop=frees;
  assert(n1x_dla_accel_stop(&accel,stopped_hardware)==-ETIMEDOUT && stops==1);
  assert(accel.count==2 && accel.retained==53248 && frees==before_stop);
+ n1x_dla_accel_resume(&accel);assert(accel.stopped);
  reset_request();check(-ENODEV);
  again=(struct n1x_dla_accel_reexec){.job_id=read.job_id,.patches_ptr=(uintptr_t)&patch,.num_patches=1};
  assert(reexec_ioctl(&accel.drm,&again,&owner)==-ENODEV);
@@ -316,6 +317,7 @@ int main(int argc,char **argv)
  assert(read_ioctl(&accel.drm,&read,&owner)==-ENOENT);
  postclose(&accel.drm,&owner);assert(!accel.lock.locked);
  assert(!n1x_dla_accel_stop(&accel,stopped_hardware) && frees==before_stop+2);
+ n1x_dla_accel_resume(&accel);assert(!accel.stopped);
  printf("%d exact accel EXEC cases plus READ/INFO/ownership/close checks passed; no hardware access\n",cases);
 }
 '''
