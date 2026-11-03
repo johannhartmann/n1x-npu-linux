@@ -73,7 +73,7 @@ static void list_del(struct list_head *n) {n->prev->next=n->next;n->next->prev=n
      node=following,following=node->next)
 #define list_for_each_entry(pos,head,member) \
  for(struct list_head *node=(head)->next;node!=(head) && ((pos)=container_of(node,__typeof__(*(pos)),member),1);node=node->next)
-static bool privileged=true,copyin_fail,copyout_fail,memdup_fail,dma_fail;
+static bool privileged=true,require_rawio=true,copyin_fail,copyout_fail,memdup_fail,dma_fail;
 static int heap_fail_at=-1,heap_calls,allocations,frees,submits,backend_error;
 static bool backend_attempt=true;
 static u64 dma_address=0x100000000ULL;
@@ -162,7 +162,7 @@ static void reset_request(void)
  .num_writable_ranges=1};
  ranges[0]=(struct n1x_dla_accel_range){0,128};ranges[1]=(struct n1x_dla_accel_range){128,128};
  writable[0]=(struct n1x_dla_accel_range){8,16};
- privileged=true;copyin_fail=copyout_fail=memdup_fail=dma_fail=false;
+ privileged=true;require_rawio=true;copyin_fail=copyout_fail=memdup_fail=dma_fail=false;
  heap_fail_at=-1;heap_calls=0;backend_error=0;backend_attempt=true;dma_address=0x100000000ULL;}
 static void check(int expected)
 {int oldalloc=allocations,oldfree=frees;u32 count=accel.count;
@@ -191,6 +191,7 @@ int main(int argc,char **argv)
  reset_request();privileged=false;check(-EPERM);assert(!allocations&&!submits);
  struct n1x_dla_accel_info info;
  assert(info_ioctl(&accel.drm,&info,&owner)==-EPERM);
+ require_rawio=false;assert(!info_ioctl(&accel.drm,&info,&owner));require_rawio=true;
  struct n1x_dla_accel_read read={0};
  assert(read_ioctl(&accel.drm,&read,&owner)==-EPERM);
  for(int mode=0;mode<11;mode++){
@@ -263,14 +264,16 @@ int main(int argc,char **argv)
   previous=again.new_job_id;
  }
  int savedfrees=frees;postclose(&accel.drm,&owner);
- assert(frees==savedfrees&&accel.count==1&&read_ioctl(&accel.drm,&read,&owner)==-ENOENT);
+ assert(frees==savedfrees+1&&accel.count==0&&accel.retained==0&&read_ioctl(&accel.drm,&read,&owner)==-ENOENT);
  u64 expected_next=accel.last_id+1;
  reset_request();backend_error=-ETIMEDOUT;check(0);
- assert(req.job_id==expected_next&&!req.completed&&req.status==-ETIMEDOUT&&frees==savedfrees);
+ assert(req.job_id==expected_next&&!req.completed&&req.status==-ETIMEDOUT&&frees==savedfrees+1);
  read.job_id=req.job_id;assert(read_ioctl(&accel.drm,&read,&owner)==-EIO);
  again=(struct n1x_dla_accel_reexec){.job_id=req.job_id,.patches_ptr=(uintptr_t)&patch,.num_patches=1};
  assert(reexec_ioctl(&accel.drm,&again,&owner)==-EIO);
- assert(!info_ioctl(&accel.drm,&info,&owner)&&info.retained_jobs==2&&info.retained_bytes==24576);
+ postclose(&accel.drm,&owner);
+ assert(frees==savedfrees+1&&accel.count==1&&accel.retained==12288);
+ assert(!info_ioctl(&accel.drm,&info,&owner)&&info.retained_jobs==1&&info.retained_bytes==12288);
  assert(info.abi_version==2&&info.capabilities==31&&info.reserved==0);
  struct n1x_dla_accel_stats st={.job_id=1,.offset=0,.bytes=28736};
  privileged=false;assert(stats_ioctl(&accel.drm,&st,&owner)==-EPERM);privileged=true;
@@ -300,7 +303,7 @@ int main(int argc,char **argv)
  /* An uncertain stop must retain every job and block all future execution. */
  stop_error=-ETIMEDOUT;int before_stop=frees;
  assert(n1x_dla_accel_stop(&accel,stopped_hardware)==-ETIMEDOUT && stops==1);
- assert(accel.count==3 && accel.retained==65536 && frees==before_stop);
+ assert(accel.count==2 && accel.retained==53248 && frees==before_stop);
  reset_request();check(-ENODEV);
  again=(struct n1x_dla_accel_reexec){.job_id=read.job_id,.patches_ptr=(uintptr_t)&patch,.num_patches=1};
  assert(reexec_ioctl(&accel.drm,&again,&owner)==-ENODEV);
@@ -308,11 +311,11 @@ int main(int argc,char **argv)
   * The real bootstrap refuses retry after failure (separately fault-tested). */
  stop_error=0;u64 last=accel.last_id;
  assert(!n1x_dla_accel_stop(&accel,stopped_hardware) && stops==2);
- assert(!accel.count && !accel.retained && frees==before_stop+3 && accel.last_id==last);
+ assert(!accel.count && !accel.retained && frees==before_stop+2 && accel.last_id==last);
  assert(accel.jobs.next==&accel.jobs && accel.jobs.prev==&accel.jobs);
  assert(read_ioctl(&accel.drm,&read,&owner)==-ENOENT);
  postclose(&accel.drm,&owner);assert(!accel.lock.locked);
- assert(!n1x_dla_accel_stop(&accel,stopped_hardware) && frees==before_stop+3);
+ assert(!n1x_dla_accel_stop(&accel,stopped_hardware) && frees==before_stop+2);
  printf("%d exact accel EXEC cases plus READ/INFO/ownership/close checks passed; no hardware access\n",cases);
 }
 '''

@@ -145,7 +145,7 @@ static void reset(void)
  memset(&boot_ping,0,sizeof(boot_ping));memset(&boot_config,0,sizeof(boot_config));
  memset(&boot_region5,0,sizeof(boot_region5));memset(&boot_config_apply,0,sizeof(boot_config_apply));
  memset(&boot_lpwr,0,sizeof(boot_lpwr));memset(&boot_task,0,sizeof(boot_task));memset(&boot_relu,0,sizeof(boot_relu));
- boot_stopping=false;boot_hfrp_held=boot_upload_held=true;boot_attempted=true;boot_error=0;
+ boot_stopping=false;boot_hfrp_held=boot_upload_held=true;boot_unpinned=false;boot_attempted=true;boot_error=0;
  device.refs=2;sroot_device.refs=1;module_refs=2;accel.bytes=4096;
  dla_ep=(struct n1x_boot_endpoint){.dev=&device,.accel=&accel};
  sroot_ep=(struct n1x_boot_endpoint){.dev=&sroot_device,.sroot=true};
@@ -226,6 +226,8 @@ int main(void)
  boot_hfrp_held=boot_upload_held=false;module_refs=device.refs=sroot_device.refs=accel.bytes=0;
  assert(!n1x_boot_stop_device(&device) && !gates && !accesses && !stops && !dma_frees && !pm_puts);
  assert(boot_shutdown.released);
+ reset();boot_unpinned=true;module_refs=0;
+ assert(!n1x_boot_stop_device(&device) && stops==1 && dma_frees==7 && pm_puts==3 && !module_refs && !boot_unpinned);
  puts("shutdown: healthy/unused/HFRP-only release, raw-mask readback regression, failure cases, all sysfs writer gates, ownership and no double free passed; no hardware");
  return 0;
 }
