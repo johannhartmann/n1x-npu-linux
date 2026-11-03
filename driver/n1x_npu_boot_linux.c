@@ -323,7 +323,8 @@ static irqreturn_t n1x_boot_irq_handler(int irq, void *data)
 	u32 pending = 0, owned = 0, saved = 0;
 
 	(void)irq;
-	if (!endpoint || endpoint->sroot || !boot_hfrp.powered || boot_stopping)
+	if (!endpoint || endpoint->sroot ||
+		!READ_ONCE(boot_hfrp.powered) || READ_ONCE(boot_stopping))
 		return IRQ_NONE;
 	if (n1x_boot_read(endpoint, 8, &pending) ||
 		n1x_boot_read(endpoint, 0xd2c, &owned) ||
@@ -530,7 +531,7 @@ static int n1x_boot_prepare_hfrp_once(void)
 	err = n1x_hfrp_power_on(&io, &boot_hfrp.channel, &boot_hfrp.version,
 			boot_hfrp.gating.policy_bytes[2], 5001, 1000, &boot_hfrp.exchange);
 	if (!err) {
-		boot_hfrp.powered = true;
+		WRITE_ONCE(boot_hfrp.powered, true);
 		boot_hfrp.phase = 5;
 	}
 done:
@@ -1545,7 +1546,7 @@ static int n1x_boot_stop_hardware(struct device *dev)
 		err = boot_shutdown.error;
 		goto out;
 	}
-	boot_stopping = true;
+	WRITE_ONCE(boot_stopping, true);
 	boot_shutdown.attempted = true;
 	boot_shutdown.stage = "preflight";
 	if (!boot_hfrp.attempted && !boot_attempted) {
@@ -1615,7 +1616,7 @@ static int n1x_boot_stop_hardware(struct device *dev)
 		goto done;
 	}
 	boot_shutdown.hardware_off = true;
-	boot_hfrp.powered = false;
+	WRITE_ONCE(boot_hfrp.powered, false);
 	boot_shutdown.stage = "dma-release";
 	/* SROOT's successful synchronous upload transaction was already consumed
 	 * and firmware ran from its internal copy. Its failed/uncertain path is
@@ -1837,7 +1838,7 @@ static umode_t boot_attr_is_visible(struct kobject *kobj, struct attribute *attr
 	(void)n;
 	if (!endpoint || endpoint->sroot)
 		return 0;
-	if (!debug_sysfs && autostart)
+	if (!debug_sysfs && autostart && attr != &dev_attr_status.attr)
 		return 0;
 	return attr->mode;
 }
@@ -2162,7 +2163,7 @@ static void n1x_boot_reset_state(void)
 	memset(&boot_result, 0, sizeof(boot_result));
 	boot_error = 0;
 	boot_attempted = false;
-	boot_stopping = false;
+	WRITE_ONCE(boot_stopping, false);
 	boot_hfrp_held = false;
 	boot_upload_held = false;
 	boot_unpinned = false;
