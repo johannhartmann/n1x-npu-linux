@@ -56,6 +56,8 @@ def anchors(text):
 
 def link_error(document, target):
     parsed = urlsplit(target)
+    if parsed.scheme == 'file':
+        return f'non-portable file:// link {target}'
     if parsed.scheme or parsed.netloc:
         return None
     destination = document.parent/unquote(parsed.path) if parsed.path else document

@@ -89,19 +89,19 @@ research tools, not a generic distribution/kernel installer.
 · [ONNX EP & compiler measurements](docs/evidence/n1x-ort-hardware-2026-11-01.json)
 · [Current limits](docs/status.md)
 
-This is an experimental driver. The packaged `n1x-npu.service` can perform the
-already qualified startup at boot, but only on the exact kernel, board, BIOS,
-firmware hashes and isolated IOMMU topology listed above. It stops at the first
-failed phase and never retries or unloads uncertain state. The transport requires
-`CAP_SYS_RAWIO` and trusted models; metadata checks do not sandbox embedded
-instructions. Healthy shutdown releases retained DMA. Uncertain firmware/DMA
-failures preserve allocations and lifetime references until reboot.
-Ordinary broker exit is not that shutdown boundary: successful allocations are
-reused within a session and remain retained afterward. A new session is
-preflighted against the remaining budget and fails before submission if the
-complete selected model set cannot fit.
-Automatic suspend/resume, failed-channel recovery, arbitrary TensorRT engine
-deserialization, asynchronous scheduling and CUDA Graphs are unsupported.
+This is an experimental driver. By default (`autostart=1`, `strict_platform=0`,
+`require_rawio=0`, `enable_irq=true`, `enable_preempt=true`, `debug_sysfs=0`),
+`n1x_npu_bootstrap` binds both ACPI endpoints (`NVDA200A` and `NVDA8600`) via
+`<linux/component.h>`, executes the 8-stage firmware bring-up automatically in C
+once both endpoints are bound, exposes `/dev/accel/accel0` (`0660 root:render`,
+`TAG+="uaccess"` via [`99-n1x-npu.rules`](packaging/udev/99-n1x-npu.rules)),
+supports zero-copy read-only `mmap()` of completed job buffers (`N1X_DLA_CAP_MMAP`),
+reclaims completed job DMA allocations per file descriptor on `postclose()`,
+and supports system `.suspend` / `.resume` power transitions. Uncertain firmware
+or DMA failures remain fail-closed (`accel->stop_failed`), preserving allocations
+and lifetime references until confirmed hardware shutdown or reboot.
+Failed-channel recovery, arbitrary TensorRT engine deserialization, asynchronous
+scheduling and CUDA Graphs remain unsupported.
 
 ## Get started
 

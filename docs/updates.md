@@ -1,8 +1,11 @@
 # Omarchy and kernel updates
 
-The NPU bootstrap has been physically qualified only on ASUS ProArt P16
-H7607BA.300 with `7.2.8-23-rtx-spark-npu`. Its code enforces this
-board, BIOS and kernel release. The separately named kernel package remains
+The NPU bootstrap has been physically qualified on ASUS ProArt P16
+H7607BA.300 with `7.2.8-23-rtx-spark-npu`. By default (`strict_platform=0`),
+the driver dynamically discovers the ACPI endpoints and live VBIOS policy
+carveout (`strict_platform=1` remains available to pin the exact P16 DMI board
+and BIOS strings), while standard kernel module `vermagic` ties the compiled
+`.ko` to its target kernel release. The separately named kernel package remains
 installed alongside normal `linux-omarchy`; ordinary Omarchy package updates
 do not turn a new stock kernel into an NPU kernel.
 
@@ -35,12 +38,13 @@ manual startup, inference and checked shutdown/reload qualification in
 sudo systemctl enable n1x-npu.service
 ```
 
-The unit is ignored on every kernel except `7.2.8-23-rtx-spark-npu`. On the
-qualified kernel it verifies the P16/BIOS identity and firmware hashes, selects
-only the two audited isolated DMA domains, loads the module with immutable
-options and executes the verified sequence through `bypass_task`. It has no
-retry or force-unload path. A failure remains pinned for inspection until
-reboot, just like the manual qualifier.
+When enabled on a system with `NVDA200A:00` and `NVDA8600:00`, the unit ensures
+both isolated IOMMU groups are switched from `identity` to `DMA` and loads
+`n1x_npu_bootstrap` (`autostart=1`), which executes the verified 8-stage bring-up
+sequence in C on component bind and performs confirmed hardware shutdown on
+`systemctl stop` / `modprobe -r`. It has no retry or force-unload path. A
+failure remains pinned for inspection until reboot, just like the manual
+qualifier.
 
 Set the hook's `repo=` variable in `config/omarchy-npu-post-update` to the
 quoted absolute path of your checkout. Then install the user-level hook once:
