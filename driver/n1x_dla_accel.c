@@ -21,6 +21,10 @@
 #include "n1x_dla_task.h"
 #include "uapi/n1x_dla_accel.h"
 
+static bool require_rawio;
+module_param(require_rawio, bool, 0400);
+MODULE_PARM_DESC(require_rawio, "Require CAP_SYS_RAWIO for /dev/accel/accel* open and ioctls (default false; use udev/VFS permissions)");
+
 #define N1X_JOB_PREFIX 8192U
 #define N1X_JOB_FENCE 256U
 #define N1X_JOB_PREEMPT_FENCE 260U
@@ -53,6 +57,10 @@ static struct n1x_dla_accel *to_accel(struct drm_device *drm)
 {
     return container_of(drm, struct n1x_dla_accel, drm);
 }
+static bool n1x_accel_permitted(void)
+{
+    return !require_rawio || capable(CAP_SYS_RAWIO);
+}
 static int publish(void *context, u32 value)
 {
     struct n1x_accel_job *job = context;
@@ -79,7 +87,7 @@ static int info_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
     u32 caps = N1X_DLA_CAP_RAWIO_REQUIRED | N1X_DLA_CAP_RETAIN_UNTIL_REBOOT |
                N1X_DLA_CAP_REEXEC_IO | N1X_DLA_CAP_CONTROLLED_STOP |
                N1X_DLA_CAP_STATISTICS;
-    if (!capable(CAP_SYS_RAWIO))
+    if (!n1x_accel_permitted())
         return -EPERM;
     mutex_lock(&accel->lock);
     if (accel->control)
@@ -107,7 +115,7 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
     unsigned int i;
     int err;
 
-    if (!capable(CAP_SYS_RAWIO))
+    if (!n1x_accel_permitted())
         return -EPERM;
     if ((req->flags & ~N1X_DLA_EXEC_RESUMABLE) || req->job_id || req->status || req->completed ||
         !req->image_ptr || !req->ranges_ptr || !req->writable_ranges_ptr || !req->image_bytes ||
@@ -271,7 +279,7 @@ static int read_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
     const struct n1x_dla_accel_read *req = data;
     struct n1x_accel_job *job;
     int err = -ENOENT;
-    if (!capable(CAP_SYS_RAWIO))
+    if (!n1x_accel_permitted())
         return -EPERM;
     if (req->reserved || !req->job_id || !req->data_ptr || !req->bytes)
         return -EINVAL;
@@ -308,7 +316,7 @@ static int reexec_ioctl(struct drm_device *drm, void *data, struct drm_file *fil
     size_t total = 0;
     unsigned int i, j;
     int err = -ENOENT;
-    if (!capable(CAP_SYS_RAWIO))
+    if (!n1x_accel_permitted())
         return -EPERM;
     if (!req->job_id || !req->patches_ptr || !req->num_patches || req->num_patches > 64 ||
         req->reserved || req->new_job_id || req->status || req->completed)
@@ -430,7 +438,7 @@ static int stats_ioctl(struct drm_device *drm, void *data, struct drm_file *file
     struct n1x_dla_statistics parsed;
     struct n1x_accel_job *job;
     int err = -ENOENT;
-    if (!capable(CAP_SYS_RAWIO))
+    if (!n1x_accel_permitted())
         return -EPERM;
     if (!req->job_id || !req->bytes || req->count || req->metadata_offset ||
         req->metadata_stride || req->data_offset || req->data_stride || req->reserved)
@@ -482,7 +490,7 @@ static int control_ioctl(struct drm_device *drm, void *data, struct drm_file *fi
     struct n1x_accel_job *job = NULL, *candidate;
     u32 seq;
     int err = -ENOENT;
-    if (!capable(CAP_SYS_RAWIO))
+    if (!n1x_accel_permitted())
         return -EPERM;
     if (!req->job_id || req->action < N1X_DLA_CONTROL_START ||
         req->action > N1X_DLA_CONTROL_RESUME || req->reserved || req->status ||
@@ -584,10 +592,20 @@ void n1x_dla_accel_set_control(struct n1x_dla_accel *accel,
 static void postclose(struct drm_device *drm, struct drm_file *file)
 {
     struct n1x_dla_accel *accel = to_accel(drm);
-    struct n1x_accel_job *job;
+    struct n1x_accel_job *job, *next;
     mutex_lock(&accel->lock);
-    list_for_each_entry(job, &accel->jobs, link)
+    list_for_each_entry_safe(job, next, &accel->jobs, link)
         if (job->owner == file) {
+            if (job->task.verified && !job->task.error && !job->task.suspended) {
+                list_del(&job->link);
+                dma_free_coherent(drm->dev, job->allocated,
+                                  job->task.buffer, job->task.dma);
+                accel->retained -= job->allocated;
+                accel->count--;
+                kfree(job->writable);
+                kfree(job);
+                continue;
+            }
             if (job->task.resumable && !job->task.verified &&
                 (!job->task.error || job->task.error == -EINPROGRESS) &&
                 accel->control && accel->control->fail)
@@ -627,7 +645,7 @@ int n1x_dla_accel_stop(struct n1x_dla_accel *accel, int (*stop)(struct device *)
 /* No GEM mmap: all device-visible bytes are immutable after EXEC's snapshot. */
 static int n1x_accel_open(struct inode *inode, struct file *file)
 {
-    if (!capable(CAP_SYS_RAWIO))
+    if (require_rawio && !capable(CAP_SYS_RAWIO))
         return -EPERM;
     return accel_open(inode, file);
 }

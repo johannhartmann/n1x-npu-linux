@@ -24,7 +24,7 @@ def main():
 #define WARN_ON_ONCE(x) (x)
 #define DRM_SWITCH_POWER_ON 1
 #define DRM_SWITCH_POWER_DYNAMIC_OFF 2
-static bool privileged=true;
+static bool privileged=true,require_rawio=true;
 static bool capable(int cap){assert(cap==CAP_SYS_RAWIO);return privileged;}
 struct inode;struct file;
 static int accel_open(struct inode *inode,struct file *file){(void)inode;(void)file;return 0;}
@@ -46,7 +46,8 @@ int main(void) {
  struct drm_device dev={DRM_SWITCH_POWER_ON};struct drm_minor minor={&dev};
  struct file file={O_RDWR,&accel_fops};
  struct inode inode={0};
- privileged=false;assert(accel_fops.open(&inode,&file)==-EPERM);
+ privileged=false;require_rawio=false;assert(accel_fops.open(&inode,&file)==0);
+ require_rawio=true;assert(accel_fops.open(&inode,&file)==-EPERM);
  privileged=true;assert(accel_fops.open(&inode,&file)==0);
  assert(drm_open_helper(&file,&minor)==0);
  struct file_operations broken=accel_fops;broken.fop_flags&=~FOP_UNSIGNED_OFFSET;file.f_op=&broken;

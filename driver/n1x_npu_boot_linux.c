@@ -135,7 +135,7 @@ static void *boot_buffer;
 static dma_addr_t boot_dma;
 static int boot_error;
 static bool boot_attempted;
-static bool boot_stopping, boot_hfrp_held, boot_upload_held;
+static bool boot_stopping, boot_hfrp_held, boot_upload_held, boot_unpinned;
 static struct {
 	struct n1x_hfrp_stop_result transport;
 	const char *stage;
@@ -1654,13 +1654,16 @@ static int n1x_boot_stop_device(struct device *dev)
 			pm_runtime_put_noidle(boot_sroot->dev);
 			pm_runtime_put_noidle(boot_dla->dev);
 			boot_upload_held = false;
-			module_put(THIS_MODULE);
+			if (!boot_unpinned)
+				module_put(THIS_MODULE);
 		}
 		if (boot_hfrp_held) {
 			pm_runtime_put_noidle(boot_dla->dev);
 			boot_hfrp_held = false;
-			module_put(THIS_MODULE);
+			if (!boot_unpinned)
+				module_put(THIS_MODULE);
 		}
+		boot_unpinned = false;
 	}
 	mutex_unlock(&boot_lock);
 	return 0;
@@ -2007,7 +2010,7 @@ static int n1x_boot_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct acpi_device *adev = ACPI_COMPANION(dev);
-	struct n1x_boot_endpoint *endpoint;
+	struct n1x_boot_endpoint *endpoint, *dla_for_accel = NULL;
 	struct resource *first, *second;
 	struct resource registers = {.flags = IORESOURCE_MEM};
 	unsigned long long revision;
@@ -2086,32 +2089,52 @@ static int n1x_boot_probe(struct platform_device *pdev)
 			boot_irq_registered = opt_enable_irq;
 		}
 		platform_set_drvdata(pdev, endpoint);
-		if (autostart && boot_dla && boot_sroot && !boot_hfrp.attempted) {
-			int start_err = n1x_boot_start_once();
+		if (boot_dla && boot_sroot) {
+			int start_err = 0;
 
-			if (start_err)
-				dev_err(boot_dla->dev,
-					"automatic startup failed (%d); device remains fail-closed\n",
-					start_err);
-			else
-				dev_info(boot_dla->dev,
-					 "N1X NPU initialized in-kernel (HFRP v%u.%u, %u kHz)\n",
-					 boot_hfrp.version.major, boot_hfrp.version.minor,
-					 boot_hfrp.policy.frequency_khz);
+			if (autostart && !boot_hfrp.attempted) {
+				start_err = n1x_boot_start_once();
+				if (start_err) {
+					dev_err(boot_dla->dev,
+						"automatic startup failed (%d); device remains fail-closed\n",
+						start_err);
+				} else {
+					if (boot_upload_held)
+						module_put(THIS_MODULE);
+					if (boot_hfrp_held)
+						module_put(THIS_MODULE);
+					boot_unpinned = true;
+					dev_info(boot_dla->dev,
+						 "N1X NPU initialized in-kernel (HFRP v%u.%u, %u kHz)\n",
+						 boot_hfrp.version.major, boot_hfrp.version.minor,
+						 boot_hfrp.policy.frequency_khz);
+				}
+			}
+			if (!start_err && enable_accel && !boot_dla->accel)
+				dla_for_accel = boot_dla;
 		}
 	}
 	mutex_unlock(&boot_lock);
-	if (!err && !sroot && enable_accel) {
-		endpoint->accel = n1x_dla_accel_register(dev, n1x_boot_accel_submit);
-		if (IS_ERR(endpoint->accel)) {
-			err = PTR_ERR(endpoint->accel);
-			endpoint->accel = NULL;
+	if (!err && dla_for_accel) {
+		struct n1x_dla_accel *accel;
+
+		accel = n1x_dla_accel_register(dla_for_accel->dev, n1x_boot_accel_submit);
+		if (IS_ERR(accel)) {
+			err = PTR_ERR(accel);
 			mutex_lock(&boot_lock);
-			boot_dla = NULL;
-			boot_irq_registered = false;
+			if (sroot) {
+				boot_sroot = NULL;
+			} else {
+				boot_dla = NULL;
+				boot_irq_registered = false;
+			}
 			mutex_unlock(&boot_lock);
-		} else if (enable_preempt) {
-			n1x_dla_accel_set_control(endpoint->accel, &n1x_boot_control_ops);
+		} else {
+			if (enable_preempt)
+				n1x_dla_accel_set_control(accel, &n1x_boot_control_ops);
+			mutex_lock(&boot_lock);
+			dla_for_accel->accel = accel;
+			mutex_unlock(&boot_lock);
 		}
 	}
 	return err;
@@ -2120,8 +2143,34 @@ static int n1x_boot_probe(struct platform_device *pdev)
 static void n1x_boot_remove(struct platform_device *pdev)
 {
 	struct n1x_boot_endpoint *endpoint = platform_get_drvdata(pdev);
-	if (endpoint && endpoint->accel)
-		n1x_dla_accel_unregister(endpoint->accel);
+	struct n1x_dla_accel *accel = NULL;
+	struct device *dla_dev = NULL;
+
+	mutex_lock(&boot_lock);
+	if (boot_dla && boot_sroot &&
+	    (boot_hfrp.attempted || boot_attempted) &&
+	    !boot_shutdown.attempted)
+		dla_dev = boot_dla->dev;
+	mutex_unlock(&boot_lock);
+	if (dla_dev) {
+		int err = n1x_boot_stop_device(dla_dev);
+
+		if (err)
+			dev_err(dla_dev,
+				"remove shutdown failed (%d); retaining DMA, no forced reset\n",
+				err);
+	}
+	mutex_lock(&boot_lock);
+	if (boot_dla && boot_dla->accel) {
+		accel = boot_dla->accel;
+		boot_dla->accel = NULL;
+	} else if (endpoint && endpoint->accel) {
+		accel = endpoint->accel;
+		endpoint->accel = NULL;
+	}
+	mutex_unlock(&boot_lock);
+	if (accel)
+		n1x_dla_accel_unregister(accel);
 	mutex_lock(&boot_lock);
 	if (boot_sroot && boot_sroot->dev == &pdev->dev)
 		boot_sroot = NULL;
