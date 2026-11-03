@@ -70,10 +70,14 @@ def main():
     parser.add_argument('--output-dir', type=Path, required=True, help='new evidence directory')
     parser.add_argument('--cycles', type=int, choices=range(1, 4), default=2)
     args = parser.parse_args()
-    if os.geteuid() or platform.release() != KERNEL:
-        parser.error('requires root and the qualified NPU kernel')
+    running_kernel = platform.release()
+    if os.geteuid():
+        parser.error('requires root')
     profile = Path('/sys/firmware/acpi/platform_profile').read_text().strip()
     module = ROOT/'driver/n1x_npu_bootstrap.ko'
+    vermagic = subprocess.check_output(['modinfo', '-F', 'vermagic', str(module)], text=True)
+    if vermagic.split()[0] != running_kernel:
+        parser.error('module vermagic does not match the running kernel')
     version = subprocess.check_output(['modinfo', '-F', 'srcversion', str(module)], text=True).strip()
     if MODULE.exists() and ((MODULE/'srcversion').read_text().strip() != version or
                             not (ENDPOINT/'shutdown').exists()):

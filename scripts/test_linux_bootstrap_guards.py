@@ -94,6 +94,7 @@ int main(void)
  ep=reset(root);spec.num_ids=0;check(&ep,-EOPNOTSUPP);
  ep=reset(root);spec.num_ids=2;check(&ep,-EOPNOTSUPP);
  ep=reset(root);spec.ids[0]^=1;check(&ep,-EOPNOTSUPP);
+ strict_platform=false;check(&ep,0);strict_platform=true;
  ep=reset(root);group_present=false;check(&ep,-EOPNOTSUPP);
  ep=reset(root);shared=true;check(&ep,-EINVAL);
  }

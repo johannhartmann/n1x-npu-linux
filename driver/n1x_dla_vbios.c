@@ -231,7 +231,7 @@ int n1x_dla_verify_vbios_pcir(const __u8 *data, size_t size,
     pcir = data + location->rom_base + pcir_offset;
     if (get32(pcir) != 0x52494350U)
         return -EBADMSG;
-    if (get16(pcir + 4) != 0x10deU || get16(pcir + 6) != 0x2e03U)
+    if (get16(pcir + 4) != 0x10deU || !get16(pcir + 6))
         return -EOPNOTSUPP;
     return 0;
 }

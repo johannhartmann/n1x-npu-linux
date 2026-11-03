@@ -93,9 +93,9 @@ static bool enable_accel;
 module_param(enable_accel, bool, 0400);
 MODULE_PARM_DESC(enable_accel, "Register experimental RAWIO-only accel API; explicit startup still required (default false)");
 
-static bool strict_platform = true;
+static bool strict_platform;
 module_param(strict_platform, bool, 0400);
-MODULE_PARM_DESC(strict_platform, "Require exact P16 BIOS-300 DMI/kernel/ROM-hash pins (default true; false uses capability/PCIR/HFRP-v1.5+ checks)");
+MODULE_PARM_DESC(strict_platform, "Require exact P16 BIOS-300 DMI/kernel/ROM-hash pins (default false; dynamically discovers VBIOS policy, ACPI _CRS, and IORT SMMU)");
 
 static bool opt_enable_irq;
 module_param_named(enable_irq, opt_enable_irq, bool, 0400);
@@ -225,7 +225,9 @@ static int n1x_boot_dma_gate(struct n1x_boot_endpoint *endpoint)
 	    adev->flags.coherent_dma != !endpoint->sroot ||
 	    dev_is_dma_coherent(dev) != !endpoint->sroot ||
 	    !domain || !iommu_is_dma_domain(domain) || !use_dma_iommu(dev) ||
-	    !spec || spec->num_ids != 1 || spec->ids[0] != (endpoint->sroot ? 1 : 0x2b))
+	    !spec || (strict_platform ?
+		      (spec->num_ids != 1 || spec->ids[0] != (endpoint->sroot ? 1 : 0x2b)) :
+		      spec->num_ids < 1))
 		return -EOPNOTSUPP;
 	group = iommu_group_get(dev);
 	if (!group)
@@ -460,12 +462,21 @@ static int n1x_boot_prepare_hfrp_once(void)
 		err = n1x_boot_dma_gate(boot_sroot);
 	if (err)
 		return err;
-	err = request_firmware_direct(&firmware, N1X_BOARD_FIRMWARE, boot_dla->dev);
-	if (!err) {
-		err = n1x_boot_board_policy(firmware);
-		release_firmware(firmware);
-	} else if (!strict_platform) {
+	if (!strict_platform) {
 		err = n1x_boot_live_board_policy();
+		if (err) {
+			err = request_firmware_direct(&firmware, N1X_BOARD_FIRMWARE, boot_dla->dev);
+			if (!err) {
+				err = n1x_boot_board_policy(firmware);
+				release_firmware(firmware);
+			}
+		}
+	} else {
+		err = request_firmware_direct(&firmware, N1X_BOARD_FIRMWARE, boot_dla->dev);
+		if (!err) {
+			err = n1x_boot_board_policy(firmware);
+			release_firmware(firmware);
+		}
 	}
 	if (err)
 		return err;
@@ -2009,11 +2020,14 @@ static int n1x_boot_probe(struct platform_device *pdev)
 		return -ENODEV;
 	first = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	second = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-	if (!first || !second || platform_get_resource(pdev, IORESOURCE_MEM, 2) ||
-	    first->start != (sroot ? 0x18010000 : 0x19000000) ||
-	    resource_size(first) != (sroot ? 0x1000 : 0x40000) ||
-	    second->start != (sroot ? 0x18010000 : 0x31380000) ||
-	    resource_size(second) != (sroot ? 0x10 : 0x10000))
+	if (!first || !second ||
+	    resource_size(first) < (sroot ? 12 * 16 + 4 : 0x40000) ||
+	    resource_size(second) < (sroot ? 0x10 : 0x200) ||
+	    (strict_platform && (platform_get_resource(pdev, IORESOURCE_MEM, 2) ||
+	     first->start != (sroot ? 0x18010000 : 0x19000000) ||
+	     resource_size(first) != (sroot ? 0x1000 : 0x40000) ||
+	     second->start != (sroot ? 0x18010000 : 0x31380000) ||
+	     resource_size(second) != (sroot ? 0x10 : 0x10000))))
 		return -ENODEV;
 	endpoint = devm_kzalloc(dev, sizeof(*endpoint), GFP_KERNEL);
 	if (!endpoint)
