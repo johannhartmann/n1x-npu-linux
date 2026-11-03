@@ -10,7 +10,6 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/string.h>
-#include <linux/utsname.h>
 
 static unsigned long cpu_pages[10];
 module_param_array(cpu_pages, ulong, NULL, 0400);
@@ -33,8 +32,7 @@ static int __init n1x_gpu_iova_init(void)
 
 	if (!dmi_match(DMI_SYS_VENDOR, "ASUS") ||
 		!dmi_match(DMI_PRODUCT_NAME, "ProArt P16 H7607BA") ||
-		!dmi_match(DMI_BIOS_VERSION, "H7607BA.300") ||
-		strcmp(utsname()->release, "7.2.8-23-rtx-spark-npu"))
+		!dmi_match(DMI_BIOS_VERSION, "H7607BA.300"))
 		return -ENODEV;
 	pdev = pci_get_domain_bus_and_slot(0x000f, 1, PCI_DEVFN(0, 0));
 	if (!pdev)

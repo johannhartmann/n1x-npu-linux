@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef N1X_COMPILER_H
 #define N1X_COMPILER_H
 

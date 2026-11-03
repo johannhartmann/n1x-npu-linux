@@ -69,16 +69,11 @@ static struct n1x_boot_endpoint reset(bool root)
 static void check(struct n1x_boot_endpoint *ep,int expected)
 {assert(n1x_boot_dma_gate(ep)==expected);assert(group_gets==group_puts);cases++;}
 int main(void)
-{strcpy(init_uts_ns.name.release,N1X_BOOT_KERNEL);
- dmi_values[0]="ASUS";dmi_values[1]="ProArt P16 H7607BA";dmi_values[2]="H7607BA.300";
- assert(n1x_boot_machine());strcpy(init_uts_ns.name.release,"7.2.8-23-omarchy-p16-asus");
- assert(!n1x_boot_machine());strcpy(init_uts_ns.name.release,N1X_BOOT_KERNEL);
+{dmi_values[0]="ASUS";dmi_values[1]="ProArt P16 H7607BA";dmi_values[2]="H7607BA.300";
+ assert(n1x_boot_machine());
  for(int i=0;i<3;i++){const char *saved=dmi_values[i];dmi_values[i]="other";
  assert(!n1x_boot_machine());strict_platform=false;assert(n1x_boot_machine());
  strict_platform=true;dmi_values[i]=saved;}
- strcpy(init_uts_ns.name.release,"7.2.8-generic-arm64");
- strict_platform=false;assert(n1x_boot_machine());
- strict_platform=true;strcpy(init_uts_ns.name.release,N1X_BOOT_KERNEL);
  for(int root=0;root<2;root++){
  struct n1x_boot_endpoint ep=reset(root);check(&ep,0);
  ep=reset(root);domain.type=11;check(&ep,0);
