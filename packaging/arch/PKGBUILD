@@ -65,4 +65,6 @@ package() {
     "${pkgdir}/usr/include/n1x_ort.h"
   install -Dm644 "${srcdir}/npu-source/include/uapi/n1x_dla_accel.h" \
     "${pkgdir}/usr/include/uapi/n1x_dla_accel.h"
+  install -Dm644 "${srcdir}/npu-source/runtime/"{n1x_dla.py,n1x_compiler.py,n1x_ort.py,loadable.py} \
+    -t "${pkgdir}/usr/lib/n1x-npu/python"
 }

@@ -6,7 +6,7 @@ Defines the public userspace-to-kernel UAPI contracts (`/dev/accel/accel0`), the
 
 ## Key Concepts
 
-- **Kernel UAPI (`uapi/n1x_dla_accel.h`)**: Fixed-width `ioctl` payload structures (`n1x_dla_accel_info`, `n1x_dla_accel_exec`, `n1x_dla_accel_reexec`, `n1x_dla_accel_read`, `n1x_dla_accel_stats`, `n1x_dla_accel_control`) and capability bitmasks (`N1X_DLA_CAP_REEXEC_IO`, `N1X_DLA_CAP_CONTROLLED_STOP`, `N1X_DLA_CAP_PREEMPT`).
+- **Kernel UAPI (`uapi/n1x_dla_accel.h`)**: Fixed-width `ioctl` payload structures (`n1x_dla_accel_info`, `n1x_dla_accel_exec`, `n1x_dla_accel_reexec`, `n1x_dla_accel_read`, `n1x_dla_accel_stats`, `n1x_dla_accel_control`), capability bitmasks (`N1X_DLA_CAP_REEXEC_IO`, `N1X_DLA_CAP_CONTROLLED_STOP`, `N1X_DLA_CAP_STATISTICS`, `N1X_DLA_CAP_PREEMPT`, `N1X_DLA_CAP_MMAP`), and zero-copy read-only `mmap()` offset encoding (`job_id << PAGE_SHIFT`).
 - **Native Compiler C ABI (`n1x_compiler.h`)**: Declares the NVIDIA `libnvdla_compiler.so` (`t254`) C/C++ vtable interfaces (`INvDlaCompiler`, `INvDlaNetwork`, `NvDlaTensor`, `Weights`, `QuantizationParams`) and the JSON DAG compilation entrypoint (`n1x_compile_json_graph`).
 - **Heterogeneous ONNX EP C ABI (`n1x_ort.h`)**: Declares the opaque `N1xOrtModule` handle, `N1xOrtTensorDesc` surface descriptor, vectorized `FP32` $\leftrightarrow$ `CHW16`/`CHW32` (`FP16`/`INT8`) surface packers (`n1x_ort_pack_fp32`, `n1x_ort_unpack_fp32`), and retained-job execution (`n1x_ort_module_run_fp32`).
 - **Driver & HFRP Protocol Headers (`n1x_*.h`)**: Internal kernel structures for Host-to-Firmware Request Protocol (`n1x_hfrp.h`), `SROOT` noncoherent DMA domains (`n1x_sroot.h`), VBIOS frequency/clock tables (`n1x_dla_vbios.h`), and DLA command/ring/task state machines.

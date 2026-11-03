@@ -43,7 +43,8 @@ def main():
         for target in ('#intro', '#gr%C3%B6%C3%9Fe-und-fu%C3%9F', '#explicit-target',
                        'space%20name.md#example', 'image.png', 'https://example.org/#remote'):
             assert link_error(document, target) is None, target
-        for target in ('missing.md', '#not-a-heading', 'space%20name.md#missing'):
+        for target in ('missing.md', '#not-a-heading', 'space%20name.md#missing',
+                       'file:///tmp/local.md'):
             assert link_error(document, target), target
     print('Documentation links, Unicode/duplicate anchors and fenced-example checks passed; no network or hardware')
 

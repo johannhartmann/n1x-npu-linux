@@ -1,8 +1,8 @@
 # N1X NPU Kernel Driver & `/dev/accel` UAPI Expansion (IRQ, Statistics, Preemption)
 
 *   **Author:** johann
-*   **Status:** Draft
-*   **Date:** 2026-11-01
+*   **Status:** Implemented
+*   **Date:** 2026-11-01 (updated 2026-11-03)
 
 --------------------------------------------------------------------------------
 

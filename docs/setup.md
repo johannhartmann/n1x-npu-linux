@@ -19,9 +19,9 @@ installer or signed kernel package. The exact reference kernel and quirk are
 documented in [Linux backend](research/linux-backend.md). Earlier kernel-build and
 FRTS/UKI experiments are indexed as historical workflows in [the tool index](../scripts/README.md).
 
-Preserve the known-working boot entry when preparing a test kernel. A different
-kernel release is rejected by the bootstrap; removing that guard does not
-establish compatibility. No command below changes a bootloader entry.
+Preserve the known-working boot entry when preparing a test kernel. Standard
+kernel module `vermagic` checks apply when loading `n1x_npu_bootstrap.ko`.
+No command below changes a bootloader entry.
 
 Tool dependencies on an Arch/Omarchy ARM64 host are a C/C++ toolchain, make,
 binutils, Python, `uv`, bubblewrap, GDB, OpenSSL development headers, libdrm
@@ -238,10 +238,12 @@ has completed successfully. Install the source-pinned Arch package described in
 sudo systemctl enable n1x-npu.service
 ```
 
-On the next boot of `7.2.8-23-rtx-spark-npu`, the service performs the same
-checked sequence through `bypass_task` and leaves `/dev/accel/accel0` ready for
-the root-owned broker. It does not run on a stock or merely similar kernel. It
-does not change the power profile, retry a rejected operation or unload a
+On the next boot of `7.2.8-23-rtx-spark-npu`, [`99-n1x-npu.rules`](../packaging/udev/99-n1x-npu.rules)
+and [`n1x-npu.service`](../packaging/systemd/n1x-npu.service) switch the isolated
+`NVDA200A:00` and `NVDA8600:00` IOMMU groups from `identity` to `DMA`, load
+`n1x_npu_bootstrap` (which executes the 8-stage bring-up in C via `autostart=1`),
+and expose `/dev/accel/accel0` (`0660 root:render`, `TAG+="uaccess"`). It does
+not change the power profile, retry a rejected operation or unload a
 partially initialized module. Check it after reboot with:
 
 ```sh

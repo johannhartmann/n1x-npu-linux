@@ -1,6 +1,6 @@
 # Current support and qualification status
 
-Updated 2026-11-01. This is the current summary; dated research documents retain
+Updated 2026-11-03. This is the current summary; dated research documents retain
 their earlier observations and failed experiments. Source-code implementation,
 offline tests and physical execution are separate evidence levels.
 
@@ -14,7 +14,10 @@ offline tests and physical execution are separate evidence levels.
 - Pinned Windows ARM64 driver 617.42 and TensorRT 11.4 compiler inputs.
 
 Exact hashes and acquisition are in [setup](setup.md) and the qualification receipts.
-The driver rejects other board/BIOS/kernel combinations. There is no claim of
+By default (`strict_platform=0`), the driver dynamically discovers the `NVDA200A`
+and `NVDA8600` ACPI endpoints, `_CRS` MMIO apertures, IORT SMMUv3 mappings, and
+live VBIOS policy carveout (`0x1182bc80`); `strict_platform=1` remains available
+to enforce the exact P16 DMI board and BIOS strings. There is no claim of
 universal N1X support or official NVIDIA Linux DLA support for this laptop.
 
 ## Physical results
@@ -130,9 +133,15 @@ The repository now includes:
 
 ## Remaining limits
 
-Uncertain DMA/firmware errors remain fail-closed and require reboot. Automatic
-recovery, suspend/resume, asynchronous scheduling, CUDA Graphs, zero-copy and
-arbitrary TensorRT engine deserialization are unsupported. Non-DLA ONNX operators
+By default (`autostart=1`, `enable_irq=true`, `enable_preempt=true`), the driver
+binds via `<linux/component.h>`, brings up firmware in C on probe, supports
+system `.suspend` / `.resume` power transitions, exposes zero-copy read-only
+`mmap()` of completed job buffers (`N1X_DLA_CAP_MMAP`), and automatically frees
+completed jobs owned by a file descriptor on `postclose()` (and `vm_close()` when
+mapped). Uncertain DMA/firmware errors remain fail-closed (`accel->stop_failed`)
+and require reboot. Automatic failed-channel recovery, asynchronous multi-queue
+scheduling, CUDA Graphs, `DMA-BUF` / `NvSci` import and arbitrary TensorRT engine
+deserialization are unsupported. Non-DLA ONNX operators
 (`DepthToSpace`, `ReduceMean`, `Resize`, `Softmax`, dynamic `Reshape`/`Transpose`)
 execute on the host CPU via `N1xInferenceSession`'s heterogeneous partitioner.
 The two successful healthy reload cycles do not validate fault recovery paths.

@@ -2,23 +2,23 @@
 
 ## Overview
 
-This document specifies a C/C++-backed heterogeneous ONNX execution engine, graph partitioner, and `onnxruntime`-compatible execution provider (`libn1x_ort.so`, [`include/n1x_ort.h`](file:///home/johann/p16/n1x-lab/npu/include/n1x_ort.h), and [`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py)) for the N1X NPU (`t254` Hummingbird). The engine accepts standard `.onnx` models, fuses multi-node ONNX patterns into canonical hardware layers, partitions arbitrary graphs into maximal NPU (`DLA`) subgraphs and host/GPU fallback subgraphs, compiles NPU subgraphs to `.nvda` loadables via [`libn1x_compiler.so`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_compile.cpp), and executes the mixed schedule across `/dev/accel/accel0` and CPU/CUDA with automatic surface format conversion (`NCHW` FP32 $\leftrightarrow$ `CHW32`/`CHW16` FP16/INT8) at partition boundaries.
+This document specifies a C/C++-backed heterogeneous ONNX execution engine, graph partitioner, and `onnxruntime`-compatible execution provider (`libn1x_ort.so`, [`include/n1x_ort.h`](../../include/n1x_ort.h), and [`runtime/n1x_ort.py`](../../runtime/n1x_ort.py)) for the N1X NPU (`t254` Hummingbird). The engine accepts standard `.onnx` models, fuses multi-node ONNX patterns into canonical hardware layers, partitions arbitrary graphs into maximal NPU (`DLA`) subgraphs and host/GPU fallback subgraphs, compiles NPU subgraphs to `.nvda` loadables via [`libn1x_compiler.so`](../../runtime/n1x_compile.cpp), and executes the mixed schedule across `/dev/accel/accel0` and CPU/CUDA with automatic surface format conversion (`NCHW` FP32 $\leftrightarrow$ `CHW32`/`CHW16` FP16/INT8) at partition boundaries.
 
 ## The Problem
 
-While [`libn1x_compiler.so`](file:///home/johann/p16/n1x-lab/npu/include/n1x_compiler.h) and [`runtime/n1x_compiler.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_compiler.py) compile branching DAGs and `INT8`/`FP16` networks directly to N1X `.nvda` loadables, running real-world `.onnx` models still requires manual graph surgery and manual buffer layout handling:
+While [`libn1x_compiler.so`](../../include/n1x_compiler.h) and [`runtime/n1x_compiler.py`](../../runtime/n1x_compiler.py) compile branching DAGs and `INT8`/`FP16` networks directly to N1X `.nvda` loadables, running real-world `.onnx` models still requires manual graph surgery and manual buffer layout handling:
 
 1. **Unfused ONNX Export Patterns**: Standard PyTorch and ONNX Model Zoo exports emit decomposed operator sequences that a 1:1 node importer rejects or executes suboptimally:
-   - [`mnist-12.onnx`](file:///home/johann/p16/n1x-lab/npu/sources/demo-research/mnist-12.onnx) exports convolution biases as standalone `Add(conv_out, Parameter[1, C, 1, 1])` nodes instead of the 3-input `Conv(X, W, B)` form, and exports the dense classifier head as `Reshape([1, 256])` $\rightarrow$ `MatMul([256, 10])` $\rightarrow$ `Add([1, 10])` instead of `Gemm`.
-   - [`super-resolution-10.onnx`](file:///home/johann/p16/n1x-lab/npu/sources/demo-research/super-resolution-10.onnx) exports its final $3\times$ sub-pixel upsampling stage (`DepthToSpace(blocksize=3)`) as a 5-node sequence (`Constant` $\rightarrow$ `Reshape([1, 1, 3, 3, 224, 224])` $\rightarrow$ `Transpose(perm=[0, 1, 4, 2, 5, 3])` $\rightarrow$ `Constant` $\rightarrow$ `Reshape([1, 1, 672, 672])`), forcing callers to pass `include_pixel_shuffle=False` and run the tail manually in NumPy.
+   - `mnist-12.onnx` exports convolution biases as standalone `Add(conv_out, Parameter[1, C, 1, 1])` nodes instead of the 3-input `Conv(X, W, B)` form, and exports the dense classifier head as `Reshape([1, 256])` $\rightarrow$ `MatMul([256, 10])` $\rightarrow$ `Add([1, 10])` instead of `Gemm`.
+   - `super-resolution-10.onnx` exports its final $3\times$ sub-pixel upsampling stage (`DepthToSpace(blocksize=3)`) as a 5-node sequence (`Constant` $\rightarrow$ `Reshape([1, 1, 3, 3, 224, 224])` $\rightarrow$ `Transpose(perm=[0, 1, 4, 2, 5, 3])` $\rightarrow$ `Constant` $\rightarrow$ `Reshape([1, 1, 672, 672])`), forcing callers to pass `include_pixel_shuffle=False` and run the tail manually in NumPy.
 2. **All-or-Nothing Compilation on Unsupported Operators**: When an ONNX graph contains even one operator unsupported by the NVDLA 2.0 (`t254`) hardware ISA (e.g., `Softmax`, `LayerNormalization`, `Gather`, `NonMaxSuppression`, general `Transpose`, or `Resize` with dynamic scales), whole-model compilation fails outright instead of offloading supported `Conv`/`BatchNorm`/`Relu`/`ElementWise`/`Pooling`/`FullyConnected`/`Concat`/`Scale` subgraphs to the NPU and executing the remaining operators on the host CPU or CUDA GPU.
-3. **Manual Surface Layout Conversion at Boundaries**: Executing a compiled `.nvda` via [`libn1x_dla.so`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.h) or [`libnvcudla.so`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_backend.cpp) requires callers to query `.nvda` tensor descriptors (`stride_0`, `stride_1`, `stride_2`, `data_type`, `data_format`) and manually pack/unpack between linear `NCHW` `float32` arrays and NPU-native `N1X_DLA_FORMAT_FEATURE` (`CHW16` FP16 / `CHW32` INT8) or `N1X_DLA_FORMAT_FEATURE_X8` (`CHW8` FP16) surfaces.
+3. **Manual Surface Layout Conversion at Boundaries**: Executing a compiled `.nvda` via [`libn1x_dla.so`](../../runtime/n1x_dla.h) or [`libnvcudla.so`](../../runtime/cudla_backend.cpp) requires callers to query `.nvda` tensor descriptors (`stride_0`, `stride_1`, `stride_2`, `data_type`, `data_format`) and manually pack/unpack between linear `NCHW` `float32` arrays and NPU-native `N1X_DLA_FORMAT_FEATURE` (`CHW16` FP16 / `CHW32` INT8) or `N1X_DLA_FORMAT_FEATURE_X8` (`CHW8` FP16) surfaces.
 4. **Manual Post-Training Quantization (PTQ) Calibration**: Compiling an FP32 ONNX model to `INT8` currently requires the user to precompute a JSON calibration dictionary (`{"tensor_name": max_abs}`) or insert explicit `QuantizeLinear`/`DequantizeLinear` nodes before invoking the compiler.
-5. **Lack of Standard C/C++ and Python Session APIs**: Applications written against `onnxruntime.InferenceSession` or native C/C++ inference loops have no unified session interface that compiles, caches, and dispatches partitioned `.onnx` models on N1X. Furthermore, [`packaging/arch/PKGBUILD`](file:///home/johann/p16/n1x-lab/npu/packaging/arch/PKGBUILD) currently installs `n1x_npu_bootstrap.ko` and `n1x-npu-start` but omits `libn1x_dla.so`, `libn1x_compiler.so`, `n1x-compile`, and the execution provider headers/libraries.
+5. **Lack of Standard C/C++ and Python Session APIs**: Applications written against `onnxruntime.InferenceSession` or native C/C++ inference loops have no unified session interface that compiles, caches, and dispatches partitioned `.onnx` models on N1X. Furthermore, [`packaging/arch/PKGBUILD`](../../packaging/arch/PKGBUILD) currently installs `n1x_npu_bootstrap.ko` and `n1x-npu-start` but omits `libn1x_dla.so`, `libn1x_compiler.so`, `n1x-compile`, and the execution provider headers/libraries.
 
 ## Goals
 
-- **G1: Native C/C++ Heterogeneous Session & Surface Runtime (`libn1x_ort.so` + [`include/n1x_ort.h`](file:///home/johann/p16/n1x-lab/npu/include/n1x_ort.h))**: Provide a C ABI and C++ execution engine (`N1xOrtModule`) that loads `.nvda` loadables, manages persistent `/dev/accel/accel0` hardware contexts and retained kernel jobs (`N1X_DLA_CAP_REEXEC_IO`), and performs vectorized (`NEON` FP16/INT8) surface packing and unpacking (`NCHW` FP32 $\leftrightarrow$ `CHW32`/`CHW16`/`CHW8` FP16/INT8) in C++.
+- **G1: Native C/C++ Heterogeneous Session & Surface Runtime (`libn1x_ort.so` + [`include/n1x_ort.h`](../../include/n1x_ort.h))**: Provide a C ABI and C++ execution engine (`N1xOrtModule`) that loads `.nvda` loadables, manages persistent `/dev/accel/accel0` hardware contexts and retained kernel jobs (`N1X_DLA_CAP_REEXEC_IO`), and performs vectorized (`NEON` FP16/INT8) surface packing and unpacking (`NCHW` FP32 $\leftrightarrow$ `CHW32`/`CHW16`/`CHW8` FP16/INT8) in C++.
 - **G2: Canonical ONNX Graph Fusion & Lowering**: Automatically fuse and canonicalize multi-node ONNX patterns prior to partitioning:
   - `Conv` + constant channel-broadcast `Add` (`[1, C, 1, 1]` or `[C]`) $\rightarrow$ biased `Convolution`.
   - `MatMul` + constant `Add`, and `Flatten`/`Reshape(2D)` (following known spatial shape `[N, C, H, W]`) + constant `MatMul` (+ optional `Add`) $\rightarrow$ `FullyConnected` with weight reshaping (`[C*H*W, K]` transposed and reshaped to `[K, C, H, W]`).
@@ -28,9 +28,9 @@ While [`libn1x_compiler.so`](file:///home/johann/p16/n1x-lab/npu/include/n1x_com
   - Acyclic inter-partition dependencies via topological coarsening (preventing `DLA_0` $\rightarrow$ `Host_0` $\rightarrow$ `DLA_0` deadlocks).
   - Minimum subgraph threshold controls (`min_dla_ops`, default `1`) and operator blocklists (`fallback_ops`) for debugging and profiling.
   - Persistent disk caching of compiled `.nvda` subgraphs keyed by a SHA-256 digest of the canonical subgraph topology, weights, precision mode, and calibration ranges (`~/.cache/n1x/ort/` or an explicit `cache_dir` session option).
-- **G4: `onnxruntime.InferenceSession`-Compatible Python API ([`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py))**: Provide `N1xInferenceSession` (and a drop-in `n1x_ort.InferenceSession` alias accepting `providers=["N1xExecutionProvider", "CPUExecutionProvider"]` with `provider_options`), using `onnxruntime` for host fallback subgraphs when installed and `onnx.reference.ReferenceEvaluator` when running in a minimal `onnx`+`numpy` environment.
+- **G4: `onnxruntime.InferenceSession`-Compatible Python API ([`runtime/n1x_ort.py`](../../runtime/n1x_ort.py))**: Provide `N1xInferenceSession` (and a drop-in `n1x_ort.InferenceSession` alias accepting `providers=["N1xExecutionProvider", "CPUExecutionProvider"]` with `provider_options`), using `onnxruntime` for host fallback subgraphs when installed and `onnx.reference.ReferenceEvaluator` when running in a minimal `onnx`+`numpy` environment.
 - **G5: Built-In Multi-Sample `INT8` Auto-Calibration (PTQ)**: Support automatic post-training quantization directly in the session/partitioner workflow: given a calibration data iterable (or synthetic calibration generator), execute the model on the reference evaluator, record per-tensor activation dynamic ranges across all intermediate tensors, and compile the `DLA` subgraphs in `INT8` mode (`per_kernel` weights + calibrated activation scales).
-- **G6: System Packaging (`packaging/arch/PKGBUILD` & `Makefile`)**: Build `runtime/libn1x_ort.so` and `runtime/n1x-ort-run` in [`Makefile`](file:///home/johann/p16/n1x-lab/npu/Makefile) and update [`packaging/arch/PKGBUILD`](file:///home/johann/p16/n1x-lab/npu/packaging/arch/PKGBUILD) to package `libn1x_dla.so`, `libn1x_compiler.so`, `libn1x_ort.so`, `n1x-compile`, `n1x-ort-run`, headers (`n1x_dla.h`, `n1x_compiler.h`, `n1x_ort.h`), and Python runtime modules.
+- **G6: System Packaging (`packaging/arch/PKGBUILD` & `Makefile`)**: Build `runtime/libn1x_ort.so` and `runtime/n1x-ort-run` in [`Makefile`](../../Makefile) and update [`packaging/arch/PKGBUILD`](../../packaging/arch/PKGBUILD) to package `libn1x_dla.so`, `libn1x_compiler.so`, `libn1x_ort.so`, `n1x-compile`, `n1x-ort-run`, headers (`n1x_dla.h`, `n1x_compiler.h`, `n1x_ort.h`), and Python runtime modules.
 
 ## Non-Goals
 
@@ -45,7 +45,7 @@ None. All architectural decisions were resolved during Step 1 (`A, C-Backed` sel
 ## Critical User Journeys (CUJs)
 
 ### CUJ 1: Zero-Surgery Python Execution of Unmodified Model Zoo ONNX Files (`mnist-12.onnx` & `super-resolution-10.onnx`)
-A developer loads unmodified [`mnist-12.onnx`](file:///home/johann/p16/n1x-lab/npu/sources/demo-research/mnist-12.onnx) or [`super-resolution-10.onnx`](file:///home/johann/p16/n1x-lab/npu/sources/demo-research/super-resolution-10.onnx) using `N1xInferenceSession`:
+A developer loads unmodified `mnist-12.onnx` or `super-resolution-10.onnx` using `N1xInferenceSession`:
 ```python
 from n1x_ort import InferenceSession
 
@@ -73,7 +73,7 @@ probs = sess.run(None, {"input": test_batch})[0]
 The partitioner runs the calibration batches through the graph to collect per-tensor activation ranges, compiles the backbone + `Gemm` into an `INT8` `.nvda` subgraph, caches the compiled binary on disk, executes the `INT8` subgraph on `/dev/accel/accel0` with C++-accelerated `NCHW` FP32 $\leftrightarrow$ `CHW32` INT8 layout conversion, and runs the trailing `Softmax` on the host provider.
 
 ### CUJ 3: Native C/C++ Inference & Layout Packing via `libn1x_ort.so` and `n1x-ort-run`
-A C/C++ application (or the `runtime/n1x-ort-run` CLI tool) loads an `.nvda` module using [`include/n1x_ort.h`](file:///home/johann/p16/n1x-lab/npu/include/n1x_ort.h) and submits standard contiguous `NCHW` `float32` buffers directly:
+A C/C++ application (or the `runtime/n1x-ort-run` CLI tool) loads an `.nvda` module using [`include/n1x_ort.h`](../../include/n1x_ort.h) and submits standard contiguous `NCHW` `float32` buffers directly:
 ```c
 N1xOrtModule *mod = NULL;
 char err[256];
@@ -88,8 +88,8 @@ Inside `libn1x_ort.so`, C++ routines inspect the `.nvda` surface descriptors, co
 ### Architecture Overview
 
 The execution provider splits responsibilities across two layers:
-1. **Graph Canonicalizer, Partitioner & Plan Builder ([`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py) + [`runtime/n1x_compiler.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_compiler.py))**: Performs static shape inference, constant folding, multi-node pattern fusion (`Conv+Add`, `Flatten+MatMul+Add`, `Reshape+Transpose+Reshape`), multi-sample `INT8` PTQ calibration, cycle-free topological partitioning into `DLA` and `Host` subgraphs, SHA-256 disk caching (`~/.cache/n1x/ort/`), and `.nvda` compilation via [`libn1x_compiler.so`](file:///home/johann/p16/n1x-lab/npu/include/n1x_compiler.h).
-2. **Native C/C++ Execution & Surface Runtime ([`runtime/libn1x_ort.so`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.cpp) + [`include/n1x_ort.h`](file:///home/johann/p16/n1x-lab/npu/include/n1x_ort.h))**: Parses `.nvda` flatbuffer descriptors via [`n1x::Model`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.hpp), converts contiguous `NCHW` `float32` tensors to and from hardware-strided `CHW16` FP16 and `CHW32`/`CHW16` INT8 surfaces in C++ using ARM64 FP16/SIMD routines, and executes `DLA` stages on `/dev/accel/accel0` via [`libn1x_dla.so`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.h) using retained kernel jobs (`N1X_DLA_CAP_REEXEC_IO` + [`n1x_dla_resubmit`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.h#L24-L26)).
+1. **Graph Canonicalizer, Partitioner & Plan Builder ([`runtime/n1x_ort.py`](../../runtime/n1x_ort.py) + [`runtime/n1x_compiler.py`](../../runtime/n1x_compiler.py))**: Performs static shape inference, constant folding, multi-node pattern fusion (`Conv+Add`, `Flatten+MatMul+Add`, `Reshape+Transpose+Reshape`), multi-sample `INT8` PTQ calibration, cycle-free topological partitioning into `DLA` and `Host` subgraphs, SHA-256 disk caching (`~/.cache/n1x/ort/`), and `.nvda` compilation via [`libn1x_compiler.so`](../../include/n1x_compiler.h).
+2. **Native C/C++ Execution & Surface Runtime ([`runtime/libn1x_ort.so`](../../runtime/n1x_ort.cpp) + [`include/n1x_ort.h`](../../include/n1x_ort.h))**: Parses `.nvda` flatbuffer descriptors via [`n1x::Model`](../../runtime/cudla_model.hpp), converts contiguous `NCHW` `float32` tensors to and from hardware-strided `CHW16` FP16 and `CHW32`/`CHW16` INT8 surfaces in C++ using ARM64 FP16/SIMD routines, and executes `DLA` stages on `/dev/accel/accel0` via [`libn1x_dla.so`](../../runtime/n1x_dla.h) using retained kernel jobs (`N1X_DLA_CAP_REEXEC_IO` + [`n1x_dla_resubmit`](../../runtime/n1x_dla.h)).
 
 ```mermaid
 flowchart TD
@@ -141,15 +141,15 @@ Before partitioning or lowering to the N1X JSON DAG format, `canonicalize_onnx_m
 1. **Static Input Shape Binding & Shape Inference**:
    - Replaces symbolic or dynamic input dimensions (`dim_param` or `dim_value <= 0`) with concrete dimensions from `input_shapes` (defaulting batch dimension `d[0] = 1`) and runs `onnx.shape_inference.infer_shapes(model)`.
 2. **Constant Folding of Initializer & Shape Subgraphs**:
-   - Evaluates any node whose inputs are all initializers or `Constant` outputs (such as `Reshape(Parameter193, shape=[256, 10])` in [`mnist-12.onnx`](file:///home/johann/p16/n1x-lab/npu/sources/demo-research/mnist-12.onnx), or `Shape` $\rightarrow$ `Gather` $\rightarrow$ `Unsqueeze` $\rightarrow$ `Concat` chains that compute static `Reshape` target shapes) using `onnx.reference.ReferenceEvaluator`, promoting the folded result into `graph.initializer` and pruning dead producer nodes.
+   - Evaluates any node whose inputs are all initializers or `Constant` outputs (such as `Reshape(Parameter193, shape=[256, 10])` in `mnist-12.onnx`, or `Shape` $\rightarrow$ `Gather` $\rightarrow$ `Unsqueeze` $\rightarrow$ `Concat` chains that compute static `Reshape` target shapes) using `onnx.reference.ReferenceEvaluator`, promoting the folded result into `graph.initializer` and pruning dead producer nodes.
 3. **`Conv` / `ConvTranspose` + Constant `Add` Bias Fusion**:
-   - Matches `Conv(X, W)` (2 inputs, no bias) followed by `Add(conv_out, B_const)` (or `Add(B_const, conv_out)`) where `conv_out` has a single consumer and `B_const` is a constant tensor broadcastable to `[1, C_out, 1, 1]` (i.e. shape `[C_out]`, `[1, C_out, 1, 1]`, or `[C_out, 1, 1]` as in [`mnist-12.onnx`](file:///home/johann/p16/n1x-lab/npu/sources/demo-research/mnist-12.onnx)).
+   - Matches `Conv(X, W)` (2 inputs, no bias) followed by `Add(conv_out, B_const)` (or `Add(B_const, conv_out)`) where `conv_out` has a single consumer and `B_const` is a constant tensor broadcastable to `[1, C_out, 1, 1]` (i.e. shape `[C_out]`, `[1, C_out, 1, 1]`, or `[C_out, 1, 1]` as in `mnist-12.onnx`).
    - Reshapes `B_const` to 1D `[C_out]` and attaches it as the 3rd input of `Conv(X, W, B_flat)`, eliminating the standalone `Add` node.
 4. **Spatial `Flatten`/`Reshape` + `MatMul` + `Add` $\rightarrow$ `Gemm` / `FullyConnected` Fusion**:
    - Matches `Flatten(X_4d)` or `Reshape(X_4d)` $\rightarrow$ `MatMul(flat_out, W_2d)` ($\rightarrow$ optional `Add(mm_out, B_1d)`) where `X_4d` has static 4D shape `[1, C, H, W]` with $C \cdot H \cdot W = K_{\text{in}}$ and `W_2d` is a constant initializer of shape $[K_{\text{in}}, K_{\text{out}}]$.
-   - When lowering to the N1X JSON DAG, [`runtime/n1x_compile.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_compile.cpp#L429-L433) expects `FullyConnected` input tensors to carry their pre-flattened 4D spatial dimensions `[1, C, H, W]` and sets the NVDLA weight blob dimensions to `{K_out, C, H, W}`. Transposing `W_2d` from $[C \cdot H \cdot W, K_{\text{out}}]$ to $[K_{\text{out}}, C \cdot H \cdot W]$ places the weights in exact row-major `[K_out, C, H, W]` order, allowing the `Reshape`/`Flatten` node to be bypassed and the optional `Add` bias `[1, K_out]` to be fused into `FullyConnected.bias_b64`.
+   - When lowering to the N1X JSON DAG, [`runtime/n1x_compile.cpp`](../../runtime/n1x_compile.cpp) expects `FullyConnected` input tensors to carry their pre-flattened 4D spatial dimensions `[1, C, H, W]` and sets the NVDLA weight blob dimensions to `{K_out, C, H, W}`. Transposing `W_2d` from $[C \cdot H \cdot W, K_{\text{out}}]$ to $[K_{\text{out}}, C \cdot H \cdot W]$ places the weights in exact row-major `[K_out, C, H, W]` order, allowing the `Reshape`/`Flatten` node to be bypassed and the optional `Add` bias `[1, K_out]` to be fused into `FullyConnected.bias_b64`.
 5. **Decomposed Sub-Pixel Convolution (`Reshape` $\rightarrow$ `Transpose` $\rightarrow$ `Reshape`) Recognition**:
-   - Matches the 5-node opset-10 sub-pixel pattern in [`super-resolution-10.onnx`](file:///home/johann/p16/n1x-lab/npu/sources/demo-research/super-resolution-10.onnx):
+   - Matches the 5-node opset-10 sub-pixel pattern in `super-resolution-10.onnx`:
      `Reshape(X, [1, C_out, r, r, H, W])` $\rightarrow$ `Transpose(perm=[0, 1, 4, 2, 5, 3])` $\rightarrow$ `Reshape(_, [1, C_out, H*r, W*r])`
      and rewrites it into a single `DepthToSpace(X, blocksize=r, mode="DCR")` node so the partitioner can treat it atomically (either lowered to `PixelShuffle` on `DLA` or dispatched as a single stage to `Host`).
 
@@ -188,9 +188,9 @@ To guarantee that no `DLA` partition depends on a `Host` partition that itself d
 
 ---
 
-### Stage 3: Native C ABI ([`include/n1x_ort.h`](file:///home/johann/p16/n1x-lab/npu/include/n1x_ort.h)) and C++ Surface/Execution Runtime (`runtime/libn1x_ort.so`)
+### Stage 3: Native C ABI ([`include/n1x_ort.h`](../../include/n1x_ort.h)) and C++ Surface/Execution Runtime (`runtime/libn1x_ort.so`)
 
-`runtime/libn1x_ort.so` links [`runtime/cudla_model.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp), [`runtime/libn1x_dla.so`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.h), and [`runtime/libn1x_compiler.so`](file:///home/johann/p16/n1x-lab/npu/include/n1x_compiler.h). It exposes a self-contained C ABI in [`include/n1x_ort.h`](file:///home/johann/p16/n1x-lab/npu/include/n1x_ort.h):
+`runtime/libn1x_ort.so` links [`runtime/cudla_model.cpp`](../../runtime/cudla_model.cpp), [`runtime/libn1x_dla.so`](../../runtime/n1x_dla.h), and [`runtime/libn1x_compiler.so`](../../include/n1x_compiler.h). It exposes a self-contained C ABI in [`include/n1x_ort.h`](../../include/n1x_ort.h):
 
 ```c
 /* SPDX-License-Identifier: MIT */
@@ -304,9 +304,9 @@ int n1x_ort_module_run_fp32(N1xOrtModule *module,
 
 ---
 
-### Stage 4: Python `InferenceSession` & Multi-Sample `INT8` Auto-Calibration ([`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py))
+### Stage 4: Python `InferenceSession` & Multi-Sample `INT8` Auto-Calibration ([`runtime/n1x_ort.py`](../../runtime/n1x_ort.py))
 
-[`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py) provides `N1xInferenceSession` (aliased as `InferenceSession`):
+[`runtime/n1x_ort.py`](../../runtime/n1x_ort.py) provides `N1xInferenceSession` (aliased as `InferenceSession`):
 
 ```python
 class N1xInferenceSession:
@@ -357,7 +357,7 @@ When `precision == "int8"` and `calibration is None`:
 ## Alternatives Considered
 
 ### Alternative 1: C-Backed Heterogeneous ONNX Partitioner & Execution Provider (`A, C-Backed` — Chosen)
-- **Description**: Implement a standalone C/C++ surface and module execution runtime (`runtime/libn1x_ort.so` + [`include/n1x_ort.h`](file:///home/johann/p16/n1x-lab/npu/include/n1x_ort.h)) on top of [`n1x::Model`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.hpp) and [`libn1x_dla.so`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.h), paired with an `onnxruntime.InferenceSession`-compatible Python partitioner and session manager ([`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py)).
+- **Description**: Implement a standalone C/C++ surface and module execution runtime (`runtime/libn1x_ort.so` + [`include/n1x_ort.h`](../../include/n1x_ort.h)) on top of [`n1x::Model`](../../runtime/cudla_model.hpp) and [`libn1x_dla.so`](../../runtime/n1x_dla.h), paired with an `onnxruntime.InferenceSession`-compatible Python partitioner and session manager ([`runtime/n1x_ort.py`](../../runtime/n1x_ort.py)).
 - **Pros**:
   - Compiles in seconds with the system C++17 toolchain without fetching a 2+ GB upstream `onnxruntime` C++ source tree.
   - Moves hot-path `NCHW` `float32` $\leftrightarrow$ `CHW16` FP16 / `CHW32` INT8 layout conversion and `n1x_dla_resubmit` retained-job management into compiled C++ (`libn1x_ort.so`), usable from both C/C++ (`runtime/n1x-ort-run`) and Python (`runtime/n1x_ort.py`).
@@ -374,11 +374,11 @@ When `precision == "int8"` and `calibration is None`:
   - Couples our lightweight kernel/runtime repository (`/home/johann/p16/n1x-lab/npu`) to a multi-gigabyte external build system.
 
 ### Alternative 3: Pure-Python Surface Packing & Per-Call Job Submission (`C`)
-- **Description**: Implement graph partitioning in Python (`runtime/n1x_ort.py`) and reuse the existing Python `_pack_grouped` / `_unpack_grouped` channel loops and single-shot `Device.submit()` in [`runtime/n1x_dla.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.py) without a C/C++ `libn1x_ort.so` runtime.
+- **Description**: Implement graph partitioning in Python (`runtime/n1x_ort.py`) and reuse the existing Python `_pack_grouped` / `_unpack_grouped` channel loops and single-shot `Device.submit()` in [`runtime/n1x_dla.py`](../../runtime/n1x_dla.py) without a C/C++ `libn1x_ort.so` runtime.
 - **Pros**:
   - Minimal C++ code to write.
 - **Cons**:
-  - Python `for ch in range(channels):` strided slice loops in [`runtime/n1x_dla.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.py#L185-L186) and fresh 2.8 MB `.nvda` image uploads on every `submit()` call add millisecond-level host overhead per subgraph transition, dominating the sub-millisecond NPU execution time.
+  - Python `for ch in range(channels):` strided slice loops in [`runtime/n1x_dla.py`](../../runtime/n1x_dla.py) and fresh 2.8 MB `.nvda` image uploads on every `submit()` call add millisecond-level host overhead per subgraph transition, dominating the sub-millisecond NPU execution time.
   - Provides no C/C++ inference API for native applications.
 
 ### Decision Matrix
@@ -400,9 +400,9 @@ When `precision == "int8"` and `calibration is None`:
 - **SHA-256 `.nvda` Disk Cache**: Compiling a subgraph via `libnvdla_compiler.so` takes ~80–250 ms. Caching compiled `.nvda` blobs under `~/.cache/n1x/ort/<sha256>.nvda` reduces warm session initialization to a < 2 ms file read.
 
 ### Security & Safety
-- **Checked FlatBuffer & Bounds Validation**: `libn1x_ort.so` reuses [`n1x::Model`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp), which enforces a 64 MiB `.nvda` file limit, a 32 MiB materialized image limit, bounded metadata traversal budgets (`records = 65536`), and strict extent verification (`offset + bytes <= capacity`) before allocating staging memory.
+- **Checked FlatBuffer & Bounds Validation**: `libn1x_ort.so` reuses [`n1x::Model`](../../runtime/cudla_model.cpp), which enforces a 64 MiB `.nvda` file limit, a 32 MiB materialized image limit, bounded metadata traversal budgets (`records = 65536`), and strict extent verification (`offset + bytes <= capacity`) before allocating staging memory.
 - **Non-Finite Input & Output Rejection**: Both `n1x_ort_pack_fp32` and `n1x_ort_unpack_fp32` reject `NaN` and `±Inf` values with `-EINVAL` to prevent silent corruption across `DLA` $\leftrightarrow$ `Host` partition boundaries.
-- **No Automatic Hardware Retry**: In compliance with [`runtime/n1x_dla.h`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.h#L8-L10), `libn1x_ort.so` never retries a failed `n1x_dla_submit_flags` or `n1x_dla_resubmit` ioctl automatically.
+- **No Automatic Hardware Retry**: In compliance with [`runtime/n1x_dla.h`](../../runtime/n1x_dla.h), `libn1x_ort.so` never retries a failed `n1x_dla_submit_flags` or `n1x_dla_resubmit` ioctl automatically.
 
 ### Observability & Diagnostics
 - **`get_partition_summary()`**: `N1xInferenceSession.get_partition_summary()` returns a structured dictionary containing:
@@ -414,11 +414,11 @@ When `precision == "int8"` and `calibration is None`:
 
 ### Phase 1: Native C/C++ Surface & Module Runtime (`include/n1x_ort.h`, `runtime/n1x_ort.cpp`, `runtime/n1x-ort-run`)
 
-1. **Create [`include/n1x_ort.h`](file:///home/johann/p16/n1x-lab/npu/include/n1x_ort.h)**:
+1. **Create [`include/n1x_ort.h`](../../include/n1x_ort.h)**:
    - Define `N1xOrtModule` and `N1xOrtTensorDesc`.
    - Declare module lifecycle APIs (`n1x_ort_module_create`, `n1x_ort_module_create_from_file`, `n1x_ort_module_destroy`), descriptor introspection APIs (`n1x_ort_module_num_inputs`, `n1x_ort_module_num_outputs`, `n1x_ort_module_get_input_desc`, `n1x_ort_module_get_output_desc`), quantization configuration APIs (`n1x_ort_module_set_input_quant`, `n1x_ort_module_set_output_quant`), vectorized surface conversion APIs (`n1x_ort_pack_fp32`, `n1x_ort_unpack_fp32`), and hardware execution API (`n1x_ort_module_run_fp32`).
-2. **Create [`runtime/n1x_ort.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.cpp)**:
-   - Reuse [`n1x::Model`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.hpp) from [`runtime/cudla_model.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp) to parse `.nvda` flatbuffer loadables into `image`, `ranges`, `inputs`, `outputs`, and `stats`.
+2. **Create [`runtime/n1x_ort.cpp`](../../runtime/n1x_ort.cpp)**:
+   - Reuse [`n1x::Model`](../../runtime/cudla_model.hpp) from [`runtime/cudla_model.cpp`](../../runtime/cudla_model.cpp) to parse `.nvda` flatbuffer loadables into `image`, `ranges`, `inputs`, `outputs`, and `stats`.
    - Implement `n1x_ort_pack_fp32` and `n1x_ort_unpack_fp32` supporting:
      - `CHW16` `FP16` (`data_format=3, data_type=2, stride[0]=2`, `group_channels=16`) using ARM64 native `_Float16` (`__fp16`) conversion.
      - `CHW8` `FP16` (`data_format=4, data_type=2, stride[0]=2`, `group_channels=8`).
@@ -426,43 +426,43 @@ When `precision == "int8"` and `calibration is None`:
      - `CHW16` `INT8` (`data_format=3, data_type=4, stride[0]=1`, `group_channels=16`).
      - Strict `std::isfinite` verification on both input `float32` arrays and unpacked `float32` outputs.
    - Implement `n1x_ort_module_run_fp32`:
-     - Lazily open `/dev/accel/accel0` (or `$N1X_DLA_DEVICE`) via [`n1x_dla_open`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.h#L12) if `accel_fd < 0` was passed at module creation.
+     - Lazily open `/dev/accel/accel0` (or `$N1X_DLA_DEVICE`) via [`n1x_dla_open`](../../runtime/n1x_dla.h) if `accel_fd < 0` was passed at module creation.
      - Pack `inputs_fp32[i]` into `staging_image.data() + inputs[i].offset`.
-     - On initial execution, submit via [`n1x_dla_submit_flags`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.h#L18-L21) with `N1X_DLA_SUBMIT_RETAIN` when `info.capabilities & N1X_DLA_CAP_REEXEC_IO` is advertised and retain limits permit; on subsequent executions, submit via [`n1x_dla_resubmit`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.h#L24-L26) patching only input/output tensor slices.
-     - Read output tensor slices via [`n1x_dla_read`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.h#L22-L23) and unpack into `outputs_fp32[i]`.
-     - Release any retained job via [`n1x_dla_control`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.h#L29-L30) (`N1X_DLA_CONTROL_RELEASE`) inside `n1x_ort_module_destroy`.
+     - On initial execution, submit via [`n1x_dla_submit_flags`](../../runtime/n1x_dla.h) with `N1X_DLA_SUBMIT_RETAIN` when `info.capabilities & N1X_DLA_CAP_REEXEC_IO` is advertised and retain limits permit; on subsequent executions, submit via [`n1x_dla_resubmit`](../../runtime/n1x_dla.h) patching only input/output tensor slices.
+     - Read output tensor slices via [`n1x_dla_read`](../../runtime/n1x_dla.h) and unpack into `outputs_fp32[i]`.
+     - Release any retained job via [`n1x_dla_control`](../../runtime/n1x_dla.h) (`N1X_DLA_CONTROL_RELEASE`) inside `n1x_ort_module_destroy`.
    - Under `#ifdef N1X_ORT_CLI_MAIN`, provide a `main()` entry point for `runtime/n1x-ort-run` supporting `--inspect <model.nvda>` (offline descriptor printout) and `--run <model.nvda> [--input <in.bin>] [--output <out.bin>] [--repeat N]`.
 
-### Phase 2: Canonical ONNX Graph Rewriter & Pattern Fusion ([`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py) & [`runtime/n1x_compiler.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_compiler.py))
+### Phase 2: Canonical ONNX Graph Rewriter & Pattern Fusion ([`runtime/n1x_ort.py`](../../runtime/n1x_ort.py) & [`runtime/n1x_compiler.py`](../../runtime/n1x_compiler.py))
 
-1. **Extend [`runtime/n1x_compiler.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_compiler.py)**:
+1. **Extend [`runtime/n1x_compiler.py`](../../runtime/n1x_compiler.py)**:
    - Update `onnx_to_dag` (`L376-L399`) so `Gemm`/`MatMul` (`FullyConnected`) accepts both 4D spatial inputs (`[1, C, H, W]`) and 2D flattened inputs (`[1, K_in]` aliased back to its pre-flattened 4D producer `[1, C, H, W]`), and fuses an optional 3rd bias input (`node.input[2]`) into `bias_b64` (`bias_mode="channel"`).
    - Ensure `Add`/`Sub`/`Mul`/`Max`/`Min` (`L452-L485`) checks whether `in0` or `in1` is a constant initializer (supporting commutative `Add(const, X)` and `Mul(const, X)` in addition to `Add(X, const)`).
-2. **Implement `canonicalize_onnx_model` in [`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py)**:
+2. **Implement `canonicalize_onnx_model` in [`runtime/n1x_ort.py`](../../runtime/n1x_ort.py)**:
    - **Pass 1 (Static Shape Binding & Inference)**: Bind `input_shapes` (defaulting batch `N = 1`) and run `onnx.shape_inference.infer_shapes`.
-   - **Pass 2 (Initializer & Constant Subgraph Folding)**: Fold any node whose inputs are all in `initializers` (e.g., `Reshape(Parameter193, shape=[256, 10])` in [`mnist-12.onnx`](file:///home/johann/p16/n1x-lab/npu/sources/demo-research/mnist-12.onnx)) into `graph.initializer` and remove dead constant/initializer nodes.
+   - **Pass 2 (Initializer & Constant Subgraph Folding)**: Fold any node whose inputs are all in `initializers` (e.g., `Reshape(Parameter193, shape=[256, 10])` in `mnist-12.onnx`) into `graph.initializer` and remove dead constant/initializer nodes.
    - **Pass 3 (`Conv` + `Add` Bias Fusion)**: Fuse single-consumer 2-input `Conv(X, W)` + constant channel-broadcast `Add` (`[C]`, `[1, C, 1, 1]`, or `[C, 1, 1]`) into 3-input `Conv(X, W, B_1d)`.
    - **Pass 4 (`Flatten`/`Reshape` + `MatMul` + `Add` Fusion)**: Fuse `Reshape(X_4d)` or `Flatten(X_4d)` $\rightarrow$ `MatMul(_, W_const)` ($\rightarrow$ optional `Add(_, B_const)`) into `Gemm(X_4d, W_const, B_const)` (retaining `X_4d`'s 4D shape `[1, C, H, W]` so `n1x_compile.cpp` emits `{K_out, C, H, W}` weights).
-   - **Pass 5 (Decomposed `PixelShuffle` Fusion)**: Detect `Reshape(X, [1, C_out, r, r, H, W])` $\rightarrow$ `Transpose(perm=[0, 1, 4, 2, 5, 3])` $\rightarrow$ `Reshape(_, [1, C_out, H*r, W*r])` in [`super-resolution-10.onnx`](file:///home/johann/p16/n1x-lab/npu/sources/demo-research/super-resolution-10.onnx) and replace with `DepthToSpace(X, blocksize=r, mode="DCR")`.
+   - **Pass 5 (Decomposed `PixelShuffle` Fusion)**: Detect `Reshape(X, [1, C_out, r, r, H, W])` $\rightarrow$ `Transpose(perm=[0, 1, 4, 2, 5, 3])` $\rightarrow$ `Reshape(_, [1, C_out, H*r, W*r])` in `super-resolution-10.onnx` and replace with `DepthToSpace(X, blocksize=r, mode="DCR")`.
 
-### Phase 3: Heterogeneous Graph Partitioner, Auto-Calibration & `N1xInferenceSession` ([`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py))
+### Phase 3: Heterogeneous Graph Partitioner, Auto-Calibration & `N1xInferenceSession` ([`runtime/n1x_ort.py`](../../runtime/n1x_ort.py))
 
-1. **Implement `calibrate_onnx_model` in [`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py)**:
+1. **Implement `calibrate_onnx_model` in [`runtime/n1x_ort.py`](../../runtime/n1x_ort.py)**:
    - Run calibration input feeds through an instrumented copy of the canonicalized ONNX graph (`ReferenceEvaluator` or `onnxruntime` CPU session) to record `max_abs` across all graph inputs, intermediate tensors, and outputs.
    - Return `{"tensor_ranges": {tensor_name: float(max_abs)}}`.
-2. **Implement `partition_onnx_model` in [`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py)**:
+2. **Implement `partition_onnx_model` in [`runtime/n1x_ort.py`](../../runtime/n1x_ort.py)**:
    - Walk nodes in topological order, grouping supported nodes into `DLA` stages and unsupported/fallback nodes into `Host` stages while preventing inter-stage dependency cycles.
    - Extract valid standalone `onnx.ModelProto` subgraphs for each stage with typed `ValueInfoProto` inputs and outputs.
    - For each `DLA` stage, compute a SHA-256 cache key over the canonicalized stage DAG JSON, precision, and calibration ranges; load `<cache_dir>/<sha256>.nvda` on cache hit or compile via `compile_dag` and atomically write to `<cache_dir>/<sha256>.nvda`.
    - Implement compiler-verified fallback: if `compile_dag` raises `CompilerError` on a multi-node `DLA` stage, peel off the failing tail/boundary node into a `Host` stage and re-compile the remaining `DLA` stage.
-3. **Implement `N1xInferenceSession` (`InferenceSession`) in [`runtime/n1x_ort.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_ort.py)**:
+3. **Implement `N1xInferenceSession` (`InferenceSession`) in [`runtime/n1x_ort.py`](../../runtime/n1x_ort.py)**:
    - Bind `runtime/libn1x_ort.so` via `ctypes` (`N1xOrtClient`) for `DLA` stage execution and C++ surface packing/unpacking (`pack_fp32`, `unpack_fp32`, `module_run_fp32`).
    - Execute `Host` stages via `onnxruntime.InferenceSession(..., providers=["CPUExecutionProvider"])` when `onnxruntime` is importable, falling back to `onnx.reference.ReferenceEvaluator`.
    - Provide `run()`, `get_inputs()`, `get_outputs()`, `get_providers()`, and `get_partition_summary()`.
 
 ### Phase 4: Build System (`Makefile`) & Arch Package (`packaging/arch/PKGBUILD`)
 
-1. **Update [`Makefile`](file:///home/johann/p16/n1x-lab/npu/Makefile)**:
+1. **Update [`Makefile`](../../Makefile)**:
    - Add `runtime/libn1x_ort.so` and `runtime/n1x-ort-run` to `runtime` and `clean` targets:
      ```makefile
      runtime/libn1x_ort.so: runtime/n1x_ort.cpp runtime/cudla_model.cpp runtime/cudla_model.hpp include/n1x_ort.h runtime/n1x_dla.h runtime/libn1x_dla.so
@@ -471,7 +471,7 @@ When `precision == "int8"` and `calibration is None`:
      	$(CXX) -std=c++17 $(CFLAGS) -DN1X_ORT_CLI_MAIN -Iinclude runtime/n1x_ort.cpp -Lruntime -ln1x_ort -Wl,-rpath,'$$ORIGIN' -o $@
      ```
    - Add `scripts/test_n1x_ort.py` to `test-compiler` and `test-cudla`.
-2. **Update [`packaging/arch/PKGBUILD`](file:///home/johann/p16/n1x-lab/npu/packaging/arch/PKGBUILD)**:
+2. **Update [`packaging/arch/PKGBUILD`](../../packaging/arch/PKGBUILD)**:
    - Build userspace runtime libraries (`libn1x_dla.so`, `libn1x_compiler.so`, `libn1x_ort.so`, `n1x-compile`, `n1x-ort-run`) in `build()` and install them into `/usr/lib/`, `/usr/bin/`, and `/usr/include/` inside `package()`.
 
 ---
@@ -481,10 +481,10 @@ When `precision == "int8"` and `calibration is None`:
 ### 1. Offline Unit & Integration Suite (`scripts/test_n1x_ort.py`)
 `scripts/test_n1x_ort.py` runs without requiring `/dev/accel/accel0` hardware access:
 1. **C++ Surface Packing/Unpacking Round-Trip (`libn1x_ort.so`)**:
-   - Verify `n1x_ort_pack_fp32` and `n1x_ort_unpack_fp32` bit-exactness against [`runtime/n1x_dla.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.py) (`pack_chw16_fp16`, `unpack_chw16_fp16`, `pack_chw32_int8`, `unpack_chw32_int8`) for both `FP16` (`CHW16`) and `INT8` (`CHW32` with per-tensor and per-channel scales), and verify `-EINVAL` rejection on `NaN`/`Inf` inputs.
+   - Verify `n1x_ort_pack_fp32` and `n1x_ort_unpack_fp32` bit-exactness against [`runtime/n1x_dla.py`](../../runtime/n1x_dla.py) (`pack_chw16_fp16`, `unpack_chw16_fp16`, `pack_chw32_int8`, `unpack_chw32_int8`) for both `FP16` (`CHW16`) and `INT8` (`CHW32` with per-tensor and per-channel scales), and verify `-EINVAL` rejection on `NaN`/`Inf` inputs.
 2. **ONNX Pattern Fusion & Canonicalization**:
-   - Verify unmodified [`sources/demo-research/mnist-12.onnx`](file:///home/johann/p16/n1x-lab/npu/sources/demo-research/mnist-12.onnx) canonicalizes `Conv+Add` into biased `Conv` and `Reshape+MatMul+Add` into `Gemm`/`FullyConnected`, producing a **single `DLA` stage** (`dla_stages == 1, host_stages == 0`) that compiles to a valid `.nvda` loadable.
-   - Verify unmodified [`sources/demo-research/super-resolution-10.onnx`](file:///home/johann/p16/n1x-lab/npu/sources/demo-research/super-resolution-10.onnx) canonicalizes the 5-node sub-pixel tail into `DepthToSpace(blocksize=3)` and partitions cleanly into a `DLA` feature-extraction stage (`4x Conv + 3x Relu`, compiled to `.nvda`) + a `Host` `DepthToSpace` stage (`dla_stages == 1, host_stages == 1`).
+   - Verify unmodified `sources/demo-research/mnist-12.onnx` canonicalizes `Conv+Add` into biased `Conv` and `Reshape+MatMul+Add` into `Gemm`/`FullyConnected`, producing a **single `DLA` stage** (`dla_stages == 1, host_stages == 0`) that compiles to a valid `.nvda` loadable.
+   - Verify unmodified `sources/demo-research/super-resolution-10.onnx` canonicalizes the 5-node sub-pixel tail into `DepthToSpace(blocksize=3)` and partitions cleanly into a `DLA` feature-extraction stage (`4x Conv + 3x Relu`, compiled to `.nvda`) + a `Host` `DepthToSpace` stage (`dla_stages == 1, host_stages == 1`).
 3. **Heterogeneous Multi-Stage Graph Partitioning & Cycle Prevention**:
    - Construct a synthetic composite ONNX model (`Conv` $\rightarrow$ `Relu` $\rightarrow$ `Softmax` [Host fallback] $\rightarrow$ `Conv` $\rightarrow$ `Relu` $\rightarrow$ `Add` residual), verify it partitions into `DLA_0` $\rightarrow$ `Host_0` $\rightarrow$ `DLA_1` without dependency cycles, and verify SHA-256 disk cache hit (`cache_hit == True`) on second session creation.
 4. **Multi-Sample `INT8` Auto-Calibration**:

@@ -65,13 +65,16 @@ only the immediate bits, without guessed timings, voltages or reset values.
    Preserve the raw values as diagnostics; do not require every bit of the
    raw route/mask intersection to become zero. The P16 retains bit 24, whose
    meaning is unknown; the original Windows KMD makes no such assertion.
-   This polling backend never registers/enables Linux IRQ handlers, so there
-   is no handler to synchronize or free.
+   When `enable_irq=true` (the default), the `NVDA200A:00` IRQ handler ignores
+   activity once `boot_stopping` is set (`READ_ONCE(boot_stopping)`) and is
+   released by devres on driver unbind.
 5. Send immediate clock/domain/rail OFF and validate reply plus power-state
    query. No DLA-aperture register access occurs after power-off.
 6. Free all bootstrap DMA (ReLU, bypass task, LPWR, region 5, config, ping and
-   completed SROOT staging), then all retained accel allocations while its lock
-   excludes READ, EXEC and close callbacks.
+   completed SROOT staging), then all remaining unmapped accel allocations while
+   its lock excludes READ, EXEC, `mmap` and close callbacks (any job still
+   mapped via `mmap()` is orphaned with `job->owner = NULL` and freed when its
+   last VMA closes in `n1x_accel_vm_close()`).
 7. Balance both DLA runtime references, the SROOT runtime reference and both
    self-held module references. Open DRM clients retain their normal module
    references and must close before `rmmod` can succeed.
@@ -84,12 +87,13 @@ followed by firmware idle and any attempted DMA-ping qualification. Failed or
 uncertain SROOT transactions remain quarantined. There is no command that
 claims to cancel an in-flight secure upload.
 
-Any stop failure preserves every DMA allocation, PM reference and module pin,
-blocks further work, records the first error and refuses to repeat the stop.
-A reboot remains required for these exceptional states. This is deliberate
-error handling; `rmmod -f`, software counter resets and freeing potentially
-active memory are not recovery. Automatic suspend/resume remains unsupported.
-The platform shutdown callback uses the same checked path at system shutdown.
+Any stop failure preserves every DMA allocation (`accel->stop_failed`), PM
+reference and module pin, blocks further work, records the first error and
+refuses to repeat the stop. A reboot remains required for these exceptional
+states. This is deliberate error handling; `rmmod -f`, software counter resets
+and freeing potentially active memory are not recovery. The platform shutdown
+and system `.suspend` / `.resume` callbacks (`n1x_boot_pm_suspend` /
+`n1x_boot_pm_resume`) use the same checked stop/start path.
 
 ## Build and qualify
 

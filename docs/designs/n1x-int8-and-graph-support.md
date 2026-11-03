@@ -4,50 +4,50 @@
 
 ### The Problem
 
-While our Linux `/dev/accel/accel*` kernel driver ([`n1x_dla_accel.c`](file:///home/johann/p16/n1x-lab/npu/driver/n1x_dla_accel.c)) and `cuDLA` userspace runtime ([`cudla_backend.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_backend.cpp)) provide complete hardware submission, interrupt notification, layerwise profiling statistics, and job preemption on the physical N1X NPU (`t254`), the model compilation and loadable execution pipeline has four architectural limitations compared to Jetson and Windows:
+While our Linux `/dev/accel/accel*` kernel driver ([`n1x_dla_accel.c`](../../driver/n1x_dla_accel.c)) and `cuDLA` userspace runtime ([`cudla_backend.cpp`](../../runtime/cudla_backend.cpp)) provide complete hardware submission, interrupt notification, layerwise profiling statistics, and job preemption on the physical N1X NPU (`t254`), the model compilation and loadable execution pipeline has four architectural limitations compared to Jetson and Windows:
 
 1. **Stubbed `Mtl3` (`t254`) Backend in Linux `libnvdla_compiler.so` and Fragile Python/GDB/Unicorn Bridge**:
    - On both Jetson and Windows, DLA compilation is performed natively in C/C++ via `libnvdla_compiler.so` / `nvdla_compiler.dll` (`1.3.16.13`), which export the 655-function `NvDla*` C ABI ([`NvDlaType.h`](https://github.com/nvdla/sw/blob/master/umd/core/include/nvdla/c/NvDlaType.h), [`INetwork.h`](https://github.com/nvdla/sw/blob/master/umd/core/include/nvdla/INetwork.h)).
-   - In NVIDIA's Linux ARM64 [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so), the complete C++ frontend (`nvdla::priv::CanonicalAST`, `engine_ast::*`, `LutManager`, INT8 quantization, FlatBuffers loadable packer) and the `nvdla_mtl_*` C boundary (`0x648150..0x6496d4`) are compiled in, but the `backend == 3` (`t254`) backend class (`Mtl3`) was compiled as `Mtl3Stub` (`0x649aa4`) and omitted from `nvdla_mtl_create` (`0x648150`), where `ctx->backend_obj` (`[ctx + 16]`) remains `NULL`.
-   - Meanwhile, the Windows ARM64 [`nvdla_compiler.dll`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/nvdla_compiler.dll) (`1.3.16.13`, built from the same source version for the same ARM64 ISA) contains the active `Mtl3` (`t254` Hummingbird) implementation (`0x626590` -> `0x617a70`, vtable `0x114e988`).
-   - Instead of grafting `Mtl3` into [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so) in C/C++, our existing scripts ([`probe_native_graph.py`](file:///home/johann/p16/n1x-lab/npu/scripts/probe_native_graph.py) and [`compile_superres_backend.py`](file:///home/johann/p16/n1x-lab/npu/scripts/compile_superres_backend.py)) spawn GDB twice to dump and reinject intermediate buffers and emulate [`nvdla_compiler.dll`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/nvdla_compiler.dll) under Python Unicorn, requiring manual per-operator constant-pointer relocation (`+0x258` weight, `+0x160` bias).
+   - In NVIDIA's Linux ARM64 `libnvdla_compiler.so`, the complete C++ frontend (`nvdla::priv::CanonicalAST`, `engine_ast::*`, `LutManager`, INT8 quantization, FlatBuffers loadable packer) and the `nvdla_mtl_*` C boundary (`0x648150..0x6496d4`) are compiled in, but the `backend == 3` (`t254`) backend class (`Mtl3`) was compiled as `Mtl3Stub` (`0x649aa4`) and omitted from `nvdla_mtl_create` (`0x648150`), where `ctx->backend_obj` (`[ctx + 16]`) remains `NULL`.
+   - Meanwhile, the Windows ARM64 `nvdla_compiler.dll` (`1.3.16.13`, built from the same source version for the same ARM64 ISA) contains the active `Mtl3` (`t254` Hummingbird) implementation (`0x626590` -> `0x617a70`, vtable `0x114e988`).
+   - Instead of grafting `Mtl3` into `libnvdla_compiler.so` in C/C++, our existing scripts ([`probe_native_graph.py`](../../scripts/probe_native_graph.py) and [`compile_superres_backend.py`](../../scripts/compile_superres_backend.py)) spawn GDB twice to dump and reinject intermediate buffers and emulate `nvdla_compiler.dll` under Python Unicorn, requiring manual per-operator constant-pointer relocation (`+0x258` weight, `+0x160` bias).
 
 2. **FP16-Only Compilation and Tensor Formats**:
-   - [`probe_native_graph.py`](file:///home/johann/p16/n1x-lab/npu/scripts/probe_native_graph.py) hardcodes `NvDlaWisdomSetDataType(..., 2)` and `NvDlaProfileSetComputePrecision(..., 2)` (`DATA_TYPE_HALF = 2`), and forces all input, intermediate, and output tensors to `DATA_TYPE_HALF` with `TENSOR_FORMAT_CHW16 = 3`.
+   - [`probe_native_graph.py`](../../scripts/probe_native_graph.py) hardcodes `NvDlaWisdomSetDataType(..., 2)` and `NvDlaProfileSetComputePrecision(..., 2)` (`DATA_TYPE_HALF = 2`), and forces all input, intermediate, and output tensors to `DATA_TYPE_HALF` with `TENSOR_FORMAT_CHW16 = 3`.
    - Neither implicit INT8 calibration (`NvDlaProfileSetComputePrecision(..., 4)`, `NvDlaProfileSetQuantizationMode`, `NvDlaTensorSetChannelDynamicRange`, `NvDlaTensorSetChannelOffset`) nor explicit `Quantize`/`Dequantize` nodes (`NvDlaProfileSetIsExplicitQuantization`, `NvDlaNetworkAddQuantize`, `NvDlaNetworkAddDequantize`) nor `DATA_TYPE_INT8 = 4` (`TENSOR_FORMAT_CHW32 = 5` / `TENSOR_FORMAT_CHW16 = 3`) are exposed.
 
 3. **Sequential Conv+ReLU Chain Restriction vs. Full DAGs**:
-   - [`superres_graph.py`](file:///home/johann/p16/n1x-lab/npu/scripts/superres_graph.py) and [`vision_graph.py`](file:///home/johann/p16/n1x-lab/npu/scripts/vision_graph.py) only construct linear chains of `NvDlaNetworkAddConvolution` and `NvDlaNetworkAddActivation(RELU)`.
-   - Because branching DAG topologies and operators such as `ElementWise` (residual `Add`), `Pooling` (`MaxPool`, `AvgPool`), `Scale` / `BatchNorm`, `Concatenation`, `FullyConnected`, `Deconvolution`, and `PixelShuffle` / `Resize` are not lowered, [`demo/vision.py`](file:///home/johann/p16/n1x-lab/npu/demo/vision.py) splits ResNet-18 into 12 separate convolution-only loadables and executes `MaxPool`, residual `Add`, `GlobalAveragePool`, and `Linear` on the CPU.
+   - [`superres_graph.py`](../../scripts/superres_graph.py) and [`vision_graph.py`](../../scripts/vision_graph.py) only construct linear chains of `NvDlaNetworkAddConvolution` and `NvDlaNetworkAddActivation(RELU)`.
+   - Because branching DAG topologies and operators such as `ElementWise` (residual `Add`), `Pooling` (`MaxPool`, `AvgPool`), `Scale` / `BatchNorm`, `Concatenation`, `FullyConnected`, `Deconvolution`, and `PixelShuffle` / `Resize` are not lowered, [`demo/vision.py`](../../demo/vision.py) splits ResNet-18 into 12 separate convolution-only loadables and executes `MaxPool`, residual `Add`, `GlobalAveragePool`, and `Linear` on the CPU.
 
 4. **Single-Buffer Assumptions in Loadable Materializers and Runtime Helpers**:
-   - [`Model::Model`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp#L210-L227) in [`runtime/cudla_model.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp) and [`materialize_loadable`](file:///home/johann/p16/n1x-lab/npu/runtime/loadable.py#L229-L369) in [`runtime/loadable.py`](file:///home/johann/p16/n1x-lab/npu/runtime/loadable.py) require a single scratch buffer at offset `0` (`bytes >= property_local_dram_pool_size`) and a single constant memory entry (`constants.size() == 1`). Multi-branch DAGs and INT8 networks that emit multiple scratch allocations or multiple constant initializers are rejected at load time.
-   - [`runtime/n1x_dla.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.py) and [`runtime/cudla_broker.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_broker.cpp) lack `CHW32` and `CHW16` INT8 tensor packing/unpacking and multi-input/multi-output task binding helpers.
+   - [`Model::Model`](../../runtime/cudla_model.cpp) in [`runtime/cudla_model.cpp`](../../runtime/cudla_model.cpp) and [`materialize_loadable`](../../runtime/loadable.py) in [`runtime/loadable.py`](../../runtime/loadable.py) require a single scratch buffer at offset `0` (`bytes >= property_local_dram_pool_size`) and a single constant memory entry (`constants.size() == 1`). Multi-branch DAGs and INT8 networks that emit multiple scratch allocations or multiple constant initializers are rejected at load time.
+   - [`runtime/n1x_dla.py`](../../runtime/n1x_dla.py) and [`runtime/cudla_broker.cpp`](../../runtime/cudla_broker.cpp) lack `CHW32` and `CHW16` INT8 tensor packing/unpacking and multi-input/multi-output task binding helpers.
 
 ### Overview
 
-We will replace the Python/GDB/Unicorn compilation bridge with a **native C/C++ compiler adapter library (`libn1x_compiler.so`) and CLI (`n1x-compile`)** that adapts Linux [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so) in-process, and extend the loadable materializer and runtime stack for full DAG and INT8 execution:
+We will replace the Python/GDB/Unicorn compilation bridge with a **native C/C++ compiler adapter library (`libn1x_compiler.so`) and CLI (`n1x-compile`)** that adapts Linux `libnvdla_compiler.so` in-process, and extend the loadable materializer and runtime stack for full DAG and INT8 execution:
 
 1. **In-Process Native ARM64 `Mtl3` Backend Graft (`runtime/n1x_compiler_shim.cpp`, `libn1x_compiler.so`)**:
-   - Load [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so) and map the ARM64 PE image of [`nvdla_compiler.dll`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/nvdla_compiler.dll) into the same native Linux ARM64 process.
+   - Load `libnvdla_compiler.so` and map the ARM64 PE image of `nvdla_compiler.dll` into the same native Linux ARM64 process.
    - Provide lightweight native C implementations of the ~25 Windows CRT/Win32 imports (`HeapAlloc`, `FlsGetValue`, virtual `/graph` in-memory directory fixture, and `x18` TEB register save/restore trampolines) and run the DLL's 1,767 C++ static initializers once on library load.
-   - Intercept `nvdla_mtl_create` (`0x648150`) and the `nvdla_mtl_*` boundary (`0x6481f0..0x6496d4`) in [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so) so `backend == 3` (`t254`) instantiates and dispatches directly to the native ARM64 `Mtl3` object (`0x626590` -> `0x617a70`) in the same address space.
+   - Intercept `nvdla_mtl_create` (`0x648150`) and the `nvdla_mtl_*` boundary (`0x6481f0..0x6496d4`) in `libnvdla_compiler.so` so `backend == 3` (`t254`) instantiates and dispatches directly to the native ARM64 `Mtl3` object (`0x626590` -> `0x617a70`) in the same address space.
    - Because the Linux frontend (`nvdla::priv::MTL`) and the `t254` `Mtl3` backend execute in the same process memory space, all `nvdla_mtl3_desc_entry_list` buffers and all weight, bias, batch-norm, and INT8 scale/zero-point pointers are valid native pointers—eliminating GDB, Unicorn, and manual pointer relocation.
 2. **Native C/C++ DAG & INT8 Compiler API and CLI (`runtime/n1x_compile.cpp`, `include/n1x_compiler.h`)**:
    - Expose the full `NvDla*` C API (`NvDlaCreateWisdom`, `NvDlaCreateNetwork`, `NvDlaNetworkAdd*`, `NvDlaProfileSetComputePrecision`, `NvDlaCompilerCompile`, `NvDlaCompilerGetLoadableImage`) from `libn1x_compiler.so`.
    - Build a native C++ compiler tool (`n1x-compile`) and Python Ctypes binding (`runtime/n1x_compiler.py`) that compile declarative DAG specifications and ONNX graphs containing arbitrary supported operators (`Convolution`, `Deconvolution`, `FullyConnected`, `Activation`, `Pooling`, `ElementWise`, `Scale`, `BatchNorm`, `Concatenation`, `PixelShuffle`, `Slice`, `Quantize`, `Dequantize`) in both `FP16` and `INT8` (implicit dynamic-range calibration and explicit `Q/DQ`) directly into `.nvda` loadables in milliseconds.
 3. **Multi-Pool Loadable Validation & INT8/Multi-IO Runtime Support (`runtime/cudla_model.cpp`, `runtime/loadable.py`, `runtime/n1x_dla.py`, `runtime/cudla_broker.cpp`, `runtime/cudla_broker.py`)**:
-   - Generalize [`Model::Model`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp#L210-L227) and [`materialize_loadable`](file:///home/johann/p16/n1x-lab/npu/runtime/loadable.py#L229-L369) to validate multi-entry local DRAM scratch pools and multi-entry global DRAM constant pools while remaining fail-closed on out-of-bounds ranges.
-   - Add `CHW32` and `CHW16` INT8 packing/unpacking (`pack_chw32_int8`, `unpack_chw32_int8`, `pack_chw16_int8`, `unpack_chw16_int8`, and scale/quantize helpers) and multi-input/multi-output tensor execution in [`runtime/n1x_dla.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.py) and [`runtime/cudla_broker.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_broker.cpp).
+   - Generalize [`Model::Model`](../../runtime/cudla_model.cpp) and [`materialize_loadable`](../../runtime/loadable.py) to validate multi-entry local DRAM scratch pools and multi-entry global DRAM constant pools while remaining fail-closed on out-of-bounds ranges.
+   - Add `CHW32` and `CHW16` INT8 packing/unpacking (`pack_chw32_int8`, `unpack_chw32_int8`, `pack_chw16_int8`, `unpack_chw16_int8`, and scale/quantize helpers) and multi-input/multi-output tensor execution in [`runtime/n1x_dla.py`](../../runtime/n1x_dla.py) and [`runtime/cudla_broker.cpp`](../../runtime/cudla_broker.cpp).
 4. **End-to-End Unified DAG & INT8 Hardware Qualification (`demo/vision.py`, `scripts/test_dla_runtime.py`, `scripts/test_linux_accel.py`, `scripts/test_cudla_api.cpp`)**:
    - Compile and qualify a unified multi-branch residual graph (`Convolution`, `Scale`/`BatchNorm`, `Activation`, `Pooling`, and `ElementWise` `SUM` in a single loadable) and an INT8 quantized loadable natively via `libn1x_compiler.so` and execute them on the physical N1X NPU.
 
 ### Goals
 
-- **Native In-Process C/C++ Compilation on Linux ARM64**: Adapt [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so) via in-process native ARM64 `Mtl3` grafting so `NvDlaCompilerCompile` runs natively in C/C++ without GDB, Unicorn, or manual pointer fixups.
+- **Native In-Process C/C++ Compilation on Linux ARM64**: Adapt `libnvdla_compiler.so` via in-process native ARM64 `Mtl3` grafting so `NvDlaCompilerCompile` runs natively in C/C++ without GDB, Unicorn, or manual pointer fixups.
 - **Full DAG & Operator Coverage**: Support multi-input, multi-output branching DAGs with `Convolution` (standard, strided, dilated, grouped/depthwise), `Deconvolution`, `FullyConnected`, `Activation` (`RELU`, `CLIP`, `SIGMOID`, `TANH`, `LEAKY`), `Pooling` (`MAX`, `MIN`, `AVERAGE`), `ElementWise` (`SUM`, `PROD`, `MAX`, `MIN`, `SUB`, `DIV`), `Scale`, `BatchNorm`, `Concatenation`, `PixelShuffle`, `Slice`, `Quantize`, and `Dequantize`.
 - **Full INT8 Precision Support**: Support implicit INT8 calibration (`NvDlaProfileSetComputePrecision(INT8)`, per-tensor and per-channel quantization modes, `NvDlaTensorSetChannelDynamicRange`) and explicit `Quantize`/`Dequantize` layers, with `INT8` (`CHW32` and `CHW16`) and mixed `FP16`-I/O / `INT8`-compute tensor bindings.
-- **Generalized Loadable Materializer & Runtime I/O**: Support multi-scratch and multi-constant memory pools in [`runtime/cudla_model.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp) and [`runtime/loadable.py`](file:///home/johann/p16/n1x-lab/npu/runtime/loadable.py), plus INT8 packing and multi-input/multi-output task execution in `libn1x_dla` and `cudla_broker`.
+- **Generalized Loadable Materializer & Runtime I/O**: Support multi-scratch and multi-constant memory pools in [`runtime/cudla_model.cpp`](../../runtime/cudla_model.cpp) and [`runtime/loadable.py`](../../runtime/loadable.py), plus INT8 packing and multi-input/multi-output task execution in `libn1x_dla` and `cudla_broker`.
 - **Physical N1X Qualification**: Verify native C/C++ compilation and hardware execution of a unified residual DAG loadable and an INT8 loadable against CPU reference oracles.
 
 ### Non-Goals
@@ -64,7 +64,7 @@ We will replace the Python/GDB/Unicorn compilation bridge with a **native C/C++ 
 
 The compilation and execution pipeline is divided into four layers:
 
-1. **In-Process `Mtl3` Native ARM64 Adapter (`libn1x_compiler.so`)**: Maps [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so) and the ARM64 PE image of [`nvdla_compiler.dll`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/nvdla_compiler.dll) into a single Linux process, resolves the 1-slot Itanium-vs-MSVC C++ vtable offset on `Mtl3`, and enables native in-process `NvDlaCompilerCompile` calls for target `t254`.
+1. **In-Process `Mtl3` Native ARM64 Adapter (`libn1x_compiler.so`)**: Maps `libnvdla_compiler.so` and the ARM64 PE image of `nvdla_compiler.dll` into a single Linux process, resolves the 1-slot Itanium-vs-MSVC C++ vtable offset on `Mtl3`, and enables native in-process `NvDlaCompilerCompile` calls for target `t254`.
 2. **Declarative DAG & INT8 Compiler Frontend (`n1x-compile` & `runtime/n1x_compiler.py`)**: Lowers multi-branch DAGs and ONNX graphs across all supported DLA operators and INT8 quantization modes (implicit dynamic range and explicit `Q/DQ`) through the `NvDla*` C API.
 3. **Generalized Loadable Materializer (`runtime/cudla_model.cpp` & `runtime/loadable.py`)**: Validates multi-scratch local DRAM pools, multi-initializer global DRAM constant pools, and `FP16`/`INT8` tensor descriptors.
 4. **Multi-IO & INT8 Runtime Execution (`runtime/n1x_dla.py`, `runtime/cudla_broker.cpp`, `runtime/cudla_broker.py`)**: Provides `CHW32`/`CHW16` INT8 tensor packing/unpacking, dynamic-range quantization helpers, and multi-input/multi-output task submission.
@@ -90,9 +90,9 @@ flowchart TD
 
 #### Binary Contract Between `libnvdla_compiler.so` and `nvdla_compiler.dll`
 
-Both [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so) (SHA-256 `28668e74...`) and [`nvdla_compiler.dll`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/nvdla_compiler.dll) (SHA-256 `0ef7c936...`) are compiled from NVIDIA DLA compiler version `1.3.16.13` for ARM64 (`aarch64`).
+Both `libnvdla_compiler.so` (SHA-256 `28668e74...`) and `nvdla_compiler.dll` (SHA-256 `0ef7c936...`) are compiled from NVIDIA DLA compiler version `1.3.16.13` for ARM64 (`aarch64`).
 
-In [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so), all 13 `nvdla_mtl_*` functions (`0x648150..0x6496d4`) already implement the `backend == 3` (`t254`) dispatch path against an `Mtl3*` pointer stored at `[ctx + 16]`. The only differences between the Linux `Mtl3Stub` (`0xc83e68`) and the Windows `Mtl3` implementation (`0x114e988`) are:
+In `libnvdla_compiler.so`, all 13 `nvdla_mtl_*` functions (`0x648150..0x6496d4`) already implement the `backend == 3` (`t254`) dispatch path against an `Mtl3*` pointer stored at `[ctx + 16]`. The only differences between the Linux `Mtl3Stub` (`0xc83e68`) and the Windows `Mtl3` implementation (`0x114e988`) are:
 1. **`nvdla_mtl_create` (`0x648150`)**: On Linux, when `w20 == 3` (`0x648190`), the allocation call for `ctx->backend_obj` (`[ctx + 16]`) was omitted by `#ifdef`, leaving `[ctx + 16] == NULL` and jumping to `free(ctx)`. On Windows (`0x4ca948`), `backend == 3` calls factory `0x626590` (allocating 232 bytes and running `Mtl3::Mtl3()` at `0x617a70`) and stores the pointer at `[ctx + 16]`.
 2. **`nvdla_mtl_get_version` (`0x649520`) and `nvdla_mtl_get_stat_version` (`0x6496d4`)**: On Linux, these stack-allocate a 112-byte `Mtl3Stub` via `Mtl3Stub::Mtl3Stub()` (`0x649aa4`), which returns error `2001` (`0x7d1`) for all queries.
 3. **Itanium vs. MSVC C++ Vtable Layout**: Linux uses the Itanium C++ ABI, which places two destructor slots (`D1` complete destructor at `+0` and `D0` deleting destructor at `+8`) at the start of the vtable, whereas Windows MSVC ARM64 places a single scalar deleting destructor at `+0`. Every virtual method after the destructor is in the identical order, shifted by `+8` bytes:
@@ -117,17 +117,17 @@ In [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt
 #### In-Process PE Loader, Win32 Import Thunks, and `x18` TEB Bridge
 
 `libn1x_compiler.so` (`runtime/n1x_compiler_shim.cpp`) performs a deterministic, one-time initialization (`pthread_once`):
-1. **Verify Pinned Binary Digests**: Compute SHA-256 of [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so) (`28668e74...`) and [`nvdla_compiler.dll`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/nvdla_compiler.dll) (`0ef7c936...`) before mapping; fail closed on mismatch.
+1. **Verify Pinned Binary Digests**: Compute SHA-256 of `libnvdla_compiler.so` (`28668e74...`) and `nvdla_compiler.dll` (`0ef7c936...`) before mapping; fail closed on mismatch.
 2. **Map `nvdla_compiler.dll` PE Sections**: Map the PE headers and sections into a contiguous `mmap` region (`PROT_READ | PROT_WRITE | PROT_EXEC`), apply PE base relocations (`IMAGE_REL_BASED_DIR64`) if the mapped base differs from `ImageBase` (`0x180000000`), and initialize the PE `.tls` template into a 64-slot TLS array referenced by a modeled 4-KiB Windows `TEB` (with stack base/limit populated from `pthread_getattr_np` so MSVC `__chkstk` stack probes succeed natively).
 3. **Bind PE Imports (`KERNEL32.dll`, `ADVAPI32.dll`, `dbghelp.dll`)**: Point each IAT entry at a native C thunk that saves/restores `x18` (`TEB`):
    - Heap & memory: `GetProcessHeap`, `HeapAlloc`, `HeapReAlloc`, `HeapFree`, `HeapSize`, `VirtualProtect` -> backed by `malloc`/`calloc`/`realloc`/`free` (tracking allocation sizes for `HeapSize`).
    - TLS / FLS / Synchronization: `TlsAlloc`, `TlsGetValue`, `TlsSetValue`, `TlsFree`, `FlsAlloc`, `FlsGetValue`, `FlsSetValue`, `FlsFree`, `InitializeCriticalSectionEx`, `EnterCriticalSection`, `LeaveCriticalSection`, `DeleteCriticalSection`, `InitializeSRWLock`, `AcquireSRWLockExclusive`, `ReleaseSRWLockExclusive`, `EncodePointer`, `DecodePointer`.
    - Virtual filesystem & environment: `GetEnvironmentVariableA`/`W` (returning `0` / `ERROR_ENVVAR_NOT_FOUND` for debug/random seeds so deterministic codegen runs), `GetFileAttributesExW` / `CreateFileW` / `CreateDirectoryW` (modeling absent `./compile_opt.json` and virtual `/graph`, `/graph/kernel_compile`, `/graph/linker` directories in memory without touching the host filesystem), `MultiByteToWideChar`, `WideCharToMultiByte`.
    - Timing & process info: `QueryPerformanceCounter`, `QueryPerformanceFrequency`, `GetCurrentProcessId`, `GetCurrentThreadId`, `GetSystemTimeAsFileTime`.
-4. **Execute PE CRT and C++ Static Initializers**: Using an inline assembly trampoline that sets `x18` to the modeled `TEB`, execute the CRT initializers (`0xf190e0` locale, `0xf267d0` heap, `0xf1dce0`/`0xf2fa98` FLS, `0xf1f750` lowio, `0xf07dc0` stdio) followed by `_initterm` (`0xf19358`) across `[0x10523b0, 0x1055af0)` (all 1,767 C++ static initializers, including the Hummingbird IR and target lookup tables).
+4. **Execute PE CRT and C++ Static Initializers**: Using an inline assembly trampoline that sets `x18` to the modeled `TEB`, execute the CRT initializers (`0xf190e0` locale, `0xf267d0` heap, `0xf1dce0`/`0xf2fa98` FLS, `0xf1f750` lowio, `0xf07dc0` stdio) followed by `_initterm` (`0xf19358`) across `0x10523b0, 0x1055af0)` (all 1,767 C++ static initializers, including the Hummingbird IR and target lookup tables).
 5. **Install the 14-Slot Itanium `Mtl3` Vtable and Hook `nvdla_mtl_create`**:
    - Construct a static 14-entry Itanium vtable (`g_linux_mtl3_vtable`) whose slots point to assembly trampolines that set `x18 = g_win_teb`, invoke the corresponding Windows `Mtl3` method (`0x61c070`, `0x6244b0`, `0x624ea0`, `0x53790`, `0x624630`, `0x624eb0`, `0x6244d0`, `0x624480`, `0x624420`, `0x6243a0`, `0x629d80`), and restore `x18`.
-   - Patch `nvdla_mtl_create` (`0x648198` in [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so)) and `nvdla_mtl_get_version` / `nvdla_mtl_get_stat_version` (`0x649520` / `0x6496d4`) in memory (`mprotect`) so that when `backend == 3`:
+   - Patch `nvdla_mtl_create` (`0x648198` in [`libnvdla_compiler.so`) and `nvdla_mtl_get_version` / `nvdla_mtl_get_stat_version` (`0x649520` / `0x6496d4`) in memory (`mprotect`) so that when `backend == 3`:
      - `nvdla_mtl_create` calls the Windows `Mtl3` factory (`0x626590`), overwrites its vtable pointer (`*obj`) with `g_linux_mtl3_vtable`, stores `obj` at `[ctx + 16]`, and returns `ctx`.
      - `nvdla_mtl_get_version` and `nvdla_mtl_get_stat_version` query `0x629d80` (`mtlGetVersion`) on a temporary `Mtl3` instance.
 
@@ -190,7 +190,7 @@ Complex branching DAGs (such as multi-block residual networks) and INT8 loadable
 - Multiple constant memory entries (`flags == 3`) or multiple raw interface-0 initializer blobs within the global DRAM constant pool (`property_global_dram_pool_size`).
 - Input/output tensor descriptors with `dataType == CUDLA_DATA_TYPE_INT8` (`4`) as well as `CUDLA_DATA_TYPE_HALF` (`2`), and `dataFormat` values including `CHW32` (`5`) and `CHW16` (`3`).
 
-We will update both [`Model::Model`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp#L210-L227) in [`runtime/cudla_model.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp) and [`materialize_loadable`](file:///home/johann/p16/n1x-lab/npu/runtime/loadable.py#L229-L369) in [`runtime/loadable.py`](file:///home/johann/p16/n1x-lab/npu/runtime/loadable.py):
+We will update both [`Model::Model`](../../runtime/cudla_model.cpp) in [`runtime/cudla_model.cpp`](../../runtime/cudla_model.cpp) and [`materialize_loadable`](../../runtime/loadable.py) in [`runtime/loadable.py`](../../runtime/loadable.py):
 1. **Local DRAM Scratch Pool Coverage**:
    - Sum the covered bytes across all unique task address entries referencing scratch memory (`memory.scratch == true`, `flags == 1` with empty content names), and verify that the total task-addressed scratch capacity is `>= pools["property_local_dram_pool_size"]`.
 2. **Global DRAM Constant Pool Coverage**:
@@ -206,12 +206,12 @@ On DLA 3.16 (`t254`), the hardware surface formats for feature-data tensors (`da
 - **`TENSOR_FORMAT_CHW16` (`dataFormat == 3`)**: Channels grouped into blocks of 16 (`ceil(C / 16)` blocks of `[H, W, 16]`), with 256-byte row alignment (`stride[1] = align(W * 16 * elem_bytes, 256)`). Used for `FP16` (`elem_bytes = 2`, 32 bytes/pixel-group) and `INT8` (`elem_bytes = 1`, 16 bytes/pixel-group).
 - **`TENSOR_FORMAT_CHW32` (`dataFormat == 5`)**: Channels grouped into blocks of 32 (`ceil(C / 32)` blocks of `[H, W, 32]`), with 256-byte row alignment (`stride[1] = align(W * 32 * elem_bytes, 256)`). Used as the native high-throughput format for `INT8` (`elem_bytes = 1`, 32 bytes/pixel-group).
 
-We will add to [`runtime/n1x_dla.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.py):
+We will add to [`runtime/n1x_dla.py`](../../runtime/n1x_dla.py):
 - `pack_chw32_int8(nchw, stride_w=None)` and `unpack_chw32_int8(packed, shape, stride_w=None)`
 - `pack_chw16_int8(nchw, stride_w=None)` and `unpack_chw16_int8(packed, shape, stride_w=None)`
 - `quantize_int8(fp_array, scale)` and `dequantize_int8(int8_array, scale)`
 - `pack_tensor_for_desc(array, desc, scale=1.0)` and `unpack_tensor_from_desc(raw_bytes, desc, scale=1.0)`: inspects `desc.dataType` (`HALF=2`, `INT8=4`), `desc.dataFormat` (`CHW16=3`, `CHW32=5`), and `desc.stride[0..3]` from the loadable tensor descriptor to pack/unpack any tensor according to its exact compiled stride and format.
-- Update [`runtime/cudla_broker.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_broker.cpp) and [`runtime/cudla_broker.py`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_broker.py) so a single loaded model in the broker can bind arbitrary numbers of input and output tensors (`numInputTensors >= 1`, `numOutputTensors >= 1`) and report each tensor's `dataType`, `dataFormat`, and `stride` array in the JSON `load` response.
+- Update [`runtime/cudla_broker.cpp`](../../runtime/cudla_broker.cpp) and [`runtime/cudla_broker.py`](../../runtime/cudla_broker.py) so a single loaded model in the broker can bind arbitrary numbers of input and output tensors (`numInputTensors >= 1`, `numOutputTensors >= 1`) and report each tensor's `dataType`, `dataFormat`, and `stride` array in the JSON `load` response.
 
 ---
 
@@ -219,11 +219,11 @@ We will add to [`runtime/n1x_dla.py`](file:///home/johann/p16/n1x-lab/npu/runtim
 
 ### 1. Extending the Python + GDB + Unicorn Hybrid Bridge (`probe_native_graph.py` + `compile_superres_backend.py`)
 
-- **Approach**: Keep the two-stage GDB capture/replay scripts (`capture_native_mtl.gdb`, `capture_native_translate.gdb`, `package_windows_output.gdb`) and extend the Python Unicorn emulator script ([`compile_superres_backend.py`](file:///home/johann/p16/n1x-lab/npu/scripts/compile_superres_backend.py)) to relocate constant pointers for every new operator (`Scale`, `BatchNorm`, `FullyConnected`, `Deconvolution`, `Quantize`, `Dequantize`, and activation LUTs).
+- **Approach**: Keep the two-stage GDB capture/replay scripts (`capture_native_mtl.gdb`, `capture_native_translate.gdb`, `package_windows_output.gdb`) and extend the Python Unicorn emulator script ([`compile_superres_backend.py`](../../scripts/compile_superres_backend.py)) to relocate constant pointers for every new operator (`Scale`, `BatchNorm`, `FullyConnected`, `Deconvolution`, `Quantize`, `Dequantize`, and activation LUTs).
 - **Trade-offs**:
   - *Pros*: Reuses the existing Unicorn test harness without writing a native C/C++ PE loader shim.
   - *Cons*: Spawns two GDB processes per compilation, emulates hundreds of millions of ARM64 instructions in software on an already-native ARM64 CPU (taking tens of seconds to minutes per model), and requires reverse-engineering exact byte offsets inside the 34,816-byte `kind 3` (`nvdla_mtl_operation_container`) union for every operator and quantization mode. Any missed pointer offset causes a silent read fault or corrupted weights inside Unicorn.
-- **Decision**: Rejected. Grafting `Mtl3` into [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so) in-process executes natively on the ARM64 CPU in milliseconds and eliminates manual constant-pointer relocation because the Linux frontend and `Mtl3` backend share a single virtual address space.
+- **Decision**: Rejected. Grafting `Mtl3` into `libnvdla_compiler.so` in-process executes natively on the ARM64 CPU in milliseconds and eliminates manual constant-pointer relocation because the Linux frontend and `Mtl3` backend share a single virtual address space.
 
 ### 2. Forking the 2018 Open-Source `github.com/nvdla/sw` Compiler Repository
 
@@ -231,14 +231,14 @@ We will add to [`runtime/n1x_dla.py`](file:///home/johann/p16/n1x-lab/npu/runtim
 - **Trade-offs**:
   - *Pros*: Provides modifiable C++ source code for the frontend parser and AST passes.
   - *Cons*: Open-source `nvdla/sw` targets NVDLA 1.0 (`nv_full` / `nv_small` and Xavier `1.x`), whose backend emits fixed-function hardware register lists (`OperationList`, `SurfaceList`, `LutList`). The N1X NPU (`t254`, DLA 3.16) uses the proprietary Hummingbird / RVV instruction-stream architecture (`CPIPE0..3` execution streams, 256-byte `task-0-net` binary headers, and ~28-KiB per-layer `task-0-rvv-mem` microcode binaries). None of the 16-MiB Hummingbird IR builder, register allocator, or microcode assembler exists in `nvdla/sw`.
-- **Decision**: Rejected for backend code generation. We adopt the public `nvdla/sw` C ABI declarations (`NvDlaType.h`) for our native C/C++ frontend while grafting the verified `1.3.16.13` `Mtl3` binary backend from [`nvdla_compiler.dll`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/nvdla_compiler.dll) into [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so).
+- **Decision**: Rejected for backend code generation. We adopt the public `nvdla/sw` C ABI declarations (`NvDlaType.h`) for our native C/C++ frontend while grafting the verified `1.3.16.13` `Mtl3` binary backend from `nvdla_compiler.dll` into `libnvdla_compiler.so`.
 
 ### 3. Calling the Windows `nvdla_compiler.dll` C API Frontend Directly Instead of Grafting `Mtl3` into Linux `libnvdla_compiler.so`
 
-- **Approach**: Map [`nvdla_compiler.dll`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/nvdla_compiler.dll) into a Linux process and invoke its exported `NvDlaCreateNetwork` / `NvDlaCompilerCompile` PE exports directly, bypassing Linux [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so) altogether.
+- **Approach**: Map `nvdla_compiler.dll` into a Linux process and invoke its exported `NvDlaCreateNetwork` / `NvDlaCompilerCompile` PE exports directly, bypassing Linux `libnvdla_compiler.so` altogether.
 - **Trade-offs**:
   - *Pros*: Uses a single vendor binary (`nvdla_compiler.dll`) rather than combining `libnvdla_compiler.so` and `nvdla_compiler.dll`.
-  - *Cons*: Every `NvDla*` call into `nvdla_compiler.dll` would require an `x18` TEB trampoline, and the Windows frontend exercises a much broader surface of Windows CRT APIs, MSVC C++ exception handling (`__CxxFrameHandler4` / `.pdata` unwind tables), and Windows thread-local storage across AST canonicalization and FlatBuffers serialization. By contrast, Linux [`libnvdla_compiler.so`](file:///home/johann/p16/n1x-lab/npu/sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so) runs all frontend graph construction, optimization, INT8 calibration, and FlatBuffers serialization natively against Linux `glibc` and `libstdc++`, crossing into `Mtl3` only at the 12-method `nvdla_mtl_*` boundary (`0x648150..0x6496d4`), whose required Win32 imports (~25 functions) are already enumerated and verified in [`compile_superres_backend.py`](file:///home/johann/p16/n1x-lab/npu/scripts/compile_superres_backend.py).
+  - *Cons*: Every `NvDla*` call into `nvdla_compiler.dll` would require an `x18` TEB trampoline, and the Windows frontend exercises a much broader surface of Windows CRT APIs, MSVC C++ exception handling (`__CxxFrameHandler4` / `.pdata` unwind tables), and Windows thread-local storage across AST canonicalization and FlatBuffers serialization. By contrast, Linux `libnvdla_compiler.so` runs all frontend graph construction, optimization, INT8 calibration, and FlatBuffers serialization natively against Linux `glibc` and `libstdc++`, crossing into `Mtl3` only at the 12-method `nvdla_mtl_*` boundary (`0x648150..0x6496d4`), whose required Win32 imports (~25 functions) are already enumerated and verified in [`compile_superres_backend.py`](../../scripts/compile_superres_backend.py).
 - **Decision**: Rejected. Grafting `Mtl3` at the `nvdla_mtl_*` boundary keeps the entire `NvDla*` C API native Linux ELF code and confines the PE compatibility layer to the already-characterized `Mtl3` backend methods.
 
 ### 4. INT8 Quantization Approaches: Implicit Calibration vs. Explicit Q/DQ vs. TensorRT Builder (`nvinfer_11.dll` + `nvonnxparser_11.dll`)
@@ -314,38 +314,38 @@ NVIDIA's DLA stack supports three mechanisms for producing INT8 loadables. We ev
 
 ### 5. Loadable Materializer Generalization (`runtime/cudla_model.cpp` & `runtime/loadable.py`)
 
-- **[`runtime/cudla_model.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp)**:
-  - In [`Model::Model`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp#L210-L227):
+- **[`runtime/cudla_model.cpp`](../../runtime/cudla_model.cpp)**:
+  - In [`Model::Model`](../../runtime/cudla_model.cpp):
     - Replace the single-scratch check (`local_covered`) with an aggregate scratch coverage check across unique task-referenced scratch memory entries (`layout[mem_id].scratch`), requiring the summed task-addressed scratch bytes to be `>= pools["property_local_dram_pool_size"]`.
     - Replace `constants.size() == 1` with multi-entry constant validation: require `!constants.empty()`, require every entry in `constants` to have `flags == 3` (`ALLOC | SET`), `valid == true`, and full range coverage in `ranges`, and require the sum of `c.end` across all `constants` entries to equal `pools["property_global_dram_pool_size"]` (or `>= global` when individual constant memories are padded).
-- **[`runtime/loadable.py`](file:///home/johann/p16/n1x-lab/npu/runtime/loadable.py)**:
-  - In [`materialize_loadable`](file:///home/johann/p16/n1x-lab/npu/runtime/loadable.py#L229-L369):
-    - Mirror the exact aggregate scratch coverage and multi-constant-pool validation rules from [`runtime/cudla_model.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_model.cpp).
+- **[`runtime/loadable.py`](../../runtime/loadable.py)**:
+  - In [`materialize_loadable`](../../runtime/loadable.py):
+    - Mirror the exact aggregate scratch coverage and multi-constant-pool validation rules from [`runtime/cudla_model.cpp`](../../runtime/cudla_model.cpp).
 
 ### 6. INT8 Tensor Packing & Multi-IO Runtime Support (`runtime/n1x_dla.py`, `runtime/cudla_broker.cpp`, `runtime/cudla_broker.py`)
 
-- **[`runtime/n1x_dla.py`](file:///home/johann/p16/n1x-lab/npu/runtime/n1x_dla.py)**:
+- **[`runtime/n1x_dla.py`](../../runtime/n1x_dla.py)**:
   - Add `pack_chw32_int8(nchw, stride_w=None)` and `unpack_chw32_int8(packed, shape, stride_w=None)` implementing 32-channel block packing (`[1, ceil(C/32), H, W, 32]`) with 256-byte row stride alignment.
   - Add `pack_chw16_int8(nchw, stride_w=None)` and `unpack_chw16_int8(packed, shape, stride_w=None)` implementing 16-channel block packing (`[1, ceil(C/16), H, W, 16]`) with 256-byte row stride alignment.
   - Add `quantize_int8(array, scale)` and `dequantize_int8(array, scale)` converting between `float32`/`float16` and symmetric `int8` (`clip(round(x / scale), -127, 127)`).
   - Add `pack_tensor_for_desc(array, desc, scale=1.0)` and `unpack_tensor_from_desc(data, desc, scale=1.0)` that dispatch automatically based on `desc.data_type` (`HALF=2`, `INT8=4`), `desc.data_format` (`CHW16=3`, `CHW32=5`), and `desc.stride`.
-- **[`runtime/cudla_broker.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_broker.cpp) & [`runtime/cudla_broker.py`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_broker.py)**:
-  - Extend the broker `ModelSlot` in [`runtime/cudla_broker.cpp`](file:///home/johann/p16/n1x-lab/npu/runtime/cudla_broker.cpp) to store vectors of input and output `cudlaModuleTensorDescriptor`s and registered CUDA device buffers (`num_inputs >= 1`, `num_outputs >= 1`) rather than assuming a single input and single output tensor.
+- **[`runtime/cudla_broker.cpp`](../../runtime/cudla_broker.cpp) & [`runtime/cudla_broker.py`](../../runtime/cudla_broker.py)**:
+  - Extend the broker `ModelSlot` in [`runtime/cudla_broker.cpp`](../../runtime/cudla_broker.cpp) to store vectors of input and output `cudlaModuleTensorDescriptor`s and registered CUDA device buffers (`num_inputs >= 1`, `num_outputs >= 1`) rather than assuming a single input and single output tensor.
   - Include per-tensor `data_type`, `data_format`, `shape`, and `stride` metadata in the broker's `load` response, and support multi-input/multi-output payload framing in `run`.
 
 ### 7. Build System, Unified Vision Graph & Qualification Suite (`Makefile`, `scripts/vision_graph.py`, `demo/vision.py`, Tests)
 
-- **[`Makefile`](file:///home/johann/p16/n1x-lab/npu/Makefile)**:
+- **[`Makefile`](../../Makefile)**:
   - Add build targets `runtime/libn1x_compiler.so` and `runtime/n1x-compile` under `make runtime` / `make compiler`.
   - Add `make test-compiler` to run the native C/C++ DAG and INT8 compilation and execution test suite.
-- **[`scripts/vision_graph.py`](file:///home/johann/p16/n1x-lab/npu/scripts/vision_graph.py) & [`demo/vision.py`](file:///home/johann/p16/n1x-lab/npu/demo/vision.py)**:
-  - Update [`scripts/vision_graph.py`](file:///home/johann/p16/n1x-lab/npu/scripts/vision_graph.py) to compile models natively through `runtime/n1x_compiler.py` (`libn1x_compiler.so`) and support compiling unified residual subgraphs (`Convolution` + `BatchNorm`/`Scale` + `ReLU` + `Pooling` + `ElementWise` `SUM` + `FullyConnected`) as well as INT8-calibrated loadables.
+- **[`scripts/vision_graph.py`](../../scripts/vision_graph.py) & [`demo/vision.py`](../../demo/vision.py)**:
+  - Update [`scripts/vision_graph.py`](../../scripts/vision_graph.py) to compile models natively through `runtime/n1x_compiler.py` (`libn1x_compiler.so`) and support compiling unified residual subgraphs (`Convolution` + `BatchNorm`/`Scale` + `ReLU` + `Pooling` + `ElementWise` `SUM` + `FullyConnected`) as well as INT8-calibrated loadables.
 - **Verification & Qualification Suite**:
   - `scripts/test_n1x_compiler.py` (*New File*):
     - Verifies that `libn1x_compiler.so` compiles existing fixtures (`relu`, `conv1x1`, `conv1x1_relu`) natively in-process in milliseconds and produces valid `.nvda` loadables accepted by `Model::Model` and `materialize_loadable`.
     - Compiles and verifies a **branching residual DAG** (`Input -> Conv3x3 -> BatchNorm -> ReLU -> Conv3x3 -> BatchNorm` merged via `ElementWise(SUM)` with a skip branch `Input -> Conv1x1 -> BatchNorm`, followed by `ReLU -> MaxPool -> AvgPool -> FullyConnected`).
     - Compiles and verifies **INT8 models**: both implicit dynamic-range calibrated (`compute_precision="int8"` with `INT8` `CHW32` I/O and with `FP16` `CHW16` I/O) and explicit `Quantize`/`Dequantize` (`explicit_qdq=True`).
-  - [`scripts/test_cudla_model.py`](file:///home/johann/p16/n1x-lab/npu/scripts/test_cudla_model.py) & [`scripts/test_dla_runtime.py`](file:///home/johann/p16/n1x-lab/npu/scripts/test_dla_runtime.py):
+  - [`scripts/test_cudla_model.py`](../../scripts/test_cudla_model.py) & [`scripts/test_dla_runtime.py`](../../scripts/test_dla_runtime.py):
     - Add unit tests for multi-scratch and multi-constant loadable materialization and `CHW32`/`CHW16` INT8 packing roundtrips.
   - **Live Hardware Qualification on N1X NPU**:
     - Execute the unified branching residual DAG `.nvda` loadable and the INT8 quantized `.nvda` loadable on `/dev/accel/accel0` (`n1x_npu_boot` + `n1x_dla_accel`) and verify hardware outputs against NumPy/ONNX reference evaluators within FP16 and INT8 numerical tolerances.
