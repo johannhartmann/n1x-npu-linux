@@ -33,7 +33,8 @@ struct n1x_dla_accel_info {
 	__u64 reserved;
 };
 /* Relative to the uploaded image, in the firmware task's address-index order.
- * These ranges do not validate the instruction stream inside that image. */
+ * These ranges do not validate the instruction stream inside that image.
+ */
 struct n1x_dla_accel_range { __u64 offset, bytes; };
 struct n1x_dla_accel_exec {
 	__u64 image_ptr, ranges_ptr, writable_ranges_ptr;

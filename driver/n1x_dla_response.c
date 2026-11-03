@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include "n1x_dla_response.h"
 
@@ -15,6 +15,7 @@ int n1x_dla_take_response(const struct n1x_dla_io *io,
 	struct n1x_dla_response captured;
 	__u32 status;
 	int err;
+
 	if (!io || !io->read32 || !io->write32 || !response)
 		return -EINVAL;
 	err = io->read32(io->context, IRQSTAT, &status);
@@ -40,7 +41,7 @@ int n1x_dla_take_response(const struct n1x_dla_io *io,
 	err = io->write32(io->context, MAILBOX0, N1X_DLA_RESPONSE_ACK);
 	if (err)
 		return err;
- *response = captured;
+	*response = captured;
 	return 0;
 }
 
@@ -56,6 +57,6 @@ int n1x_dla_decode_response(const struct n1x_dla_response *response,
 	decoded.status = (response->word >> 16) & 0xff;
 	decoded.upper = response->word >> 24;
 	decoded.data = response->data;
- *fields = decoded;
+	*fields = decoded;
 	return 0;
 }

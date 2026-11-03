@@ -5,7 +5,8 @@
 
 /* Maps 1/2 correspond to Windows context field +0x478. DIRECT means no
  * translation table; it does not claim that the Windows mode-0 installer works.
- * None of these modes is autodetected for the live P16. */
+ * None of these modes is autodetected for the live P16.
+ */
 enum n1x_dla_register_map {
 	N1X_DLA_MAP_DIRECT = 0,
 	N1X_DLA_MAP_WINDOWS_1 = 1,

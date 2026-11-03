@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include "n1x_dla_command.h"
 #include "n1x_dla_preempt.h"
@@ -14,7 +14,7 @@ int n1x_dla_preempt(const struct n1x_dla_io *io,
 
 	if (!result)
 		return -EINVAL;
- *result = (struct n1x_dla_preempt_result){0};
+	*result = (struct n1x_dla_preempt_result){0};
 	if (!io || !io->read32 || !io->write32 || !io->delay_us ||
 		!ops || !ops->snapshot || !dma || (dma & 255) ||
 		dma > ((__u64)1 << 36) - N1X_DLA_PREEMPT_REQUEST_BYTES || !task_fence)

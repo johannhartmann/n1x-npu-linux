@@ -405,6 +405,7 @@ static bool n1x_boot_hfrp_allowed(u32 offset, bool write)
 static int n1x_boot_hfrp_read(void *context, u32 offset, u32 *value)
 {
 	struct n1x_boot_endpoint *endpoint = context;
+
 	if (!endpoint->hfrp || !n1x_boot_hfrp_allowed(offset, false))
 		return -EINVAL;
 	 *value = readl(endpoint->hfrp + offset);
@@ -414,6 +415,7 @@ static int n1x_boot_hfrp_read(void *context, u32 offset, u32 *value)
 static int n1x_boot_hfrp_write(void *context, u32 offset, u32 value)
 {
 	struct n1x_boot_endpoint *endpoint = context;
+
 	if (!endpoint->hfrp || !n1x_boot_hfrp_allowed(offset, true))
 		return -EINVAL;
 	writel(value, endpoint->hfrp + offset);
@@ -422,7 +424,8 @@ static int n1x_boot_hfrp_write(void *context, u32 offset, u32 value)
 
 /* Verify the complete immutable capture before parsing; synthetic/default
  * policy is never accepted as a hardware input. This file is locally acquired,
- * not redistributed vendor firmware. */
+ * not redistributed vendor firmware.
+ */
 static int n1x_boot_board_policy(const struct firmware *firmware)
 {
 	static const u8 expected[SHA256_DIGEST_SIZE] = {
@@ -433,6 +436,7 @@ static int n1x_boot_board_policy(const struct firmware *firmware)
 	};
 	u8 digest[SHA256_DIGEST_SIZE];
 	int err;
+
 	if (!firmware || !firmware->data || !firmware->size ||
 		firmware->size > 0x110000 ||
 		(strict_platform && firmware->size != 0x110000))
@@ -463,6 +467,7 @@ static int n1x_boot_prepare_hfrp_once(void)
 	struct n1x_dla_io io;
 	u32 stamp;
 	int err;
+
 	if (!enable_hfrp || !n1x_boot_machine())
 		return -EPERM;
 	if (!boot_dla || !boot_dla->hfrp || !boot_sroot)
@@ -689,7 +694,7 @@ static int n1x_boot_ping_once(void)
 	if (!boot_ping.buffer)
 		return -ENOMEM;
 	if (!boot_ping.dma || (boot_ping.dma & 255) || boot_ping.dma > maximum ||
-		4095 > maximum - boot_ping.dma) {
+		maximum - boot_ping.dma < 4095) {
 		err = -ERANGE;
 		goto free;
 	}
@@ -760,7 +765,7 @@ static int n1x_boot_read_config_once(void)
 	if (!boot_config.buffer)
 		return -ENOMEM;
 	if (!boot_config.dma || (boot_config.dma & 255) || boot_config.dma > maximum ||
-		4095 > maximum - boot_config.dma) {
+		maximum - boot_config.dma < 4095) {
 		err = -ERANGE;
 		goto free;
 	}
@@ -900,7 +905,7 @@ static int n1x_boot_apply_config_once(void)
 	if (err)
 		return err;
 	if (!boot_config.dma || (boot_config.dma & 255) || boot_config.dma > maximum ||
-		4095 > maximum - boot_config.dma)
+		maximum - boot_config.dma < 4095)
 		return -ERANGE;
 	err = n1x_dla_prepare_default_config(boot_config.buffer, 4096);
 	if (err)
@@ -964,7 +969,7 @@ static int n1x_boot_apply_lpwr_once(void)
 	if (!boot_lpwr.buffer)
 		return -ENOMEM;
 	if (!boot_lpwr.dma || (boot_lpwr.dma & 255) || boot_lpwr.dma > maximum ||
-		4095 > maximum - boot_lpwr.dma) {
+		maximum - boot_lpwr.dma < 4095) {
 		err = -ERANGE;
 		goto free;
 	}
@@ -1024,6 +1029,7 @@ static int n1x_boot_drain_task_idle(struct n1x_dla_job *task)
 	struct n1x_dla_response response;
 	u32 word, data, i;
 	int err;
+
 	if (boot_queue.poisoned || task->idle_blocked)
 		return -ENOTRECOVERABLE;
 	if (boot_queue.active)
@@ -1070,7 +1076,8 @@ static int n1x_boot_publish_job(void *context, u32 value)
 	struct n1x_dla_job *task = context;
 	u8 *p = task->buffer;
 	/* Both owned bootstrap descriptors were built by the fenced-v2 serializer:
-	 * WRITE_SEM begins at 64, its value is at 73. No user descriptor is patched. */
+	 * WRITE_SEM begins at 64, its value is at 73. No user descriptor is patched.
+	 */
 	if (p[64] != 0x80 || p[60] != 64 || p[62] != 14)
 		return -EINVAL;
 	p[73] = value;
@@ -1085,7 +1092,8 @@ static int n1x_boot_publish_job(void *context, u32 value)
 static int n1x_boot_read_job_fence(void *context, u32 *value)
 {
 	struct n1x_dla_job *task = context;
- *value = le32_to_cpu(READ_ONCE(*(__le32 *)(task->buffer + 768)));
+
+	*value = le32_to_cpu(READ_ONCE(*(__le32 *)(task->buffer + 768)));
 	/* Acquire result reads after the device's completion word. */
 	dma_rmb();
 	return 0;
@@ -1095,6 +1103,7 @@ static int n1x_boot_run_task(struct n1x_dla_job *task)
 {
 	struct n1x_dla_io io = {boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
 	struct n1x_dla_job_ops ops = {task, n1x_boot_publish_job, n1x_boot_read_job_fence};
+
 	return n1x_dla_job_execute(&boot_queue, &io, &ops, task);
 }
 
@@ -1127,7 +1136,7 @@ static int n1x_boot_bypass_task_once(void)
 	if (!boot_task.buffer)
 		return -ENOMEM;
 	if (!boot_task.dma || (boot_task.dma & 255) || boot_task.dma > maximum ||
-		4095 > maximum - boot_task.dma) {
+		maximum - boot_task.dma < 4095) {
 		err = -ERANGE;
 		goto free;
 	}
@@ -1182,6 +1191,7 @@ static int n1x_boot_validate_relu_firmware(const struct firmware *firmware)
 {
 	static const u8 expected[SHA256_DIGEST_SIZE] = {0xb5, 0x79, 0x2e, 0xcf, 0xbd, 0xc5, 0xd1, 0x90, 0xfe, 0xc9, 0xcd, 0xf7, 0xec, 0xc1, 0x7c, 0x7b, 0xa6, 0x91, 0x9a, 0x42, 0xd5, 0xc1, 0x52, 0x8e, 0x2a, 0xcb, 0xcc, 0x2f, 0xc4, 0x7f, 0x99, 0x7c};
 	u8 digest[SHA256_DIGEST_SIZE];
+
 	if (!firmware || !firmware->data || firmware->size != N1X_RELU_BYTES)
 		return -EBADMSG;
 	sha256(firmware->data, firmware->size, digest);
@@ -1285,6 +1295,7 @@ static ssize_t relu_probe_store(struct device *dev, struct device_attribute *att
 								const char *buf, size_t count)
 {
 	int err;
+
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "run"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
@@ -1306,6 +1317,7 @@ static DEVICE_ATTR_WO(relu_probe);
 static ssize_t relu_status_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	ssize_t size;
+
 	mutex_lock(&boot_lock);
 	if (!boot_dla || boot_dla->dev != dev) {
 		mutex_unlock(&boot_lock);
@@ -1391,6 +1403,7 @@ static ssize_t prepare_hfrp_store(struct device *dev, struct device_attribute *a
 				const char *buf, size_t count)
 {
 	int err;
+
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "prepare"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
@@ -1418,6 +1431,7 @@ static ssize_t query_power_state_store(struct device *dev, struct device_attribu
 {
 	struct n1x_dla_io io;
 	int err;
+
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "query"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
@@ -1453,6 +1467,7 @@ static DEVICE_ATTR_WO(query_power_state);
 static ssize_t hfrp_status_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	ssize_t size;
+
 	mutex_lock(&boot_lock);
 	if (!boot_dla || boot_dla->dev != dev) {
 		mutex_unlock(&boot_lock);
@@ -1681,6 +1696,7 @@ static ssize_t shutdown_store(struct device *dev, struct device_attribute *attr,
 					const char *buf, size_t count)
 {
 	int err;
+
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "stop"))
 		return -EPERM;
 	err = n1x_boot_stop_device(dev);
@@ -1691,15 +1707,14 @@ static DEVICE_ATTR_WO(shutdown);
 static ssize_t shutdown_status_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	ssize_t size;
+
 	mutex_lock(&boot_lock);
 	if (!boot_dla || boot_dla->dev != dev) {
 		mutex_unlock(&boot_lock);
 		return -ENODEV;
 	}
 	size = sysfs_emit(buf,
-		"attempted=%u stage=%s error=%d accepted=%u state_valid=%u state=%#x hardware_off=%u released=%u hfrp_held=%u upload_held=%u irq_owned=%#x irq_before=%#x irq_after=%#x irq_readback=%u "
-		"power_attempted=%u power_head_attempted=%u power_reply_valid=%u power_reply=%#x power_length=%u power_payload=%*phN "
-		"query_head_attempted=%u query_reply_valid=%u query_reply=%#x query_length=%u query_payload=%*phN channel=%u pending=%u\n",
+		"attempted=%u stage=%s error=%d accepted=%u state_valid=%u state=%#x hardware_off=%u released=%u hfrp_held=%u upload_held=%u irq_owned=%#x irq_before=%#x irq_after=%#x irq_readback=%u power_attempted=%u power_head_attempted=%u power_reply_valid=%u power_reply=%#x power_length=%u power_payload=%*phN query_head_attempted=%u query_reply_valid=%u query_reply=%#x query_length=%u query_payload=%*phN channel=%u pending=%u\n",
 		boot_shutdown.attempted, boot_shutdown.stage ?: "not-started", boot_shutdown.error,
 		boot_shutdown.transport.accepted, boot_shutdown.transport.state.valid, boot_shutdown.transport.state.raw,
 		boot_shutdown.hardware_off, boot_shutdown.released, boot_hfrp_held, boot_upload_held,

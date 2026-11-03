@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include <linux/string.h>
 #include "n1x_hfrp.h"
@@ -33,7 +33,7 @@ static int hfrp_read_byte(const struct n1x_dla_io *io, __u32 offset, __u8 *byte)
 	int err = io->read32(io->context, offset & ~3U, &word);
 
 	if (!err)
-	 *byte = (__u8)(word >> ((offset & 3U) * 8U));
+		*byte = (__u8)(word >> ((offset & 3U) * 8U));
 	return err;
 }
 
@@ -244,7 +244,8 @@ static int hfrp_collect(const struct n1x_dla_io *io,
 			result->reply = reply;
 			result->reply_valid = 0;
 			return -EPROTO;
-		} else {
+		}
+		if (!startup && reply.sequence != N1X_HFRP_ASYNC_SEQ) {
 			result->reply = reply;
 			result->reply_valid = 1;
 		}
@@ -480,7 +481,8 @@ int n1x_hfrp_stop(const struct n1x_dla_io *io,
 	if (err)
 		return err;
 	/* Original KMD query d41630 masks these three gating flags. Preserve
-	 * upper bits in diagnostics; they are not additional gating conditions. */
+	 * upper bits in diagnostics; they are not additional gating conditions.
+	 */
 	if (!result->state.valid || (result->state.raw & 7) != 7) {
 		channel->state = N1X_HFRP_FAILED;
 		return -EBUSY;

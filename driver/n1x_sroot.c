@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include <linux/string.h>
 #include "n1x_sroot.h"
@@ -8,6 +8,7 @@ static int wait_ready(const struct n1x_dla_io *io, __u32 offset,
 {
 	__u32 i, value;
 	int err;
+
 	for (i = 0; i < polls; i++) {
 		err = io->read32(io->context, offset, &value);
 		if (err)
@@ -26,6 +27,7 @@ int n1x_sroot_send(const struct n1x_dla_io *io, __u32 stride,
 {
 	__u32 header, value, i;
 	int err, mismatch = 0;
+
 	if (!io || !io->read32 || !io->write32 || !stride || (stride & 3) ||
 		stride > ~(__u32)0 / 9 || count > N1X_SROOT_MAX_WORDS ||
 		(count && !words) || !polls || polls > 5001 ||
@@ -74,6 +76,7 @@ int n1x_sroot_receive(const struct n1x_dla_io *io, __u32 stride,
 	struct n1x_sroot_reply local = {0};
 	__u32 i;
 	int err;
+
 	if (!io || !io->read32 || !io->write32 || !reply || !stride ||
 		(stride & 3) || stride > ~(__u32)0 / 6 ||
 		!polls || polls > 5001 ||
@@ -99,7 +102,7 @@ int n1x_sroot_receive(const struct n1x_dla_io *io, __u32 stride,
 	err = io->write32(io->context, stride * 6, 1);
 	if (err)
 		return err;
- *reply = local;
+	*reply = local;
 	return 0;
 }
 
@@ -108,6 +111,7 @@ static int drain_pending(const struct n1x_dla_io *io, __u32 status_offset,
 {
 	__u32 i, value;
 	int err;
+
 	for (i = 0; i < polls; i++) {
 		err = io->read32(io->context, status_offset, &value);
 		if (err)
@@ -132,6 +136,7 @@ int n1x_sroot_prepare(const struct n1x_dla_io *io, __u32 stride,
 {
 	__u32 value;
 	int err;
+
 	if (!io || !io->read32 || !io->write32 || !stride || (stride & 3) ||
 		stride > ~(__u32)0 / 12 || !polls || polls > 5001 ||
 		(polls > 1 && (!interval_us || !io->delay_us)))
@@ -169,6 +174,7 @@ int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
 							__u32 dma_maximum, __u32 words[3])
 {
 	__u32 tag;
+
 	if (!buffer || !image || !words || size < 32 || capacity < size ||
 		size > ~(__u32)0 || dma_minimum > dma_maximum ||
 		size > dma_maximum - dma_minimum ||
@@ -216,6 +222,7 @@ int n1x_sroot_build_reinit(__u32 words[3], const __u8 *request, size_t size)
 {
 	__u32 tag = 0, mode = 1;
 	unsigned int i;
+
 	if (!words || !request || (size != 4 && size != 8))
 		return -EINVAL;
 	for (i = 0; i < 4; i++)

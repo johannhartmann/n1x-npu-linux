@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include "n1x_dla_job.h"
 #include "n1x_dla_command.h"
@@ -29,6 +29,7 @@ static int owned(const struct n1x_dla_job_queue *queue, const struct n1x_dla_job
 int n1x_dla_job_fail(struct n1x_dla_job_queue *queue, struct n1x_dla_job *job, int error)
 {
 	int err = owned(queue, job);
+
 	if (err)
 		return err;
 	if (error >= 0 || error == -EINPROGRESS)
@@ -42,6 +43,7 @@ static int poll_once(const struct n1x_dla_io *io,
 	struct n1x_dla_response_fields fields;
 	struct n1x_dla_response response;
 	int err;
+
 	if (job->polls >= 5001)
 		return -ETIMEDOUT;
 	job->polls++;
@@ -99,6 +101,7 @@ int n1x_dla_job_start(struct n1x_dla_job_queue *queue,
 						struct n1x_dla_job *job)
 {
 	int err;
+
 	if (!queue || !io || !io->read32 || !io->write32 || !io->delay_us ||
 		!ops || !ops->publish || !ops->read_fence || !job || !job->dma ||
 		(job->dma & 255) || job->dma > (1ULL << 36) - 256)
@@ -137,6 +140,7 @@ int n1x_dla_job_poll(struct n1x_dla_job_queue *queue,
 					const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job)
 {
 	int err = owned(queue, job);
+
 	if (err)
 		return err;
 	if (!io || !io->read32 || !io->write32 || !ops || !ops->read_fence)
@@ -147,7 +151,8 @@ int n1x_dla_job_poll(struct n1x_dla_job_queue *queue,
 	if (err == 1)
 		return -EINPROGRESS;
 	/* Transport/fence callbacks are synchronous. Their failure must not be
-	 * confused with this API's pending-job status, including EINPROGRESS. */
+	 * confused with this API's pending-job status, including EINPROGRESS.
+	 */
 	if (err == -EINPROGRESS)
 		err = -EIO;
 	return finish(queue, job, err);
@@ -158,6 +163,7 @@ int n1x_dla_job_execute(struct n1x_dla_job_queue *queue,
 						const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job)
 {
 	int err = n1x_dla_job_start(queue, io, ops, job);
+
 	if (err)
 		return err;
 	do {

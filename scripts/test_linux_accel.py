@@ -24,7 +24,7 @@ def main():
     parser.add_argument('--conv-relu', action='store_true', help='also qualify Conv->ReLU task serialization/scheduling')
     args = parser.parse_args()
     source = (ROOT / 'driver/n1x_dla_accel.c').read_text()
-    body = source[source.index('#define N1X_JOB_PREFIX'):source.index('/* No GEM mmap:')]
+    body = source[source.index('#define N1X_JOB_PREFIX'):source.index('static int n1x_accel_open(')]
     shim = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -59,7 +59,27 @@ typedef __u8 u8;typedef __u32 u32;typedef __u64 u64;typedef __u32 __le32;typedef
 #define IS_ERR(x) ((uintptr_t)(x)>=(uintptr_t)-4095)
 struct device {int unused;};
 struct drm_device {struct device *dev;};
-struct drm_file {int unused;};
+struct drm_minor {struct drm_device *dev;};
+struct drm_file {struct drm_minor *minor;};
+struct file {void *private_data;};
+struct vm_area_struct;
+struct vm_operations_struct {
+ void (*open)(struct vm_area_struct *vma);
+ void (*close)(struct vm_area_struct *vma);
+};
+#define VM_WRITE 0x00000002UL
+#define VM_MAYWRITE 0x00000020UL
+struct vm_area_struct {
+ unsigned long vm_start,vm_end,vm_flags,vm_pgoff;
+ void *vm_private_data;
+ const struct vm_operations_struct *vm_ops;
+};
+static void vm_flags_clear(struct vm_area_struct *vma,unsigned long flags) {vma->vm_flags&=~flags;}
+static void *last_mmap_cpu;
+static u64 last_mmap_dma;
+static size_t last_mmap_size;
+static int dma_mmap_coherent(struct device *d,struct vm_area_struct *vma,void *cpu,u64 dma,size_t size)
+{assert(d&&vma&&!vma->vm_pgoff);last_mmap_cpu=cpu;last_mmap_dma=dma;last_mmap_size=size;return 0;}
 struct mutex {bool locked;};
 struct list_head {struct list_head *next,*prev;};
 static void INIT_LIST_HEAD(struct list_head *h) {h->next=h->prev=h;}
@@ -318,7 +338,33 @@ int main(int argc,char **argv)
  postclose(&accel.drm,&owner);assert(!accel.lock.locked);
  assert(!n1x_dla_accel_stop(&accel,stopped_hardware) && frees==before_stop+2);
  n1x_dla_accel_resume(&accel);assert(!accel.stopped);
- printf("%d exact accel EXEC cases plus READ/INFO/ownership/close checks passed; no hardware access\n",cases);
+ /* Verify zero-copy read-only mmap and stop-while-mapped UAF protection. */
+ struct drm_minor minor={.dev=&accel.drm};
+ owner.minor=&minor;other.minor=&minor;
+ struct file filp_owner={.private_data=&owner},filp_other={.private_data=&other};
+ backend_error=0;reset_request();check(0);u64 mapped_id=req.job_id;
+ struct vm_area_struct vma={.vm_start=0,.vm_end=4096,.vm_flags=VM_MAYWRITE,.vm_pgoff=mapped_id};
+ vma.vm_flags|=VM_WRITE;assert(n1x_accel_mmap(&filp_owner,&vma)==-EINVAL);vma.vm_flags=VM_MAYWRITE;
+ assert(n1x_accel_mmap(&filp_other,&vma)==-ENOENT);
+ vma.vm_end=8192;assert(n1x_accel_mmap(&filp_owner,&vma)==-EINVAL);vma.vm_end=4096;
+ assert(!n1x_accel_mmap(&filp_owner,&vma));
+ assert(!(vma.vm_flags&VM_MAYWRITE)&&vma.vm_ops==&n1x_accel_vm_ops);
+ assert(last_mmap_dma==dma_address+N1X_JOB_PREFIX&&last_mmap_size==4096);
+ assert(((u8 *)last_mmap_cpu)[13]==0x5a);
+ again=(struct n1x_dla_accel_reexec){.job_id=mapped_id,.patches_ptr=(uintptr_t)&patch,.num_patches=1};
+ assert(reexec_ioctl(&accel.drm,&again,&owner)==-EBUSY);
+ int frees_before_mapped_stop=frees;
+ assert(!n1x_dla_accel_stop(&accel,stopped_hardware));
+ /* Mapped job must remain valid across stop() until VMA close (no UAF). */
+ assert(accel.count==1&&accel.retained==12288&&frees==frees_before_mapped_stop);
+ assert(((u8 *)last_mmap_cpu)[13]==0x5a);
+ vma.vm_ops->open(&vma);
+ vma.vm_ops->close(&vma);
+ assert(accel.count==1&&frees==frees_before_mapped_stop);
+ vma.vm_ops->close(&vma);
+ assert(!accel.count&&!accel.retained&&frees==frees_before_mapped_stop+1);
+ n1x_dla_accel_resume(&accel);assert(!accel.stopped);
+ printf("%d exact accel EXEC cases plus READ/INFO/mmap/ownership/close checks passed; no hardware access\n",cases);
 }
 '''
     with tempfile.TemporaryDirectory(prefix='n1x-accel-') as directory:

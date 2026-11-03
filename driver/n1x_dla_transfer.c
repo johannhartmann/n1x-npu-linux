@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include "n1x_dla_transfer.h"
 
@@ -18,6 +18,7 @@ static int upload_section(const struct n1x_dla_io *io,
 {
 	__u32 offset, word;
 	int err;
+
 	err = io->write32(io->context, control, 1U << 24);
 	if (err)
 		return err;
@@ -43,6 +44,7 @@ int n1x_dla_upload_words(const __u8 *blob, size_t size,
 	struct n1x_dla_firmware fw;
 	const __u8 *payload;
 	int err;
+
 	if (!io || !io->write32)
 		return -EINVAL;
 	err = n1x_dla_parse_firmware(blob, size, &fw);

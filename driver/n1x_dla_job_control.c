@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include "n1x_dla_job_control.h"
 #include "n1x_dla_command.h"
@@ -26,12 +26,14 @@ static int fail(struct n1x_dla_job_queue *queue, struct n1x_dla_job *job, int er
 }
 
 /* Consume only exact idle messages after the control ACK. A late error must
- * not become successful completion or a resumable checkpoint. */
+ * not become successful completion or a resumable checkpoint.
+ */
 static int drain(const struct n1x_dla_io *io, struct n1x_dla_job *job)
 {
 	struct n1x_dla_response response;
 	unsigned int i;
 	int err;
+
 	for (i = 0; i < 16; i++) {
 		err = io->read32(io->context, 8, &job->pending);
 		if (err)
@@ -59,9 +61,10 @@ int n1x_dla_job_preempt(struct n1x_dla_job_queue *queue,
 {
 	struct n1x_dla_preempt_snapshot snapshot;
 	int err;
+
 	if (!result)
 		return -EINVAL;
- *result = (struct n1x_dla_preempt_result){0};
+	*result = (struct n1x_dla_preempt_result){0};
 	err = validate(queue, io, ops, job);
 	if (err)
 		return err;
@@ -77,7 +80,8 @@ int n1x_dla_job_preempt(struct n1x_dla_job_queue *queue,
 			return fail(queue, job, err);
 		result->snapshot = snapshot;
 		/* Acceptance ACK precedes restore-marker consumption. An untouched
-		 * marker in this known resume window is busy, not a failed context. */
+		 * marker in this known resume window is busy, not a failed context.
+		 */
 		if (snapshot.checkpoint == 1 && snapshot.task_fence != job->fence_value)
 			return -EBUSY;
 		if (snapshot.checkpoint)
@@ -124,6 +128,7 @@ int n1x_dla_job_resume(struct n1x_dla_job_queue *queue,
 {
 	struct n1x_dla_preempt_snapshot snapshot;
 	int err = validate(queue, io, ops, job);
+
 	if (err)
 		return err;
 	if (!job->suspended)
@@ -145,7 +150,8 @@ int n1x_dla_job_resume(struct n1x_dla_job_queue *queue,
 	job->restore_pending = true;
 	job->response = (struct n1x_dla_response){0};
 	/* Immutable descriptor already has restore permission. Firmware consumes
-	 * and clears the saved marker; the host must not clear it or republish. */
+	 * and clears the saved marker; the host must not clear it or republish.
+	 */
 	err = n1x_dla_send_method(io, 0x307, job->dma >> 8, 5001, 1000);
 	return err ? fail(queue, job, err) : 0;
 }
