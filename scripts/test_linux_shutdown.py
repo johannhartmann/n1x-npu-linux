@@ -78,6 +78,7 @@ static void check_single_start(void) {
 typedef uint8_t u8;typedef uint32_t u32;typedef uint64_t dma_addr_t;
 typedef size_t resource_size_t;
 #define __iomem
+#define WRITE_ONCE(x, val) ((x) = (val))
 #define SHA256_DIGEST_SIZE 32
 #define N1X_BOOT_BYTES 67508
 #define N1X_REGION5_ALLOC (1U<<20)

@@ -34,6 +34,7 @@ typedef uint32_t u32;
 #define SHA256_DIGEST_SIZE 32
 #define N1X_BOARD_FIRMWARE "nvidia/n1x/p16-bios300-physical.rom"
 #define THIS_MODULE ((void *)0x1234)
+#define WRITE_ONCE(x, val) ((x) = (val))
 #define dev_info(...) ((void)0)
 struct device {int id;};
 struct firmware {size_t size;const u8 *data;};
