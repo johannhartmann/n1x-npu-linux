@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Explicit-load, one-attempt SROOT upload qualification backend.
- * No aliases, automatic upload, IRQ setup or forced reset/recovery.
- * Optional RAWIO-only accel API uses the explicitly initialized backend.
- * Retain DMA/runtime/module references until checked explicit shutdown.
- * Failed/uncertain execution or shutdown remains pinned until reboot.
+/* NVIDIA N1X (GB10/T264) NPU Linux kernel driver (NVDA200A DLA + NVDA8600 SROOT).
+ * Performs in-kernel HFRP power/clock bring-up, SROOT firmware upload, region/LPWR
+ * initialization, and exposes the /dev/accel/accel* DRM compute accelerator node.
+ * Retains DMA allocations across uncertain hardware faults (fail-closed).
  */
 #include <crypto/sha2.h>
 #include <linux/acpi.h>
@@ -48,6 +47,10 @@
 #define N1X_REGION5_STRIDE 52U
 #define N1X_REGION5_BYTES (((N1X_REGION5_ALLOC - N1X_REGION5_OFFSET - 8U) / \
 			   N1X_REGION5_STRIDE) * N1X_REGION5_STRIDE + 8U)
+/* GB10/T264 display controller register holding the 4 KiB-shifted VBIOS carveout offset. */
+#define N1X_DISP_VBIOS_LOCATOR_PHYS 0x1182bc80ULL
+#define N1X_VBIOS_CARVEOUT_BASE 0x80000600ULL
+#define N1X_VBIOS_CARVEOUT_SIZE 0x110000U
 
 static bool autostart = true;
 module_param(autostart, bool, 0400);
@@ -101,13 +104,13 @@ static bool strict_platform;
 module_param(strict_platform, bool, 0400);
 MODULE_PARM_DESC(strict_platform, "Require exact P16 BIOS-300 DMI/kernel/ROM-hash pins (default false; dynamically discovers VBIOS policy, ACPI _CRS, and IORT SMMU)");
 
-static bool opt_enable_irq;
+static bool opt_enable_irq = true;
 module_param_named(enable_irq, opt_enable_irq, bool, 0400);
-MODULE_PARM_DESC(enable_irq, "Enable Windows KMD (0xd49800) SWGEN0/SWGEN1 interrupt mask state machine and waitqueue wakeup (default false)");
+MODULE_PARM_DESC(enable_irq, "Enable Windows KMD (0xd49800) SWGEN0/SWGEN1 interrupt mask state machine and waitqueue wakeup (default true)");
 
-static bool enable_preempt;
+static bool enable_preempt = true;
 module_param(enable_preempt, bool, 0400);
-MODULE_PARM_DESC(enable_preempt, "Permit HAL-1 preemption enablement (0x31c) and resumable job control (default false)");
+MODULE_PARM_DESC(enable_preempt, "Permit HAL-1 preemption enablement (0x31c) and resumable job control (default true)");
 
 static DECLARE_WAIT_QUEUE_HEAD(boot_waitq);
 static atomic_t boot_irq_count = ATOMIC_INIT(0);
@@ -354,19 +357,19 @@ static int n1x_boot_board_policy(const struct firmware *firmware);
 
 static int n1x_boot_live_board_policy(void)
 {
-	struct firmware carveout = {.size = 0x110000U};
+	struct firmware carveout = {.size = N1X_VBIOS_CARVEOUT_SIZE};
 	void __iomem *locator_io;
 	resource_size_t rom_phys;
 	u32 locator;
 	void *rom;
 	int err;
 
-	locator_io = ioremap(0x1182bc80ULL, sizeof(u32));
+	locator_io = ioremap(N1X_DISP_VBIOS_LOCATOR_PHYS, sizeof(u32));
 	if (!locator_io)
 		return -ENOMEM;
 	locator = readl(locator_io);
 	iounmap(locator_io);
-	rom_phys = (((u64)locator << 12) + 0x80000600ULL) & 0xffffffffULL;
+	rom_phys = (((u64)locator << 12) + N1X_VBIOS_CARVEOUT_BASE) & 0xffffffffULL;
 	if (!rom_phys ||
 	    region_intersects(rom_phys, carveout.size, IORESOURCE_SYSTEM_RAM,
 			      IORES_DESC_NONE) != REGION_DISJOINT)
@@ -1981,29 +1984,30 @@ static const struct n1x_dla_accel_control_ops n1x_boot_control_ops = {
 
 /* accel->lock is outside boot_lock; sysfs never takes accel->lock. */
 static int n1x_boot_accel_submit(struct device *dev, struct n1x_dla_job *job,
-                                const struct n1x_dla_job_ops *ops)
+				 const struct n1x_dla_job_ops *ops)
 {
-    struct n1x_dla_io io;
-    int err;
-    mutex_lock(&boot_lock);
-    if (boot_stopping || !enable_accel || !n1x_boot_machine() || !boot_dla || boot_dla->dev != dev ||
-        !boot_sroot || !boot_task.verified || !boot_lpwr.accepted ||
-        !boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid ||
-        (boot_relu.attempted && !boot_relu_numeric)) {
-        err = -ENODEV;
-        goto out;
-    }
-    /* Successful startup already retained module/runtime references. */
-    err = n1x_boot_dma_gate(boot_dla);
-    if (!err)
-        err = n1x_boot_drain_task_idle(job);
-    if (!err) {
-        io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
-        err = n1x_dla_job_execute(&boot_queue, &io, ops, job);
-    }
+	struct n1x_dla_io io;
+	int err;
+
+	mutex_lock(&boot_lock);
+	if (boot_stopping || !enable_accel || !n1x_boot_machine() || !boot_dla || boot_dla->dev != dev ||
+	    !boot_sroot || !boot_task.verified || !boot_lpwr.accepted ||
+	    !boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid ||
+	    (boot_relu.attempted && !boot_relu_numeric)) {
+		err = -ENODEV;
+		goto out;
+	}
+	/* Successful startup already retained runtime references. */
+	err = n1x_boot_dma_gate(boot_dla);
+	if (!err)
+		err = n1x_boot_drain_task_idle(job);
+	if (!err) {
+		io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+		err = n1x_dla_job_execute(&boot_queue, &io, ops, job);
+	}
 out:
-    mutex_unlock(&boot_lock);
-    return err;
+	mutex_unlock(&boot_lock);
+	return err;
 }
 
 static int n1x_boot_probe(struct platform_device *pdev)
@@ -2014,7 +2018,7 @@ static int n1x_boot_probe(struct platform_device *pdev)
 	struct resource *first, *second;
 	struct resource registers = {.flags = IORESOURCE_MEM};
 	unsigned long long revision;
-	bool sroot;
+	bool sroot, irq_registered = false;
 	int err = 0;
 
 	if (!n1x_boot_machine() || !adev ||
@@ -2061,14 +2065,21 @@ static int n1x_boot_probe(struct platform_device *pdev)
 		if (IS_ERR(endpoint->hfrp))
 			return PTR_ERR(endpoint->hfrp);
 		if (opt_enable_irq) {
-			int irq = platform_get_irq(pdev, 0);
+			int irq = platform_get_irq_optional(pdev, 0);
 
-			if (irq < 0)
-				return irq;
-			err = devm_request_irq(dev, irq, n1x_boot_irq_handler,
-					       IRQF_SHARED, dev_name(dev), endpoint);
-			if (err)
-				return err;
+			if (irq > 0) {
+				int irq_err = devm_request_irq(dev, irq, n1x_boot_irq_handler,
+							       IRQF_SHARED, dev_name(dev), endpoint);
+
+				if (irq_err)
+					dev_warn(dev, "IRQ %d request failed (%d); falling back to polling\n",
+						 irq, irq_err);
+				else
+					irq_registered = true;
+			} else {
+				dev_warn(dev, "no ACPI IRQ resource (%d); falling back to polling\n",
+					 irq);
+			}
 		}
 	}
 	/* Platform devices start with runtime PM disabled. Keep the normal
@@ -2086,7 +2097,7 @@ static int n1x_boot_probe(struct platform_device *pdev)
 			boot_sroot = endpoint;
 		} else {
 			boot_dla = endpoint;
-			boot_irq_registered = opt_enable_irq;
+			boot_irq_registered = irq_registered;
 		}
 		platform_set_drvdata(pdev, endpoint);
 		if (boot_dla && boot_sroot) {
@@ -2140,6 +2151,38 @@ static int n1x_boot_probe(struct platform_device *pdev)
 	return err;
 }
 
+static bool boot_suspended;
+
+static void n1x_boot_reset_state(void)
+{
+	if (!boot_shutdown.hardware_off || !boot_shutdown.released ||
+	    boot_buffer || boot_ping.buffer || boot_config.buffer ||
+	    boot_region5.buffer || boot_lpwr.buffer || boot_task.buffer ||
+	    boot_relu.buffer)
+		return;
+	memset(&boot_result, 0, sizeof(boot_result));
+	boot_error = 0;
+	boot_attempted = false;
+	boot_stopping = false;
+	boot_hfrp_held = false;
+	boot_upload_held = false;
+	boot_unpinned = false;
+	memset(&boot_shutdown, 0, sizeof(boot_shutdown));
+	memset(&boot_hfrp, 0, sizeof(boot_hfrp));
+	memset(&boot_ping, 0, sizeof(boot_ping));
+	memset(&boot_config, 0, sizeof(boot_config));
+	memset(&boot_region5, 0, sizeof(boot_region5));
+	memset(&boot_config_apply, 0, sizeof(boot_config_apply));
+	memset(&boot_lpwr, 0, sizeof(boot_lpwr));
+	memset(&boot_task, 0, sizeof(boot_task));
+	memset(&boot_relu, 0, sizeof(boot_relu));
+	memset(&boot_preempt, 0, sizeof(boot_preempt));
+	memset(&boot_queue, 0, sizeof(boot_queue));
+	boot_relu_numeric = false;
+	memset(boot_relu_input_hash, 0, sizeof(boot_relu_input_hash));
+	memset(boot_relu_output_hash, 0, sizeof(boot_relu_output_hash));
+}
+
 static void n1x_boot_remove(struct platform_device *pdev)
 {
 	struct n1x_boot_endpoint *endpoint = platform_get_drvdata(pdev);
@@ -2172,6 +2215,10 @@ static void n1x_boot_remove(struct platform_device *pdev)
 	if (accel)
 		n1x_dla_accel_unregister(accel);
 	mutex_lock(&boot_lock);
+	if (boot_shutdown.released) {
+		n1x_boot_reset_state();
+		boot_suspended = false;
+	}
 	if (boot_sroot && boot_sroot->dev == &pdev->dev)
 		boot_sroot = NULL;
 	if (boot_dla && boot_dla->dev == &pdev->dev) {
@@ -2183,13 +2230,59 @@ static void n1x_boot_remove(struct platform_device *pdev)
 
 static int n1x_boot_suspend(struct device *dev)
 {
-	int err;
+	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
+	bool active_boot;
+	int err = 0;
 
+	if (!endpoint || endpoint->sroot)
+		return 0;
 	mutex_lock(&boot_lock);
-	err = ((boot_attempted || boot_hfrp.attempted) && !boot_shutdown.released) ? -EBUSY : 0;
+	active_boot = (boot_attempted || boot_hfrp.attempted) && !boot_shutdown.released;
+	if (active_boot && (!autostart || boot_queue.active ||
+			    boot_queue.owner_job || boot_queue.poisoned))
+		err = -EBUSY;
 	mutex_unlock(&boot_lock);
+	if (err || !active_boot)
+		return err;
+	err = n1x_boot_stop_device(dev);
+	if (err)
+		return err;
+	mutex_lock(&boot_lock);
+	n1x_boot_reset_state();
+	boot_suspended = true;
+	mutex_unlock(&boot_lock);
+	return 0;
+}
+
+static int n1x_boot_resume(struct device *dev)
+{
+	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
+	int err = 0;
+
+	if (!endpoint || endpoint->sroot)
+		return 0;
+	mutex_lock(&boot_lock);
+	if (boot_suspended && boot_dla && boot_sroot) {
+		boot_suspended = false;
+		err = n1x_boot_start_once();
+		if (err) {
+			dev_err(dev,
+				"resume startup failed (%d); device remains fail-closed\n",
+				err);
+		} else {
+			if (boot_upload_held)
+				module_put(THIS_MODULE);
+			if (boot_hfrp_held)
+				module_put(THIS_MODULE);
+			boot_unpinned = true;
+		}
+	}
+	mutex_unlock(&boot_lock);
+	if (!err && endpoint->accel)
+		n1x_dla_accel_resume(endpoint->accel);
 	return err;
 }
+
 static int n1x_boot_runtime_suspend(struct device *dev)
 {
 	/* Runtime autosuspend cannot perform the explicit joint-endpoint teardown
@@ -2215,8 +2308,11 @@ static void n1x_boot_system_shutdown(struct platform_device *pdev)
 static const struct dev_pm_ops n1x_boot_pm = {
 	.runtime_suspend = n1x_boot_runtime_suspend,
 	.suspend = n1x_boot_suspend,
+	.resume = n1x_boot_resume,
 	.freeze = n1x_boot_suspend,
+	.thaw = n1x_boot_resume,
 	.poweroff = n1x_boot_suspend,
+	.restore = n1x_boot_resume,
 };
 static const struct acpi_device_id n1x_boot_ids[] = {{"NVDA200A", 0}, {"NVDA8600", 0}, {}};
 MODULE_DEVICE_TABLE(acpi, n1x_boot_ids);
@@ -2228,7 +2324,6 @@ static struct platform_driver n1x_boot_driver = {
 		.name = "n1x-npu-bootstrap",
 		.acpi_match_table = n1x_boot_ids,
 		.dev_groups = boot_groups,
-		.suppress_bind_attrs = true,
 		.pm = &n1x_boot_pm,
 	},
 };
@@ -2248,7 +2343,7 @@ static void __exit n1x_boot_exit(void)
 }
 module_exit(n1x_boot_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Explicit P16 DLA bootstrap with checked shutdown; uncertain failures remain pinned");
+MODULE_DESCRIPTION("NVIDIA N1X (GB10/T264) NPU DRM compute accelerator driver");
 MODULE_FIRMWARE(N1X_BOOT_FIRMWARE);
 MODULE_FIRMWARE(N1X_BOOT_FALLBACK_FIRMWARE);
 MODULE_FIRMWARE(N1X_BOARD_FIRMWARE);
