@@ -151,14 +151,15 @@ def start(sysroot=Path('/sys'), firmware_root=Path('/usr/lib/firmware/nvidia/n1x
         return
     rows = dma_plan(sysroot)
     select_dma(rows)
-    run(['/usr/bin/modprobe', MODULE, *MODULE_OPTIONS], check=True)
+    run(['/usr/bin/modprobe', MODULE], check=True)
     endpoint = sysroot/'bus/platform/devices'/ENDPOINT
-    for phase, payload, status_file, success in PHASES:
-        os.sync()
-        trigger(endpoint/phase, payload)
-        if fields((endpoint/status_file).read_text()).get(success) != '1':
-            raise RuntimeError(f'{phase} returned without {success}; no retry or unload attempted')
-        print(f'RTX Spark NPU startup: {phase} verified', flush=True)
+    if fields((endpoint/'status').read_text()).get('task_verified') != '1':
+        for phase, payload, status_file, success in PHASES:
+            os.sync()
+            trigger(endpoint/phase, payload)
+            if fields((endpoint/status_file).read_text()).get(success) != '1':
+                raise RuntimeError(f'{phase} returned without {success}; no retry or unload attempted')
+            print(f'RTX Spark NPU startup: {phase} verified', flush=True)
     node = verify_ready(sysroot, devroot)
     print(f'RTX Spark NPU is ready at /dev/accel/{node}')
 

@@ -2,10 +2,10 @@
 pkgname=n1x-npu-bootstrap-rtx-spark
 pkgver=0.1.0.rSOURCE_REV
 pkgrel=1
-pkgdesc='Qualified N1X NPU driver and gated boot service for the RTX Spark NPU kernel'
+pkgdesc='NVIDIA N1X NPU kernel driver, compiler, and ONNX runtime for Linux'
 arch=('aarch64')
 license=('GPL-2.0-only')
-depends=('linux-rtx-spark-npu' 'kmod' 'python')
+depends=('linux-rtx-spark-npu' 'kmod')
 makedepends=('linux-rtx-spark-npu-headers' 'make' 'gcc')
 install=n1x-npu-bootstrap.install
 _kernel_release=7.2.8-23-rtx-spark-npu
@@ -43,8 +43,8 @@ package() {
     "${pkgdir}/usr/lib/modules/${_kernel_release}/updates/n1x-npu-bootstrap/n1x_npu_bootstrap.ko"
   install -Dm644 "${srcdir}/npu-source/README.md" \
     "${pkgdir}/usr/share/doc/${pkgname}/README.md"
-  install -Dm755 "${srcdir}/npu-source/scripts/npu_autostart.py" \
-    "${pkgdir}/usr/libexec/n1x-npu-start"
+  install -Dm644 "${srcdir}/npu-source/packaging/udev/99-n1x-npu.rules" \
+    "${pkgdir}/usr/lib/udev/rules.d/99-n1x-npu.rules"
   install -Dm644 "${srcdir}/npu-source/packaging/systemd/n1x-npu.service" \
     "${pkgdir}/usr/lib/systemd/system/n1x-npu.service"
   install -Dm755 "${srcdir}/npu-source/runtime/libn1x_dla.so" \

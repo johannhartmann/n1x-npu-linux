@@ -1,13 +1,16 @@
 [Unit]
-Description=Initialize the qualified RTX Spark NPU
+Description=NVIDIA N1X NPU Kernel Driver
 Documentation=https://github.com/johannhartmann/n1x-npu-linux
 After=systemd-modules-load.service
 Before=multi-user.target
-ConditionKernelVersion=7.2.8-23-rtx-spark-npu
+ConditionPathExists=/sys/bus/platform/devices/NVDA200A:00
+ConditionPathExists=/sys/bus/platform/devices/NVDA8600:00
 
 [Service]
 Type=oneshot
-ExecStart=/usr/libexec/n1x-npu-start
+ExecStartPre=/usr/bin/sh -c 'for d in NVDA200A:00 NVDA8600:00; do t="/sys/bus/platform/devices/$d/iommu_group/type"; [ -e "/sys/bus/platform/devices/$d/driver" ] || [ "$(cat "$t")" != identity ] || echo DMA > "$t"; done'
+ExecStart=/usr/bin/modprobe n1x_npu_bootstrap
+ExecStop=/usr/bin/sh -c '[ ! -e /sys/bus/platform/devices/NVDA200A:00/shutdown ] || echo stop > /sys/bus/platform/devices/NVDA200A:00/shutdown; /usr/bin/modprobe -r n1x_npu_bootstrap'
 RemainAfterExit=yes
 NoNewPrivileges=yes
 PrivateTmp=yes

@@ -1,0 +1,3 @@
+# Switch isolated N1X NPU (NVDA200A) and SROOT (NVDA8600) IOMMU groups from
+# passthrough (identity) to translated DMA before binding n1x_npu_bootstrap.
+SUBSYSTEM=="platform", KERNEL=="NVDA200A:00|NVDA8600:00", ACTION=="add", ATTR{iommu_group/type}=="identity", ATTR{iommu_group/type}="DMA"
