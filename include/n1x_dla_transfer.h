@@ -10,6 +10,6 @@
  * write32 must return 0 or a negative errno; its first error stops the upload.
  */
 int n1x_dla_upload_words(const __u8 *blob, size_t size,
-                         __u32 code_limit, __u32 data_limit,
-                         const struct n1x_dla_io *io);
+						__u32 code_limit, __u32 data_limit,
+						const struct n1x_dla_io *io);
 #endif

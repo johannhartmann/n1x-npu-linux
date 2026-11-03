@@ -32,9 +32,10 @@ static int drm_release(void){return 0;}
 static int drm_ioctl(void){return 0;}
 static int drm_compat_ioctl(void){return 0;}
 static int noop_llseek(void){return 0;}
+static int n1x_accel_mmap(struct file *file,void *vma){(void)file;(void)vma;return 0;}
 static int drm_cpu_valid(void){return 1;}
 struct file_operations {unsigned int fop_flags;void *owner;
- int (*open)(struct inode*,struct file*);int (*release)(void),(*unlocked_ioctl)(void),(*compat_ioctl)(void),(*llseek)(void);};
+ int (*open)(struct inode*,struct file*);int (*release)(void),(*unlocked_ioctl)(void),(*compat_ioctl)(void),(*mmap)(struct file*,void*),(*llseek)(void);};
 struct inode {int unused;};
 struct file {int f_flags;const struct file_operations *f_op;};
 struct drm_device {int switch_power_state;};

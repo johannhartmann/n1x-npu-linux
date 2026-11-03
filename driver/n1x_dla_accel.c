@@ -7,6 +7,7 @@
 #include <linux/capability.h>
 #include <linux/dma-mapping.h>
 #include <linux/list.h>
+#include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
@@ -14,6 +15,7 @@
 #include <drm/drm_accel.h>
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
+#include <drm/drm_file.h>
 #include <drm/drm_ioctl.h>
 #include <drm/drm_managed.h>
 #include "n1x_dla_accel.h"
@@ -37,9 +39,11 @@ struct n1x_accel_job {
 	struct list_head link;
 	struct n1x_dla_job task;
 	struct drm_file *owner; /* Cleared on close; never dereferenced. */
+	struct n1x_dla_accel *accel;
 	u64 id;
 	size_t allocated;
 	u32 image_bytes;
+	u32 mmap_count;
 	struct n1x_dla_accel_range *writable;
 	u32 num_writable;
 };
@@ -76,7 +80,7 @@ static int publish(void *context, u32 value)
 static int read_fence(void *context, u32 *value)
 {
 	struct n1x_accel_job *job = context;
-	*value = le32_to_cpu(READ_ONCE(*(__le32 *)(job->task.buffer + N1X_JOB_FENCE)));
+	 *value = le32_to_cpu(READ_ONCE(*(__le32 *)(job->task.buffer + N1X_JOB_FENCE)));
 	/* Acquire result reads after the device's completion word. */
 	dma_rmb();
 	return 0;
@@ -86,14 +90,14 @@ static int info_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 	struct n1x_dla_accel *accel = to_accel(drm);
 	struct n1x_dla_accel_info *info = data;
 	u32 caps = N1X_DLA_CAP_RAWIO_REQUIRED | N1X_DLA_CAP_RETAIN_UNTIL_REBOOT |
-			   N1X_DLA_CAP_REEXEC_IO | N1X_DLA_CAP_CONTROLLED_STOP |
-			   N1X_DLA_CAP_STATISTICS;
+				N1X_DLA_CAP_REEXEC_IO | N1X_DLA_CAP_CONTROLLED_STOP |
+				N1X_DLA_CAP_STATISTICS;
 	if (!n1x_accel_permitted())
 		return -EPERM;
 	mutex_lock(&accel->lock);
 	if (accel->control)
 		caps |= N1X_DLA_CAP_PREEMPT;
-	*info = (struct n1x_dla_accel_info){
+	 *info = (struct n1x_dla_accel_info){
 		.abi_version = N1X_DLA_ABI_VERSION,
 		.capabilities = caps,
 		.max_image_bytes = N1X_DLA_MAX_IMAGE, .max_addresses = N1X_DLA_MAX_ADDRESSES,
@@ -130,7 +134,7 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 	if (IS_ERR(ranges))
 		return PTR_ERR(ranges);
 	writable = memdup_user(u64_to_user_ptr(req->writable_ranges_ptr),
-						   req->num_writable_ranges * sizeof(*writable));
+							req->num_writable_ranges * sizeof(*writable));
 	if (IS_ERR(writable)) {
 		err = PTR_ERR(writable);
 		writable = NULL;
@@ -209,7 +213,7 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 	}
 	memset(job->task.buffer, 0, bytes);
 	if (copy_from_user(job->task.buffer + N1X_JOB_PREFIX,
-					   u64_to_user_ptr(req->image_ptr), req->image_bytes)) {
+						u64_to_user_ptr(req->image_ptr), req->image_bytes)) {
 		err = -EFAULT;
 		goto free_dma;
 	}
@@ -224,14 +228,14 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 	if (!err && (req->flags & N1X_DLA_EXEC_RESUMABLE)) {
 		job->task.resumable = true;
 		err = n1x_dla_build_context_header(job->task.buffer + N1X_JOB_CONTEXT_HEADER,
-										  256, job->task.dma + N1X_JOB_CHECKPOINT, 0);
+											256, job->task.dma + N1X_JOB_CHECKPOINT, 0);
 		if (!err)
 			err = n1x_dla_build_context_fenced_task_v2(job->task.buffer, 256, &args,
-													  job->task.dma + N1X_JOB_FENCE, 0,
-													  job->task.dma + N1X_JOB_CONTEXT_HEADER, 1);
+														job->task.dma + N1X_JOB_FENCE, 0,
+														job->task.dma + N1X_JOB_CONTEXT_HEADER, 1);
 	} else if (!err) {
 		err = n1x_dla_build_fenced_task_v2(job->task.buffer, 256, &args,
-										  job->task.dma + N1X_JOB_FENCE, 0);
+											job->task.dma + N1X_JOB_FENCE, 0);
 	}
 	if (err)
 		goto free_dma;
@@ -298,8 +302,8 @@ static int read_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 		}
 		dma_rmb();
 		err = copy_to_user(u64_to_user_ptr(req->data_ptr),
-						   job->task.buffer + N1X_JOB_PREFIX + req->offset,
-						   req->bytes) ? -EFAULT : 0;
+							job->task.buffer + N1X_JOB_PREFIX + req->offset,
+							req->bytes) ? -EFAULT : 0;
 		break;
 	}
 	mutex_unlock(&accel->lock);
@@ -360,6 +364,10 @@ static int reexec_ioctl(struct drm_device *drm, void *data, struct drm_file *fil
 		err = -EIO;
 		goto unlock;
 	}
+	if (job->mmap_count) {
+		err = -EBUSY;
+		goto unlock;
+	}
 	if (accel->last_id == U64_MAX) {
 		err = -EOVERFLOW;
 		goto unlock;
@@ -412,7 +420,7 @@ static int reexec_ioctl(struct drm_device *drm, void *data, struct drm_file *fil
 	if (!job->task.attempted) {
 		for (i = 0; i < req->num_patches; i++)
 			memcpy(job->task.buffer + N1X_JOB_PREFIX + patches[i].offset,
-				   copies[i], patches[i].bytes);
+					copies[i], patches[i].bytes);
 		job->task = saved;
 		if (!err)
 			err = -EIO;
@@ -458,7 +466,7 @@ static int stats_ioctl(struct drm_device *drm, void *data, struct drm_file *file
 		}
 		dma_rmb();
 		err = n1x_dla_parse_statistics(job->task.buffer + N1X_JOB_PREFIX + req->offset,
-									   req->bytes, &parsed);
+										req->bytes, &parsed);
 		if (!err) {
 			req->count = parsed.count;
 			req->metadata_offset = parsed.metadata_offset;
@@ -560,7 +568,7 @@ static int control_ioctl(struct drm_device *drm, void *data, struct drm_file *fi
 			goto unlock;
 		dma_wmb();
 		err = accel->control->preempt(drm->dev, &job->task, &preempt_ops,
-									  job->task.dma + N1X_JOB_PREEMPT_REQ, seq, &result);
+										job->task.dma + N1X_JOB_PREEMPT_REQ, seq, &result);
 		req->outcome = result.outcome;
 		break;
 	case N1X_DLA_CONTROL_RESUME:
@@ -582,7 +590,7 @@ unlock:
 	return err;
 }
 void n1x_dla_accel_set_control(struct n1x_dla_accel *accel,
-							   const struct n1x_dla_accel_control_ops *control)
+								const struct n1x_dla_accel_control_ops *control)
 {
 	if (!accel)
 		return;
@@ -594,13 +602,15 @@ static void postclose(struct drm_device *drm, struct drm_file *file)
 {
 	struct n1x_dla_accel *accel = to_accel(drm);
 	struct n1x_accel_job *job, *next;
+
 	mutex_lock(&accel->lock);
 	list_for_each_entry_safe(job, next, &accel->jobs, link)
 		if (job->owner == file) {
-			if (job->task.verified && !job->task.error && !job->task.suspended) {
+			if (!job->mmap_count && job->task.verified &&
+				!job->task.error && !job->task.suspended) {
 				list_del(&job->link);
 				dma_free_coherent(drm->dev, job->allocated,
-								  job->task.buffer, job->task.dma);
+									job->task.buffer, job->task.dma);
 				accel->retained -= job->allocated;
 				accel->count--;
 				kfree(job->writable);
@@ -632,7 +642,7 @@ int n1x_dla_accel_stop(struct n1x_dla_accel *accel, int (*stop)(struct device *)
 		list_for_each_entry_safe(job, next, &accel->jobs, link) {
 			list_del(&job->link);
 			dma_free_coherent(accel->drm.dev, job->allocated,
-							  job->task.buffer, job->task.dma);
+								job->task.buffer, job->task.dma);
 			kfree(job->writable);
 			kfree(job);
 		}
@@ -653,6 +663,89 @@ void n1x_dla_accel_resume(struct n1x_dla_accel *accel)
 	mutex_unlock(&accel->lock);
 }
 /* No GEM mmap: all device-visible bytes are immutable after EXEC's snapshot. */
+static void n1x_accel_vm_open(struct vm_area_struct *vma)
+{
+	struct n1x_accel_job *job = vma->vm_private_data;
+	struct n1x_dla_accel *accel = job->accel;
+
+	mutex_lock(&accel->lock);
+	job->mmap_count++;
+	mutex_unlock(&accel->lock);
+}
+
+static void n1x_accel_vm_close(struct vm_area_struct *vma)
+{
+	struct n1x_accel_job *job = vma->vm_private_data;
+	struct n1x_dla_accel *accel = job->accel;
+
+	mutex_lock(&accel->lock);
+	if (job->mmap_count)
+		job->mmap_count--;
+	if (!job->mmap_count && !job->owner && !accel->stopped &&
+		job->task.verified && !job->task.error && !job->task.suspended) {
+		list_del(&job->link);
+		dma_free_coherent(accel->drm.dev, job->allocated,
+							job->task.buffer, job->task.dma);
+		accel->retained -= job->allocated;
+		accel->count--;
+		kfree(job->writable);
+		kfree(job);
+	}
+	mutex_unlock(&accel->lock);
+}
+
+static const struct vm_operations_struct n1x_accel_vm_ops = {
+	.open = n1x_accel_vm_open,
+	.close = n1x_accel_vm_close,
+};
+
+static int n1x_accel_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+	struct drm_file *file = filp->private_data;
+	struct n1x_dla_accel *accel = to_accel(file->minor->dev);
+	unsigned long size = vma->vm_end - vma->vm_start;
+	struct n1x_accel_job *job;
+	u64 job_id = vma->vm_pgoff;
+	int err = -ENOENT;
+
+	if (!n1x_accel_permitted())
+		return -EPERM;
+	if ((vma->vm_flags & VM_WRITE) || !job_id || !size)
+		return -EINVAL;
+	mutex_lock(&accel->lock);
+	if (accel->unplugged || accel->stopped) {
+		err = -ENODEV;
+		goto unlock;
+	}
+	list_for_each_entry(job, &accel->jobs, link) {
+		if (job->id != job_id || job->owner != file)
+			continue;
+		if (job->task.error || !job->task.verified || job->task.suspended) {
+			err = -EIO;
+			break;
+		}
+		if (size > PAGE_ALIGN(job->image_bytes)) {
+			err = -EINVAL;
+			break;
+		}
+		vm_flags_clear(vma, VM_MAYWRITE);
+		vma->vm_pgoff = 0;
+		err = dma_mmap_coherent(accel->drm.dev, vma,
+					job->task.buffer + N1X_JOB_PREFIX,
+					job->task.dma + N1X_JOB_PREFIX, size);
+		if (!err) {
+			job->accel = accel;
+			job->mmap_count++;
+			vma->vm_private_data = job;
+			vma->vm_ops = &n1x_accel_vm_ops;
+		}
+		break;
+	}
+unlock:
+	mutex_unlock(&accel->lock);
+	return err;
+}
+
 static int n1x_accel_open(struct inode *inode, struct file *file)
 {
 	if (require_rawio && !capable(CAP_SYS_RAWIO))
@@ -663,6 +756,7 @@ static const struct file_operations accel_fops = {
 	.fop_flags = FOP_UNSIGNED_OFFSET,
 	.owner = THIS_MODULE, .open = n1x_accel_open, .release = drm_release,
 	.unlocked_ioctl = drm_ioctl, .compat_ioctl = drm_compat_ioctl,
+	.mmap = n1x_accel_mmap,
 	.llseek = noop_llseek,
 };
 static const struct drm_ioctl_desc accel_ioctls[] = {

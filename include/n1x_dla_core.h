@@ -10,7 +10,7 @@ int n1x_dla_select_riscv(const struct n1x_dla_io *io);
  * Same bounded polling/delay contract as start_core below.
  */
 int n1x_dla_wait_idle(const struct n1x_dla_io *io,
-                     __u32 polls, __u32 interval_us);
+					__u32 polls, __u32 interval_us);
 /* Alternate/direct-load start: write CPUCTL=1 then wait for IDLESTATE=0.
  * Do not insert this CPUCTL write into the SROOT method-2 path without evidence.
  * polls must be 1..5001. Multiple polls require a nonzero interval and delay
@@ -18,5 +18,5 @@ int n1x_dla_wait_idle(const struct n1x_dla_io *io,
  * delay-helper unit. At most polls-1 delays are performed.
  */
 int n1x_dla_start_core(const struct n1x_dla_io *io,
-                      __u32 polls, __u32 interval_us);
+						__u32 polls, __u32 interval_us);
 #endif

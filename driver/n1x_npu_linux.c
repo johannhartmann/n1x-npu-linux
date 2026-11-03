@@ -56,7 +56,7 @@ static int n1x_test_dma_allocation(struct device *dev, bool sroot)
 	if (!buffer)
 		return -ENOMEM;
 	if (address < minimum || address > maximum || bytes - 1 > maximum - address ||
-	    (address & 255)) {
+		(address & 255)) {
 		ret = -ERANGE;
 		goto free;
 	}
@@ -66,7 +66,7 @@ static int n1x_test_dma_allocation(struct device *dev, bool sroot)
 		goto free;
 	}
 	dev_info(dev, "DMA allocation-only test: %zu bytes at %pad; no device transfer\n",
-		 bytes, &address);
+		bytes, &address);
 	ret = 0;
 free:
 	dma_free_coherent(dev, bytes, buffer, address);
@@ -89,16 +89,16 @@ static int n1x_linux_read32(struct n1x_linux *npu, u32 logical, u32 *value)
 		 * This is not a claim that live remapper selection is established.
 		 */
 		ret = n1x_dla_register_offset(N1X_DLA_MAP_WINDOWS_1, logical,
-					      npu->bytes, &offset);
+							npu->bytes, &offset);
 		if (ret)
 			return ret;
 	}
-	*value = readl(npu->base + offset);
+	 *value = readl(npu->base + offset);
 	return 0;
 }
 
 static ssize_t dma_state_show(struct device *dev,
-			     struct device_attribute *attr, char *buf)
+				struct device_attribute *attr, char *buf)
 {
 	struct iommu_fwspec *spec = dev_iommu_fwspec_get(dev);
 	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
@@ -106,9 +106,9 @@ static ssize_t dma_state_show(struct device *dev,
 	unsigned int i;
 
 	size = sysfs_emit(buf, "acpi_cca_seen=%u acpi_coherent=%u dma_coherent=%u iommu_domain=%d\n",
-			  ACPI_COMPANION(dev)->flags.cca_seen,
-			  ACPI_COMPANION(dev)->flags.coherent_dma,
-			  dev_is_dma_coherent(dev), domain ? (int)domain->type : -1);
+				ACPI_COMPANION(dev)->flags.cca_seen,
+				ACPI_COMPANION(dev)->flags.coherent_dma,
+				dev_is_dma_coherent(dev), domain ? (int)domain->type : -1);
 	if (spec)
 		for (i = 0; i < spec->num_ids && size < PAGE_SIZE - 32; i++)
 			size += sysfs_emit_at(buf, size, "stream_id[%u]=0x%x\n", i, spec->ids[i]);
@@ -117,7 +117,7 @@ static ssize_t dma_state_show(struct device *dev,
 static DEVICE_ATTR(dma_state, 0400, dma_state_show, NULL);
 
 static ssize_t registers_show(struct device *dev,
-			     struct device_attribute *attr, char *buf)
+				struct device_attribute *attr, char *buf)
 {
 	/* Status-only registers read by the original Windows accessors.
 	 * Never read SROOT RX/TX data FIFOs (4/7), which consume entries.
@@ -162,23 +162,23 @@ static int n1x_probe(struct platform_device *pdev)
 	bool sroot;
 
 	if (!dmi_match(DMI_SYS_VENDOR, "ASUS") ||
-	    !dmi_match(DMI_PRODUCT_NAME, "ProArt P16 H7607BA") ||
-	    !dmi_match(DMI_BIOS_VERSION, "H7607BA.300") || !adev ||
-	    (strcmp(acpi_device_hid(adev), "NVDA8600") &&
-	     strcmp(acpi_device_hid(adev), "NVDA200A")))
+		!dmi_match(DMI_PRODUCT_NAME, "ProArt P16 H7607BA") ||
+		!dmi_match(DMI_BIOS_VERSION, "H7607BA.300") || !adev ||
+		(strcmp(acpi_device_hid(adev), "NVDA8600") &&
+		strcmp(acpi_device_hid(adev), "NVDA200A")))
 		return -ENODEV;
 	sroot = !strcmp(acpi_device_hid(adev), "NVDA8600");
 	if (ACPI_FAILURE(acpi_evaluate_integer(adev->handle, "_HRV", NULL, &revision)) ||
-	    revision != (sroot ? 1 : 0x34))
+		revision != (sroot ? 1 : 0x34))
 		return dev_err_probe(dev, -ENODEV, "unsupported hardware revision\n");
 	first = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	second = platform_get_resource(pdev, IORESOURCE_MEM, 1);
 	if (!first || !second || platform_get_resource(pdev, IORESOURCE_MEM, 2))
 		return -EINVAL;
 	if (first->start != (sroot ? 0x18010000 : 0x19000000) ||
-	    resource_size(first) != (sroot ? 0x1000 : 0x40000) ||
-	    second->start != (sroot ? 0x18010000 : 0x31380000) ||
-	    resource_size(second) != (sroot ? 0x10 : 0x10000))
+		resource_size(first) != (sroot ? 0x1000 : 0x40000) ||
+		second->start != (sroot ? 0x18010000 : 0x31380000) ||
+		resource_size(second) != (sroot ? 0x10 : 0x10000))
 		return dev_err_probe(dev, -ENODEV, "resources differ from audited P16 tables\n");
 	npu = devm_kzalloc(dev, sizeof(*npu), GFP_KERNEL);
 	if (!npu)
@@ -209,7 +209,7 @@ static int n1x_probe(struct platform_device *pdev)
 	}
 	platform_set_drvdata(pdev, npu);
 	dev_info(dev, "observation backend attached; MMIO reads %s; no write path\n",
-		 read_mmio ? "explicitly enabled" : "disabled");
+		read_mmio ? "explicitly enabled" : "disabled");
 	return 0;
 }
 

@@ -4,21 +4,21 @@
 #include "n1x_dla_firmware.h"
 
 struct n1x_dla_host_memory {
-    __u8 *data;
-    size_t mapped_bytes;
-    __u64 logical_bytes;
+	__u8 *data;
+	size_t mapped_bytes;
+	__u64 logical_bytes;
 };
 struct n1x_dla_content {
-    const __u8 *name;
-    size_t name_bytes;
-    const __u8 *data;
-    size_t bytes;
+	const __u8 *name;
+	size_t name_bytes;
+	const __u8 *data;
+	size_t bytes;
 };
 struct n1x_dla_content_init {
-    const __u8 *name;
-    size_t name_bytes;
-    __u64 offset;
-    __u16 memory_index;
+	const __u8 *name;
+	size_t name_bytes;
+	__u64 offset;
+	__u16 memory_index;
 };
 
 /* Initialize private CPU buffers from named model contents. The caller supplies
@@ -38,7 +38,7 @@ struct n1x_dla_content_init {
  * lifetime and publication to a device remain caller responsibilities.
  */
 int n1x_dla_initialize_contents(
-    const struct n1x_dla_host_memory *memories, size_t num_memories,
-    const struct n1x_dla_content *contents, size_t num_contents,
-    const struct n1x_dla_content_init *initializers, size_t num_initializers);
+	const struct n1x_dla_host_memory *memories, size_t num_memories,
+	const struct n1x_dla_content *contents, size_t num_contents,
+	const struct n1x_dla_content_init *initializers, size_t num_initializers);
 #endif

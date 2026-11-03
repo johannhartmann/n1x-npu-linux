@@ -26,29 +26,29 @@
 #define N1X_DLA_CAP_PREEMPT 32U
 #define N1X_DLA_EXEC_RESUMABLE 1U
 struct n1x_dla_accel_info {
-    __u32 abi_version, capabilities;
-    __u32 max_image_bytes, max_addresses;
-    __u64 retained_bytes, retain_limit;
-    __u32 retained_jobs, max_jobs;
-    __u64 reserved;
+	__u32 abi_version, capabilities;
+	__u32 max_image_bytes, max_addresses;
+	__u64 retained_bytes, retain_limit;
+	__u32 retained_jobs, max_jobs;
+	__u64 reserved;
 };
 /* Relative to the uploaded image, in the firmware task's address-index order.
  * These ranges do not validate the instruction stream inside that image. */
 struct n1x_dla_accel_range { __u64 offset, bytes; };
 struct n1x_dla_accel_exec {
-    __u64 image_ptr, ranges_ptr, writable_ranges_ptr;
-    __u32 image_bytes, num_addresses, num_writable_ranges, flags;
-    /* Outputs: zero job_id means no submission. An attempted job is retained,
-     * including after failure; status is its negative errno or zero.
-     * Never retry EXEC automatically after a syscall error (including EFAULT).
-     */
-    __u64 job_id;
-    __s32 status;
-    __u32 completed;
+	__u64 image_ptr, ranges_ptr, writable_ranges_ptr;
+	__u32 image_bytes, num_addresses, num_writable_ranges, flags;
+	/* Outputs: zero job_id means no submission. An attempted job is retained,
+	 * including after failure; status is its negative errno or zero.
+	 * Never retry EXEC automatically after a syscall error (including EFAULT).
+	 */
+	__u64 job_id;
+	__s32 status;
+	__u32 completed;
 };
 struct n1x_dla_accel_read {
-    __u64 job_id, offset, bytes, data_ptr;
-    __u64 reserved;
+	__u64 job_id, offset, bytes, data_ptr;
+	__u64 reserved;
 };
 /* Opt-in reuse of a successfully completed, non-preemptible trusted task.
  * The kernel restricts patches to caller-registered writable ranges, intended
@@ -58,29 +58,29 @@ struct n1x_dla_accel_read {
  */
 struct n1x_dla_accel_patch { __u64 offset, bytes, data_ptr; };
 struct n1x_dla_accel_reexec {
-    __u64 job_id, patches_ptr;
-    __u32 num_patches, reserved;
-    __u64 new_job_id;
-    __s32 status;
-    __u32 completed;
+	__u64 job_id, patches_ptr;
+	__u32 num_patches, reserved;
+	__u64 new_job_id;
+	__s32 status;
+	__u32 completed;
 };
 struct n1x_dla_accel_stats {
-    __u64 job_id, offset, bytes;
-    __u32 count;
-    __u32 metadata_offset, metadata_stride;
-    __u32 data_offset, data_stride;
-    __u32 reserved;
+	__u64 job_id, offset, bytes;
+	__u32 count;
+	__u32 metadata_offset, metadata_stride;
+	__u32 data_offset, data_stride;
+	__u32 reserved;
 };
 #define N1X_DLA_CONTROL_START 1U
 #define N1X_DLA_CONTROL_POLL 2U
 #define N1X_DLA_CONTROL_PREEMPT 3U
 #define N1X_DLA_CONTROL_RESUME 4U
 struct n1x_dla_accel_control {
-    __u64 job_id;
-    __u32 action, reserved;
-    __s32 status;
-    __u32 outcome;
-    __u32 accepted, suspended, completed, preempt_completed;
+	__u64 job_id;
+	__u32 action, reserved;
+	__s32 status;
+	__u32 outcome;
+	__u32 accepted, suspended, completed, preempt_completed;
 };
 #define DRM_N1X_DLA_INFO 0x00
 #define DRM_N1X_DLA_EXEC 0x01

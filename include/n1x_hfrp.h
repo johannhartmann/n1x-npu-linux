@@ -4,10 +4,10 @@
 #include "n1x_dla_io.h"
 
 struct n1x_hfrp_irq_result {
-    __u32 status;
-    __u8 status_valid;
-    __u8 ack_attempted;
-    __u8 acknowledged;
+	__u32 status;
+	__u8 status_valid;
+	__u8 ack_attempted;
+	__u8 acknowledged;
 };
 /* Capture/ack the separate HFRP aperture's interrupt output (0x104 / 0x10c).
  * io offsets are HFRP-relative, NOT DLA logical/remapped or SROOT registers.
@@ -23,29 +23,29 @@ struct n1x_hfrp_irq_result {
  * No retry, IRQ registration, buffer release or quiescence claim is made.
  */
 int n1x_hfrp_take_irq(const struct n1x_dla_io *io,
-                     struct n1x_hfrp_irq_result *result);
+					struct n1x_hfrp_irq_result *result);
 
 #define N1X_HFRP_RING_SIZE 116U
 #define N1X_HFRP_REPLY_MAX 50U
 #define N1X_HFRP_ASYNC_SEQ 0x3ffU
 
 struct n1x_hfrp_tx_result {
-    __u32 header;
-    __u8 head_publish_attempted;
-    __u8 head_published;
-    __u8 doorbell_attempted;
-    __u8 doorbell_written;
-    __u8 space_unavailable;
+	__u32 header;
+	__u8 head_publish_attempted;
+	__u8 head_published;
+	__u8 doorbell_attempted;
+	__u8 doorbell_written;
+	__u8 space_unavailable;
 };
 
 struct n1x_hfrp_reply {
-    __u32 header;
-    __u16 sequence;
-    __u16 status;
-    __u8 length;
-    __u8 payload[N1X_HFRP_REPLY_MAX];
-    __u8 tail_publish_attempted;
-    __u8 tail_published;
+	__u32 header;
+	__u16 sequence;
+	__u16 status;
+	__u8 length;
+	__u8 payload[N1X_HFRP_REPLY_MAX];
+	__u8 tail_publish_attempted;
+	__u8 tail_published;
 };
 
 /* Mode-0 Windows HFRP layout only: 116-byte command/response rings.
@@ -68,16 +68,16 @@ struct n1x_hfrp_reply {
  * Invalid arguments leave result unchanged and perform no I/O.
  */
 int n1x_hfrp_queue_command(const struct n1x_dla_io *io, __u16 command,
-                           __u16 sequence, const __u8 *payload, __u32 length,
-                           struct n1x_hfrp_tx_result *result);
+							__u16 sequence, const __u8 *payload, __u32 length,
+							struct n1x_hfrp_tx_result *result);
 int n1x_hfrp_read_reply(const struct n1x_dla_io *io,
-                        struct n1x_hfrp_reply *reply);
+						struct n1x_hfrp_reply *reply);
 
 enum n1x_hfrp_channel_state {
-    N1X_HFRP_NEW = 0,
-    N1X_HFRP_READY,
-    N1X_HFRP_ACTIVE,
-    N1X_HFRP_FAILED,
+	N1X_HFRP_NEW = 0,
+	N1X_HFRP_READY,
+	N1X_HFRP_ACTIVE,
+	N1X_HFRP_FAILED,
 };
 
 #define N1X_HFRP_NO_SEQUENCE 0xffffU
@@ -92,26 +92,26 @@ enum n1x_hfrp_channel_state {
  * losing a notification. No IRQ handler may consume these rings concurrently.
  */
 struct n1x_hfrp_channel {
-    enum n1x_hfrp_channel_state state;
-    __u16 next_sequence;
-    __u16 pending_sequence;
-    void *async_context;
-    int (*async_reply)(void *context, const struct n1x_hfrp_reply *reply);
+	enum n1x_hfrp_channel_state state;
+	__u16 next_sequence;
+	__u16 pending_sequence;
+	void *async_context;
+	int (*async_reply)(void *context, const struct n1x_hfrp_reply *reply);
 };
 
 struct n1x_hfrp_exchange_result {
-    struct n1x_hfrp_tx_result tx;
-    struct n1x_hfrp_reply reply;
-    __u32 async_count;
-    __u32 discarded_startup_replies;
-    __u8 reply_valid;
-    __u8 reset_attempted;
-    __u8 reset_completed;
-    __u8 peer_ready;
-    __u8 ack_attempted;
-    __u8 ack_completed;
-    __u8 mode_select_attempted;
-    __u8 mode_selected;
+	struct n1x_hfrp_tx_result tx;
+	struct n1x_hfrp_reply reply;
+	__u32 async_count;
+	__u32 discarded_startup_replies;
+	__u8 reply_valid;
+	__u8 reset_attempted;
+	__u8 reset_completed;
+	__u8 peer_ready;
+	__u8 ack_attempted;
+	__u8 ack_completed;
+	__u8 mode_select_attempted;
+	__u8 mode_selected;
 };
 
 /* Both APIs are synchronous, bounded polling operations, not kernel bindings.
@@ -134,21 +134,21 @@ struct n1x_hfrp_exchange_result {
  * Other IRQ bits are left untouched for the owning device's event handling.
  */
 int n1x_hfrp_handshake(const struct n1x_dla_io *io,
-                        struct n1x_hfrp_channel *channel, __u32 polls,
-                        __u32 interval_us, struct n1x_hfrp_exchange_result *result);
+						struct n1x_hfrp_channel *channel, __u32 polls,
+						__u32 interval_us, struct n1x_hfrp_exchange_result *result);
 int n1x_hfrp_exchange(const struct n1x_dla_io *io,
-                       struct n1x_hfrp_channel *channel, __u16 command,
-                       const __u8 *payload, __u32 length, __u32 polls,
-                       __u32 interval_us, struct n1x_hfrp_exchange_result *result);
+						struct n1x_hfrp_channel *channel, __u16 command,
+						const __u8 *payload, __u32 length, __u32 polls,
+						__u32 interval_us, struct n1x_hfrp_exchange_result *result);
 
 struct n1x_hfrp_version {
-    __u32 stamp;
-    __u32 response_word;
-    __u8 stamp_valid;
-    __u8 query_requested;
-    __u8 valid;
-    __u8 major;
-    __u8 minor;
+	__u32 stamp;
+	__u32 response_word;
+	__u8 stamp_valid;
+	__u8 query_requested;
+	__u8 valid;
+	__u8 major;
+	__u8 minor;
 };
 
 /* Requires a READY channel. Reads offset 0, follows the recovered fixed-version
@@ -162,9 +162,9 @@ struct n1x_hfrp_version {
  * or confirmed firmware error does not imply successful discovery.
  */
 int n1x_hfrp_discover_version(const struct n1x_dla_io *io,
-                               struct n1x_hfrp_channel *channel, __u32 polls,
-                               __u32 interval_us, struct n1x_hfrp_version *version,
-                               struct n1x_hfrp_exchange_result *result);
+								struct n1x_hfrp_channel *channel, __u32 polls,
+								__u32 interval_us, struct n1x_hfrp_version *version,
+								struct n1x_hfrp_exchange_result *result);
 
 /* One POWER_CONTROL command corresponding to Windows request mask 7:
  * clock, power domain and rail ON. No implicit SRAM/config/tuning/limit writes.
@@ -174,14 +174,14 @@ int n1x_hfrp_discover_version(const struct n1x_dla_io *io,
  * An accepted response is command completion, not a measured physical state.
  */
 int n1x_hfrp_power_on(const struct n1x_dla_io *io,
-                       struct n1x_hfrp_channel *channel,
-                       const struct n1x_hfrp_version *version, __u8 pps,
-                       __u32 polls, __u32 interval_us,
-                       struct n1x_hfrp_exchange_result *result);
+						struct n1x_hfrp_channel *channel,
+						const struct n1x_hfrp_version *version, __u8 pps,
+						__u32 polls, __u32 interval_us,
+						struct n1x_hfrp_exchange_result *result);
 
 struct n1x_hfrp_power_state {
-    __u8 raw;
-    __u8 valid;
+	__u8 raw;
+	__u8 valid;
 };
 /* Query command 0x1af, with no request payload, on protocol major 1/minor >=5.
  * The original Windows wakeup policy consumes response bits 0..2. Preserve
@@ -197,19 +197,19 @@ struct n1x_hfrp_power_state {
  * No implicit handshake, power change, reset, retry or fallback read occurs.
  */
 int n1x_hfrp_query_power_state(const struct n1x_dla_io *io,
-                                struct n1x_hfrp_channel *channel,
-                                const struct n1x_hfrp_version *version,
-                                __u32 polls, __u32 interval_us,
-                                struct n1x_hfrp_power_state *state,
-                                struct n1x_hfrp_exchange_result *result);
+								struct n1x_hfrp_channel *channel,
+								const struct n1x_hfrp_version *version,
+								__u32 polls, __u32 interval_us,
+								struct n1x_hfrp_power_state *state,
+								struct n1x_hfrp_exchange_result *result);
 
 struct n1x_hfrp_stop_result {
-    struct n1x_hfrp_exchange_result power;
-    struct n1x_hfrp_exchange_result query;
-    struct n1x_hfrp_power_state state;
-    __u8 attempted;
-    __u8 accepted;
-    __u8 confirmed;
+	struct n1x_hfrp_exchange_result power;
+	struct n1x_hfrp_exchange_result query;
+	struct n1x_hfrp_power_state state;
+	__u8 attempted;
+	__u8 accepted;
+	__u8 confirmed;
 };
 /* Immediate clock/domain/rail OFF (Windows request 0x70 -> wire 0x0043).
  * Requires v1.5+, a READY exclusively owned channel and caller-drained work.
@@ -221,8 +221,8 @@ struct n1x_hfrp_stop_result {
  * Invalid input/state/version preserves result and performs no I/O.
  */
 int n1x_hfrp_stop(const struct n1x_dla_io *io,
-                   struct n1x_hfrp_channel *channel,
-                   const struct n1x_hfrp_version *version,
-                   __u32 polls, __u32 interval_us,
-                   struct n1x_hfrp_stop_result *result);
+					struct n1x_hfrp_channel *channel,
+					const struct n1x_hfrp_version *version,
+					__u32 polls, __u32 interval_us,
+					struct n1x_hfrp_stop_result *result);
 #endif

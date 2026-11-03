@@ -4,15 +4,15 @@
 #include "n1x_sroot.h"
 
 struct n1x_dla_sroot_load_result {
-    struct n1x_sroot_reply reply;
-    /* Conservative from BEFORE any mailbox operation, even on prepare errors.
-     * The caller must retain upload DMA storage until verified quiescence.
-     * Neither a clear flag on invalid input nor a later reinit says anything
-     * about storage published by an earlier transaction.
-     */
-    __u8 upload_attempted;
-    __u8 reply_valid;
-    __u8 idle_observed;
+	struct n1x_sroot_reply reply;
+	/* Conservative from BEFORE any mailbox operation, even on prepare errors.
+	 * The caller must retain upload DMA storage until verified quiescence.
+	 * Neither a clear flag on invalid input nor a later reinit says anything
+	 * about storage published by an earlier transaction.
+	 */
+	__u8 upload_attempted;
+	__u8 reply_valid;
+	__u8 idle_observed;
 };
 /* Initial method-2 upload phase only: SROOT exchange, firmware status check,
  * then the Windows method-2 write-free IDLESTATE wait. Does NOT select/start
@@ -34,7 +34,7 @@ struct n1x_dla_sroot_load_result {
  * an echo requirement. The live reply format still needs hardware validation.
  */
 int n1x_dla_sroot_upload(const struct n1x_dla_io *sroot,
-                         const struct n1x_dla_io *dla, __u32 stride,
-                         const __u32 words[3], __u32 polls, __u32 interval_us,
-                         struct n1x_dla_sroot_load_result *result);
+						const struct n1x_dla_io *dla, __u32 stride,
+						const __u32 words[3], __u32 polls, __u32 interval_us,
+						struct n1x_dla_sroot_load_result *result);
 #endif

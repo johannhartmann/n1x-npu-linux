@@ -7,9 +7,9 @@
 #endif
 
 struct n1x_dla_statistics {
-    __u32 count;
-    __u32 metadata_offset, metadata_stride;
-    __u32 data_offset, data_stride;
+	__u32 count;
+	__u32 metadata_offset, metadata_stride;
+	__u32 data_offset, data_stride;
 };
 
 /* Read-only validation of an immutable CPU snapshot. Supports only the
@@ -18,5 +18,5 @@ struct n1x_dla_statistics {
  * No DMA, device access, allocation, or output modification on failure.
  */
 int n1x_dla_parse_statistics(const __u8 *data, size_t size,
-                             struct n1x_dla_statistics *out);
+							struct n1x_dla_statistics *out);
 #endif

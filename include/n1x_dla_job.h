@@ -9,37 +9,37 @@
 /* Serialized queue, protected by the caller's device lock. Never reset this
  * structure while firmware from its generation may still access memory. */
 struct n1x_dla_job_queue {
-    __u32 last_fence;
-    bool active, poisoned;
-    struct n1x_dla_job *owner_job;
+	__u32 last_fence;
+	bool active, poisoned;
+	struct n1x_dla_job *owner_job;
 };
 struct n1x_dla_job {
-    void *buffer; /* Caller-owned backing; never allocated/freed by this helper. */
-    __u64 dma;
-    struct n1x_dla_response response;
-    __u32 pending, fence;
-    bool attempted, response_valid, accepted, signal_seen, verified;
-    int error;
-    __u32 idle_notifications;
-    bool idle_blocked;
-    __u32 fence_value;
-    __u32 polls;
-    /* Caller asserts the immutable descriptor has context+restore flags and
-     * valid retained checkpoint/engine-context backing before first start. */
-    bool resumable, suspended, preempt_completed;
-    bool restore_pending; /* Resume submitted; saved marker may not be consumed yet. */
-    __u32 preempt_sequence;
+	void *buffer; /* Caller-owned backing; never allocated/freed by this helper. */
+	__u64 dma;
+	struct n1x_dla_response response;
+	__u32 pending, fence;
+	bool attempted, response_valid, accepted, signal_seen, verified;
+	int error;
+	__u32 idle_notifications;
+	bool idle_blocked;
+	__u32 fence_value;
+	__u32 polls;
+	/* Caller asserts the immutable descriptor has context+restore flags and
+	 * valid retained checkpoint/engine-context backing before first start. */
+	bool resumable, suspended, preempt_completed;
+	bool restore_pending; /* Resume submitted; saved marker may not be consumed yet. */
+	__u32 preempt_sequence;
 };
 struct n1x_dla_job_ops {
-    void *context;
-    /* Both callbacks are synchronous: return zero or negative errno. */
-    /* Write the unique terminal postaction value, initialize a different
-     * coherent fence value and publish all prepared DMA backing. No device I/O. */
-    int (*publish)(void *context, __u32 fence_value);
-    /* Read the caller-owned coherent fence once, then issue a DMA read
-     * barrier before returning so later result reads follow this observation.
-     * This CPU ordering does not establish device-side DMA quiescence. */
-    int (*read_fence)(void *context, __u32 *value);
+	void *context;
+	/* Both callbacks are synchronous: return zero or negative errno. */
+	/* Write the unique terminal postaction value, initialize a different
+	 * coherent fence value and publish all prepared DMA backing. No device I/O. */
+	int (*publish)(void *context, __u32 fence_value);
+	/* Read the caller-owned coherent fence once, then issue a DMA read
+	 * barrier before returning so later result reads follow this observation.
+	 * This CPU ordering does not establish device-side DMA quiescence. */
+	int (*read_fence)(void *context, __u32 *value);
 };
 /* Execute one already prepared, fresh job on a caller-serialized queue.
  * Caller must validate/map the complete descriptor and model, drain stale
@@ -53,9 +53,9 @@ struct n1x_dla_job_ops {
  * No allocation, unmapping, reset, IRQ registration or public userspace ABI.
  */
 int n1x_dla_job_execute(struct n1x_dla_job_queue *queue,
-                        const struct n1x_dla_io *io,
-                        const struct n1x_dla_job_ops *ops,
-                        struct n1x_dla_job *job);
+						const struct n1x_dla_io *io,
+						const struct n1x_dla_job_ops *ops,
+						struct n1x_dla_job *job);
 /* Split form of execute, for a caller-owned serialized job lifecycle. Start
  * publishes once and sends once, reserving the queue for this exact job object.
  * Zero from start means command delivery, not acceptance or completion. Poll
@@ -69,13 +69,13 @@ int n1x_dla_job_execute(struct n1x_dla_job_queue *queue,
  * errors poison it; success releases ownership but does not prove safe DMA free.
  */
 int n1x_dla_job_start(struct n1x_dla_job_queue *queue,
-                      const struct n1x_dla_io *io,
-                      const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job);
+						const struct n1x_dla_io *io,
+						const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job);
 int n1x_dla_job_poll(struct n1x_dla_job_queue *queue,
-                     const struct n1x_dla_io *io,
-                     const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job);
+					const struct n1x_dla_io *io,
+					const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job);
 /* Software quarantine only: never stops hardware or releases DMA. Negative
  * terminal errno required; -EINPROGRESS is not terminal. Caller holds lock. */
 int n1x_dla_job_fail(struct n1x_dla_job_queue *queue, struct n1x_dla_job *job,
-                     int error);
+					int error);
 #endif
