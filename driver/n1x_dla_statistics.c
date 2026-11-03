@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include "n1x_dla_statistics.h"
 
@@ -51,6 +51,6 @@ int n1x_dla_parse_statistics(const __u8 *data, size_t size,
 		if (get32(data + record + 0x1108) != expected)
 			return -EINVAL;
 	}
- *out = parsed;
+	*out = parsed;
 	return 0;
 }

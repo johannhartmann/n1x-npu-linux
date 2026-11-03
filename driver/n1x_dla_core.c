@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include "n1x_dla_core.h"
 
@@ -12,6 +12,7 @@ int n1x_dla_select_riscv(const struct n1x_dla_io *io)
 {
 	__u32 value;
 	int err;
+
 	if (!io || !io->write32 || !io->read32)
 		return -EINVAL;
 	/* R38.4 rejects a nonzero high vector; the reconstructed Windows routine
@@ -39,6 +40,7 @@ int n1x_dla_wait_idle(const struct n1x_dla_io *io,
 {
 	__u32 attempt, value;
 	int err;
+
 	if (!io || !io->read32 || !polls || polls > 5001 ||
 		(polls > 1 && (!interval_us || !io->delay_us)))
 		return -EINVAL;
@@ -58,6 +60,7 @@ int n1x_dla_start_core(const struct n1x_dla_io *io,
 						__u32 polls, __u32 interval_us)
 {
 	int err;
+
 	if (!io || !io->write32 || !io->read32 || !polls || polls > 5001 ||
 		(polls > 1 && (!interval_us || !io->delay_us)))
 		return -EINVAL;

@@ -56,7 +56,7 @@ struct n1x_dla_accel {
 	u64 last_id;
 	size_t retained;
 	u32 count;
-	bool unplugged, stopped;
+	bool unplugged, stopped, stop_failed;
 };
 static struct n1x_dla_accel *to_accel(struct drm_device *drm)
 {
@@ -71,6 +71,7 @@ static int publish(void *context, u32 value)
 	struct n1x_accel_job *job = context;
 	u8 *p = job->task.buffer;
 	unsigned int i;
+
 	for (i = 0; i < 4; i++)
 		p[73 + i] = value >> (i * 8);
 	WRITE_ONCE(*(__le32 *)(p + N1X_JOB_FENCE), cpu_to_le32(~value));
@@ -80,7 +81,8 @@ static int publish(void *context, u32 value)
 static int read_fence(void *context, u32 *value)
 {
 	struct n1x_accel_job *job = context;
-	 *value = le32_to_cpu(READ_ONCE(*(__le32 *)(job->task.buffer + N1X_JOB_FENCE)));
+
+	*value = le32_to_cpu(READ_ONCE(*(__le32 *)(job->task.buffer + N1X_JOB_FENCE)));
 	/* Acquire result reads after the device's completion word. */
 	dma_rmb();
 	return 0;
@@ -92,12 +94,13 @@ static int info_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 	u32 caps = N1X_DLA_CAP_RAWIO_REQUIRED | N1X_DLA_CAP_RETAIN_UNTIL_REBOOT |
 				N1X_DLA_CAP_REEXEC_IO | N1X_DLA_CAP_CONTROLLED_STOP |
 				N1X_DLA_CAP_STATISTICS;
+
 	if (!n1x_accel_permitted())
 		return -EPERM;
 	mutex_lock(&accel->lock);
 	if (accel->control)
 		caps |= N1X_DLA_CAP_PREEMPT;
-	 *info = (struct n1x_dla_accel_info){
+	*info = (struct n1x_dla_accel_info){
 		.abi_version = N1X_DLA_ABI_VERSION,
 		.capabilities = caps,
 		.max_image_bytes = N1X_DLA_MAX_IMAGE, .max_addresses = N1X_DLA_MAX_ADDRESSES,
@@ -150,6 +153,7 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 	for (i = 0; i < req->num_writable_ranges; i++) {
 		unsigned int j;
 		bool covered = false;
+
 		if (!writable[i].bytes || writable[i].offset >= req->image_bytes ||
 			writable[i].bytes > req->image_bytes - writable[i].offset) {
 			err = -EINVAL;
@@ -157,6 +161,7 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 		}
 		for (j = 0; j < req->num_addresses; j++) {
 			u64 delta;
+
 			if (ranges[j].offset > writable[i].offset)
 				continue;
 			delta = writable[i].offset - ranges[j].offset;
@@ -284,6 +289,7 @@ static int read_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 	const struct n1x_dla_accel_read *req = data;
 	struct n1x_accel_job *job;
 	int err = -ENOENT;
+
 	if (!n1x_accel_permitted())
 		return -EPERM;
 	if (req->reserved || !req->job_id || !req->data_ptr || !req->bytes)
@@ -321,6 +327,7 @@ static int reexec_ioctl(struct drm_device *drm, void *data, struct drm_file *fil
 	size_t total = 0;
 	unsigned int i, j;
 	int err = -ENOENT;
+
 	if (!n1x_accel_permitted())
 		return -EPERM;
 	if (!req->job_id || !req->patches_ptr || !req->num_patches || req->num_patches > 64 ||
@@ -374,12 +381,14 @@ static int reexec_ioctl(struct drm_device *drm, void *data, struct drm_file *fil
 	}
 	for (i = 0; i < req->num_patches; i++) {
 		bool writable = false;
+
 		if (patches[i].offset >= job->image_bytes || patches[i].bytes > job->image_bytes - patches[i].offset) {
 			err = -EINVAL;
 			goto unlock;
 		}
 		for (j = 0; j < job->num_writable; j++) {
 			u64 delta;
+
 			if (job->writable[j].offset > patches[i].offset)
 				continue;
 			delta = patches[i].offset - job->writable[j].offset;
@@ -407,8 +416,10 @@ static int reexec_ioctl(struct drm_device *drm, void *data, struct drm_file *fil
 		u8 *dst = job->task.buffer + N1X_JOB_PREFIX + patches[i].offset;
 		u8 *src = copies[i];
 		size_t b;
+
 		for (b = 0; b < patches[i].bytes; b++) {
 			u8 tmp = dst[b];
+
 			dst[b] = src[b];
 			src[b] = tmp;
 		}
@@ -447,6 +458,7 @@ static int stats_ioctl(struct drm_device *drm, void *data, struct drm_file *file
 	struct n1x_dla_statistics parsed;
 	struct n1x_accel_job *job;
 	int err = -ENOENT;
+
 	if (!n1x_accel_permitted())
 		return -EPERM;
 	if (!req->job_id || !req->bytes || req->count || req->metadata_offset ||
@@ -483,6 +495,7 @@ static int snapshot_preempt(void *context, struct n1x_dla_preempt_snapshot *out)
 {
 	struct n1x_accel_job *job = context;
 	u8 *p = job->task.buffer;
+
 	out->checkpoint = le64_to_cpu(READ_ONCE(*(__le64 *)(p + N1X_JOB_CHECKPOINT + 24)));
 	out->task_fence = le32_to_cpu(READ_ONCE(*(__le32 *)(p + N1X_JOB_FENCE)));
 	out->preempt_fence = le32_to_cpu(READ_ONCE(*(__le32 *)(p + N1X_JOB_PREEMPT_FENCE)));
@@ -499,6 +512,7 @@ static int control_ioctl(struct drm_device *drm, void *data, struct drm_file *fi
 	struct n1x_accel_job *job = NULL, *candidate;
 	u32 seq;
 	int err = -ENOENT;
+
 	if (!n1x_accel_permitted())
 		return -EPERM;
 	if (!req->job_id || req->action < N1X_DLA_CONTROL_START ||
@@ -606,8 +620,9 @@ static void postclose(struct drm_device *drm, struct drm_file *file)
 	mutex_lock(&accel->lock);
 	list_for_each_entry_safe(job, next, &accel->jobs, link)
 		if (job->owner == file) {
-			if (!job->mmap_count && job->task.verified &&
-				!job->task.error && !job->task.suspended) {
+			if (!job->mmap_count && !accel->stop_failed &&
+				job->task.verified && !job->task.error &&
+				!job->task.suspended) {
 				list_del(&job->link);
 				dma_free_coherent(drm->dev, job->allocated,
 									job->task.buffer, job->task.dma);
@@ -639,16 +654,23 @@ int n1x_dla_accel_stop(struct n1x_dla_accel *accel, int (*stop)(struct device *)
 	accel->stopped = true;
 	err = stop(accel->drm.dev);
 	if (!err) {
+		accel->stop_failed = false;
 		list_for_each_entry_safe(job, next, &accel->jobs, link) {
+			if (job->mmap_count) {
+				job->owner = NULL;
+				continue;
+			}
 			list_del(&job->link);
 			dma_free_coherent(accel->drm.dev, job->allocated,
 								job->task.buffer, job->task.dma);
+			accel->retained -= job->allocated;
+			accel->count--;
 			kfree(job->writable);
 			kfree(job);
 		}
-		accel->retained = 0;
-		accel->count = 0;
 		/* IDs are never recycled while this DRM device can have open FDs. */
+	} else {
+		accel->stop_failed = true;
 	}
 	mutex_unlock(&accel->lock);
 	return err;
@@ -658,7 +680,7 @@ void n1x_dla_accel_resume(struct n1x_dla_accel *accel)
 	if (!accel)
 		return;
 	mutex_lock(&accel->lock);
-	if (!accel->unplugged && !accel->count && !accel->retained)
+	if (!accel->unplugged && !accel->stop_failed)
 		accel->stopped = false;
 	mutex_unlock(&accel->lock);
 }
@@ -681,7 +703,7 @@ static void n1x_accel_vm_close(struct vm_area_struct *vma)
 	mutex_lock(&accel->lock);
 	if (job->mmap_count)
 		job->mmap_count--;
-	if (!job->mmap_count && !job->owner && !accel->stopped &&
+	if (!job->mmap_count && !job->owner && !accel->stop_failed &&
 		job->task.verified && !job->task.error && !job->task.suspended) {
 		list_del(&job->link);
 		dma_free_coherent(accel->drm.dev, job->allocated,
@@ -777,6 +799,7 @@ struct n1x_dla_accel *n1x_dla_accel_register(struct device *dev, n1x_dla_accel_s
 {
 	struct n1x_dla_accel *accel;
 	int err;
+
 	accel = devm_drm_dev_alloc(dev, &accel_driver, struct n1x_dla_accel, drm);
 	if (IS_ERR(accel))
 		return accel;

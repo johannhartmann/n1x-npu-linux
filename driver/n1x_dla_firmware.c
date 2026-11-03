@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include "n1x_dla_firmware.h"
 
@@ -17,6 +17,7 @@ int n1x_dla_parse_firmware(const __u8 *data, size_t size,
 	struct n1x_dla_firmware parsed;
 	__u32 header, total;
 	const __u8 *ucode;
+
 	if (!data || !out || size < 24)
 		return -EINVAL;
 	if (get32(data) != 0x10fe || get32(data + 4) != 1)
@@ -50,6 +51,6 @@ int n1x_dla_parse_firmware(const __u8 *data, size_t size,
 	if ((parsed.monitor_code_offset | parsed.monitor_code_size |
 		parsed.monitor_data_offset | parsed.monitor_data_size) & 3)
 		return -EINVAL;
- *out = parsed;
+	*out = parsed;
 	return 0;
 }

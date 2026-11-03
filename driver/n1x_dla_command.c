@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include "n1x_dla_command.h"
 
@@ -11,6 +11,7 @@ int n1x_dla_send_method(const struct n1x_dla_io *io, __u32 method,
 {
 	__u32 attempt, value;
 	int err;
+
 	if (!io || !io->write32 || !io->read32 || !polls || polls > 5001 ||
 		(polls > 1 && (!interval_us || !io->delay_us)))
 		return -EINVAL;
@@ -35,6 +36,7 @@ int n1x_dla_build_region(__u8 *out, size_t out_size, __u32 region,
 {
 	__u8 record[16];
 	unsigned int i;
+
 	if (!out || out_size < sizeof(record) || (region != 1 && region != 3 && region != 5) ||
 		!address || (address & 3) || !bytes || (region == 5 && bytes < 8) || address > ~(__u64)0 - bytes)
 		return -EINVAL;

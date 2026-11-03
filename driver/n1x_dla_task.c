@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include "n1x_dla_task.h"
 
@@ -10,6 +10,7 @@ static void put16(__u8 *out, __u16 value)
 static void put64(__u8 *out, __u64 value)
 {
 	unsigned int i;
+
 	for (i = 0; i < 8; i++)
 		out[i] = value >> (8 * i);
 }
@@ -149,6 +150,7 @@ int n1x_dla_build_address_list(__u8 *out, size_t out_size,
 {
 	size_t bytes = n1x_dla_address_list_bytes(count);
 	unsigned int i;
+
 	if (!out || !addresses || !bytes || out_size < bytes)
 		return -EINVAL;
 	for (i = 0; i < count; i++)
@@ -215,6 +217,7 @@ int n1x_dla_validate_il_slice(struct n1x_dla_il_range *out,
 	__u32 index, offset;
 	__u64 address, bytes;
 	unsigned int i;
+
 	if (!out || !slice || slice_size < 12 || !buffers || !num_buffers)
 		return -EINVAL;
 	index = 0;
@@ -240,6 +243,6 @@ int n1x_dla_validate_il_slice(struct n1x_dla_il_range *out,
 	if ((result.address & 255) ||
 		result.address > ~(__u64)0 - result.dma_bytes)
 		return -EINVAL;
- *out = result;
+	*out = result;
 	return 0;
 }

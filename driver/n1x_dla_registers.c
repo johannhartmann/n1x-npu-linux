@@ -1,6 +1,12 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
+#ifdef __KERNEL__
+#include <linux/array_size.h>
+#endif
 #include <linux/errno.h>
 #include "n1x_dla_registers.h"
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
+#endif
 
 struct register_range {
 	__u32 logical, mapped, size;
@@ -26,6 +32,7 @@ int n1x_dla_register_offset(enum n1x_dla_register_map map, __u32 logical,
 	size_t count = 0, index;
 	__u32 offset = logical;
 	int found = 0;
+
 	if (!mapped || (logical & 3))
 		return -EINVAL;
 	switch (map) {
@@ -34,11 +41,11 @@ int n1x_dla_register_offset(enum n1x_dla_register_map map, __u32 logical,
 		break;
 	case N1X_DLA_MAP_WINDOWS_1:
 		ranges = mode1;
-		count = sizeof(mode1) / sizeof(mode1[0]);
+		count = ARRAY_SIZE(mode1);
 		break;
 	case N1X_DLA_MAP_WINDOWS_2:
 		ranges = mode2;
-		count = sizeof(mode2) / sizeof(mode2[0]);
+		count = ARRAY_SIZE(mode2);
 		break;
 	default:
 		return -EINVAL;
@@ -55,6 +62,6 @@ int n1x_dla_register_offset(enum n1x_dla_register_map map, __u32 logical,
 		return -EINVAL;
 	if (offset > resource_size || resource_size - offset < sizeof(__u32))
 		return -ERANGE;
- *mapped = offset;
+	*mapped = offset;
 	return 0;
 }

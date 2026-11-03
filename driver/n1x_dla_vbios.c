@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include "n1x_dla_vbios.h"
 
@@ -47,7 +47,7 @@ int n1x_dla_decode_vbios_policy(const __u8 *frequency, size_t frequency_size,
 	parsed.tuning[5] = get32(tuning + 22);
 	parsed.gating_flags = gating[4];
 	parsed.gating_word = get32(gating + 5);
- *out = parsed;
+	*out = parsed;
 	return 0;
 }
 
@@ -124,7 +124,7 @@ int n1x_dla_prepare_gating(const struct n1x_dla_vbios_policy *policy,
 		result.request_mask |= 0x220;
 	if (!result.policy_bytes[6])
 		result.request_mask |= 0x440;
- *out = result;
+	*out = result;
 	return 0;
 }
 
@@ -222,8 +222,8 @@ int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
 	}
 	if (!have_policy)
 		return -ENOENT;
- *out = parsed;
- *location = found;
+	*out = parsed;
+	*location = found;
 	return 0;
 }
 

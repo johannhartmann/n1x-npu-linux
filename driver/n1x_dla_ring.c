@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
 #include <linux/string.h>
 #include "n1x_dla_ring.h"
@@ -24,7 +24,7 @@ int n1x_dla_region5_history(const __u8 *ring, size_t ring_size,
 	 * Registration normalizes only the firmware-local copy to 8/8.
 	 */
 	if (!first && !second) {
-	 *count = 0;
+		*count = 0;
 		return 0;
 	}
 	if (first < 8 || second < 8 || first > ring_size || second > ring_size ||
@@ -34,7 +34,7 @@ int n1x_dla_region5_history(const __u8 *ring, size_t ring_size,
 	first = (first - 8) / N1X_DLA_REGION5_RECORD_BYTES;
 	second = (second - 8) / N1X_DLA_REGION5_RECORD_BYTES;
 	if (first == second) {
-	 *count = 0;
+		*count = 0;
 		return 0;
 	}
 	capacity = (ring_size - 8) / N1X_DLA_REGION5_RECORD_BYTES;
@@ -53,6 +53,6 @@ int n1x_dla_region5_history(const __u8 *ring, size_t ring_size,
 	if (initial < entries)
 		memcpy(output + (size_t)initial * N1X_DLA_REGION5_RECORD_BYTES,
 				ring + 8, (size_t)(entries - initial) * N1X_DLA_REGION5_RECORD_BYTES);
- *count = entries;
+	*count = entries;
 	return 0;
 }
