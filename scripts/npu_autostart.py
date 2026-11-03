@@ -15,6 +15,7 @@ import subprocess
 KERNEL = '7.2.8-23-rtx-spark-npu'
 MODULE = 'n1x_npu_bootstrap'
 ENDPOINT = 'NVDA200A:00'
+ENDPOINTS = (ENDPOINT, 'NVDA8600:00')
 EXPECTED_DMI = {
     'sys_vendor': 'ASUS',
     'product_name': 'ProArt P16 H7607BA',
@@ -25,10 +26,6 @@ EXPECTED_IOMMU = {
     'NVDA8600:00': 'smmu3.0x0000000014900000',
 }
 FIRMWARE = {
-    'p16-bios300-physical.rom': (
-        0x110000,
-        'a82af14d15effa98a75b19d9135421c7c27f20cca7398d0b0a7ba87547b8b64c',
-    ),
     'p16-sroot-v0.bin': (
         67508,
         '0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4',
@@ -67,27 +64,34 @@ def verify_file(path, expected_size, expected_digest):
 
 
 def validate_host(sysroot=Path('/sys'), firmware_root=Path('/usr/lib/firmware/nvidia/n1x'),
-                  release=None):
+                  release=None, strict=False):
     release = platform.release() if release is None else release
-    if release != KERNEL:
-        raise RuntimeError(f'requires {KERNEL}; running {release}')
-    for name, expected in EXPECTED_DMI.items():
-        actual = (sysroot/'class/dmi/id'/name).read_text().strip()
-        if actual != expected:
-            raise RuntimeError(f'unqualified host {name}: {actual!r}')
+    if strict:
+        if release != KERNEL:
+            raise RuntimeError(f'requires {KERNEL}; running {release}')
+        for name, expected in EXPECTED_DMI.items():
+            actual = (sysroot/'class/dmi/id'/name).read_text().strip()
+            if actual != expected:
+                raise RuntimeError(f'unqualified host {name}: {actual!r}')
+    for name in ENDPOINTS:
+        if not (sysroot/'bus/platform/devices'/name).exists():
+            raise RuntimeError(f'missing ACPI NPU endpoint: {name}')
     for name, (size, digest) in FIRMWARE.items():
         verify_file(firmware_root/name, size, digest)
 
 
-def dma_plan(sysroot=Path('/sys')):
+def dma_plan(sysroot=Path('/sys'), strict=False):
     groups = (sysroot/'kernel/iommu_groups').resolve(strict=True)
     rows = []
-    for name, supplier in EXPECTED_IOMMU.items():
+    for name in ENDPOINTS:
         dev = sysroot/'bus/platform/devices'/name
         if (dev/'driver').exists() or (dev/'driver').is_symlink():
             raise RuntimeError(f'{name} is already bound before startup')
-        if (dev/'iommu').resolve(strict=True).name != supplier:
+        supplier = (dev/'iommu').resolve(strict=True).name
+        if strict and supplier != EXPECTED_IOMMU[name]:
             raise RuntimeError(f'{name} has an unexpected SMMU supplier')
+        if not supplier.startswith('smmu3.'):
+            raise RuntimeError(f'{name} is not routed through an ARM SMMUv3 ({supplier})')
         group = (dev/'iommu_group').resolve(strict=True)
         if group.parent != groups or not group.name.isdecimal():
             raise RuntimeError(f'{name} has an unexpected IOMMU group')

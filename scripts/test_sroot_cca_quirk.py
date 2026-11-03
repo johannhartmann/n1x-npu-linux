@@ -40,7 +40,6 @@ typedef int acpi_status;
 enum {DMI_SYS_VENDOR, DMI_PRODUCT_NAME, DMI_BIOS_VERSION};
 static int required=1, cca_status=AE_NOT_FOUND, hrv_status, notices;
 static unsigned long long cca_value, hrv_value=1;
-static const char *values[]={"ASUS","ProArt P16 H7607BA","H7607BA.300"};
 struct acpi_device {
     struct {unsigned int cca_seen, coherent_dma;} flags;
     struct acpi_device *parent;
@@ -49,7 +48,6 @@ struct acpi_device {
 };
 static struct acpi_device *acpi_dev_parent(struct acpi_device *a) {return a->parent;}
 static const char *acpi_device_hid(struct acpi_device *a) {return a->hid;}
-static int dmi_match(int field,const char *value) {return !strcmp(values[field],value);}
 static acpi_status acpi_evaluate_integer(void *h,const char *name,void *args,unsigned long long *out)
 {(void)h;(void)args; if(!strcmp(name,"_CCA")){if(!cca_status)*out=cca_value;return cca_status;}
  assert(!strcmp(name,"_HRV"));if(!hrv_status)*out=hrv_value;return hrv_status;}
@@ -66,8 +64,6 @@ int main(void)
 {
  check(NULL,"NVDA8600",1,0,1);
  check(NULL,"NVDA200A",0,0,0);
- const char *expected[]={"ASUS","ProArt P16 H7607BA","H7607BA.300"};
- for(int i=0;i<3;i++){values[i]="other";check(NULL,"NVDA8600",0,0,0);values[i]=expected[i];}
  hrv_value=2;check(NULL,"NVDA8600",0,0,0);hrv_value=1;
  hrv_status=AE_NOT_FOUND;check(NULL,"NVDA8600",0,0,0);hrv_status=0;
  cca_status=2;check(NULL,"NVDA8600",0,0,0);

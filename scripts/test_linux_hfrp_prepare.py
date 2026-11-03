@@ -113,9 +113,9 @@ int main(int argc,char **argv)
  reset();strict_platform=false;registers[0]=0x20250424;early(-EOPNOTSUPP);
  reset();strict_platform=false;registers[0]=0x20250425;request_error=-ENOENT;
  image[100]^=1;
- assert(n1x_boot_prepare_hfrp_once()==0 && live_policy_calls==1 && releases==0 && boot_hfrp.powered);
+ assert(n1x_boot_prepare_hfrp_once()==0 && live_policy_calls==1 && requests==0 && releases==0 && boot_hfrp.powered);
  image[100]^=1;cases++;
- reset();strict_platform=false;image[0x28076]^=1;early(-EOPNOTSUPP);image[0x28076]^=1;
+ reset();strict_platform=false;image[0x28074]^=1;early(-EOPNOTSUPP);image[0x28074]^=1;
  reset();module_ok=false;early(-ENODEV);
  for(int i=0;i<=4;i++){reset();fail_step=i;
  assert(n1x_boot_prepare_hfrp_once()==(i?-EIO:0));

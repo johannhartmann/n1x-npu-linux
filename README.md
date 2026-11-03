@@ -56,15 +56,21 @@ Additional examples: [full-image DnCNN denoising and ResNet-18 classification](d
 
 `n1x_npu_bootstrap` is a Linux kernel module; it is not an Omarchy component.
 The module source and recovered RTX Spark protocol are kept in this repository.
-The co-installable `linux-rtx-spark-npu` build is only the currently qualified
-reference kernel because the P16 BIOS needs the scoped SROOT DMA-coherency
-quirk. Omarchy is the host distribution used for qualification, not part of the
-driver or package identity.
+By default (`strict_platform=0`), the driver dynamically discovers the NPU and
+SROOT endpoints from ACPI (`NVDA200A` `_HRV=0x34`, `NVDA8600` `_HRV=1`), their
+`_CRS` MMIO apertures, their IORT SMMUv3 mappings, and the board's live VBIOS
+clock/power/gating policy carveout (via the hardware locator register at
+`0x1182bc80`), without requiring hardcoded DMI board strings or a pre-dumped
+VBIOS `.rom` file.
+The co-installable `linux-rtx-spark-npu` build provides the generic `NVDA8600`
+(`_HRV=1`) noncoherent SROOT DMA-coherency quirk for N1X BIOSes that omit
+`ROT0._CCA`. Omarchy is the host distribution used for qualification, not part
+of the driver or package identity.
 
-Physical support is pinned to **ASUS ProArt P16 H7607BA**, BIOS **H7607BA.300**,
-and kernel **7.2.8-23-rtx-spark-npu** with matching headers. These guards
-are enforced by the driver. Other N1X hardware and kernels need a separate port
-and qualification. Start with the related [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux)
+Physical hardware qualification was recorded on **ASUS ProArt P16 H7607BA**,
+BIOS **H7607BA.300**, and kernel **7.2.8-23-rtx-spark-npu** (`strict_platform=1`
+remains available as an optional module parameter to enforce those exact pins).
+Start with the related [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux)
 for workstation enablement; this repository supplies the NPU implementation and
 research tools, not a generic distribution/kernel installer.
 

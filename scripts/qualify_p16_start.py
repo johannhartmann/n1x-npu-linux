@@ -88,11 +88,14 @@ def main():
                         help='continue this boot after verified HFRP; never repeat handshake/upload')
     parser.add_argument('--enable-accel', action='store_true',
                         help='register experimental RAWIO-only accel API during fresh module load')
+    parser.add_argument('--strict-platform', action='store_true',
+                        help='enforce exact P16 BIOS-300 ROM/kernel/DMI pins')
     args = parser.parse_args()
     if args.enable_accel and args.after_hfrp:
         parser.error('--enable-accel must be selected at fresh module load')
-    if os.geteuid() or platform.release() != KERNEL:
-        parser.error('requires root on the qualified NPU kernel')
+    running_kernel = platform.release()
+    if os.geteuid() or (args.strict_platform and running_kernel != KERNEL):
+        parser.error('requires root on the NPU kernel')
     loaded = Path('/sys/module/n1x_npu_bootstrap')
     if loaded.exists() != args.after_hfrp:
         parser.error('fresh start requires no module; --after-hfrp requires the existing module')
@@ -100,12 +103,13 @@ def main():
     rows = [] if args.after_hfrp else plan()
     module = ROOT/'driver/n1x_npu_bootstrap.ko'
     rom = ROOT/'results/p16-bios300-physical.rom'
-    image = rom.read_bytes()
-    if len(image) != 0x110000 or hashlib.sha256(image).hexdigest() != ROM_SHA256:
+    image = rom.read_bytes() if rom.is_file() else None
+    if args.strict_platform and (image is None or len(image) != 0x110000 or
+                                 hashlib.sha256(image).hexdigest() != ROM_SHA256):
         parser.error('board ROM differs from the verified capture')
     vermagic = subprocess.check_output(['/usr/bin/modinfo', '-F', 'vermagic', str(module)], text=True)
-    if vermagic.split()[0] != KERNEL:
-        parser.error('module vermagic does not match the running test kernel')
+    if vermagic.split()[0] != running_kernel:
+        parser.error('module vermagic does not match the running kernel')
     if args.after_hfrp:
         built = subprocess.check_output(['/usr/bin/modinfo', '-F', 'srcversion', str(module)], text=True).strip()
         if not built or (loaded/'srcversion').read_text().strip() != built:
@@ -122,8 +126,9 @@ def main():
             os.fsync(log.fileno())
 
         record(boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
-               kernel=KERNEL, platform_profile=profile, module_sha256=hashlib.sha256(module.read_bytes()).hexdigest(),
-               rom_sha256=ROM_SHA256, through=args.through, after_hfrp=args.after_hfrp, groups=rows, enable_accel=args.enable_accel)
+               kernel=running_kernel, platform_profile=profile, module_sha256=hashlib.sha256(module.read_bytes()).hexdigest(),
+               rom_sha256=hashlib.sha256(image).hexdigest() if image else 'live_vbios_carveout',
+               through=args.through, after_hfrp=args.after_hfrp, groups=rows, enable_accel=args.enable_accel)
         if args.through == 'relu_probe':
             template = (ROOT/'results/p16-relu-template.bin').read_bytes()
             if len(template) != 2834432 or hashlib.sha256(template).hexdigest() != RELU_SHA256:
@@ -148,24 +153,26 @@ def main():
             record(completed_through=args.through, retained_until_checked_shutdown=True,
                    relu_numerical_verified=args.through == 'relu_probe', general_inference_verified=False)
             return
-        destination = Path('/usr/lib/firmware/nvidia/n1x/p16-bios300-physical.rom')
-        if destination.exists():
-            if destination.read_bytes() != image:
-                raise RuntimeError('installed board ROM differs; not overwritten')
-        else:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with destination.open('xb') as out:
-                os.fchmod(out.fileno(), 0o600)
-                out.write(image)
-                out.flush()
-                os.fsync(out.fileno())
+        if image is not None and len(image) == 0x110000 and hashlib.sha256(image).hexdigest() == ROM_SHA256:
+            destination = Path('/usr/lib/firmware/nvidia/n1x/p16-bios300-physical.rom')
+            if destination.exists():
+                if destination.read_bytes() != image:
+                    raise RuntimeError('installed board ROM differs; not overwritten')
+            else:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with destination.open('xb') as out:
+                    os.fchmod(out.fileno(), 0o600)
+                    out.write(image)
+                    out.flush()
+                    os.fsync(out.fileno())
         record(action='select dedicated DMA domains')
         apply(rows)
         record(action='load manual bootstrap, all triggers opt-in')
         subprocess.run(['/usr/bin/insmod', str(module), 'enable_hfrp=1', 'enable_upload=1',
                         'enable_ping=1', 'enable_region5=1', 'enable_config_snapshot=1',
                         'enable_config_apply=1', 'enable_lpwr_config=1', 'enable_bypass_task=1',
-                        'enable_relu_probe=1', 'enable_accel='+str(int(args.enable_accel))], check=True)
+                        'enable_relu_probe=1', 'enable_accel='+str(int(args.enable_accel)),
+                        'strict_platform='+str(int(args.strict_platform))], check=True)
         dev = Path('/sys/bus/platform/devices/NVDA200A:00')
         if (dev/'driver').resolve().name != 'n1x-npu-bootstrap':
             raise RuntimeError('DLA did not bind to the bootstrap')

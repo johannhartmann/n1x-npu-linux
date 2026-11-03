@@ -157,12 +157,14 @@ reference and likewise makes no claim of physical NPU execution.
 
 ## 5. Board input and module build
 
-Use the [bounded read-only board ROM procedure](research/p16-board-start.md#reproducible-read-only-acquisition)
-to create `results/p16-bios300-physical.rom`. That explicitly privileged
-acquisition is separate from setup and must match SHA-256
-`a82af14d15effa98a75b19d9135421c7c27f20cca7398d0b0a7ba87547b8b64c`.
-An already acquired, identical capture may be copied into that path. The
-startup qualifier verifies it and installs it locally when absent.
+By default (`strict_platform=0`), `n1x_npu_bootstrap.ko` dynamically discovers
+the board's VBIOS clock/power/gating policy directly from the live hardware
+carveout (`0x1182bc80`), so a pre-captured `.rom` file in `/usr/lib/firmware`
+is not required at runtime. For offline verification against the Windows KMD
+parser (or when running with `strict_platform=1` on the P16), use the
+[bounded read-only board ROM procedure](research/p16-board-start.md#reproducible-read-only-acquisition)
+to create `results/p16-bios300-physical.rom` (SHA-256
+`a82af14d15effa98a75b19d9135421c7c27f20cca7398d0b0a7ba87547b8b64c`).
 
 Install the checked SROOT image into the firmware search path:
 

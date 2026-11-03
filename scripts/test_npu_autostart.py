@@ -50,13 +50,16 @@ def main():
             assert len(rows) == 2 and all(row[2:] == ('identity', 'DMA') for row in rows)
             target.select_dma(rows)
             assert all(row[1].read_text() == 'DMA\n' for row in rows)
-            write(sysroot/'class/dmi/id/bios_version', 'different\n')
+            # Dynamic discovery accepts different BIOS/board DMI strings by default
+            write(sysroot/'class/dmi/id/bios_version', 'P14.300\n')
+            write(sysroot/'class/dmi/id/product_name', 'ProArt P14\n')
+            target.validate_host(sysroot, firmware, '7.2.8-generic-arm64')
             try:
-                target.validate_host(sysroot, firmware, target.KERNEL)
+                target.validate_host(sysroot, firmware, target.KERNEL, strict=True)
             except RuntimeError:
                 pass
             else:
-                raise AssertionError('different BIOS accepted')
+                raise AssertionError('different BIOS accepted in strict mode')
         finally:
             target.FIRMWARE.clear()
             target.FIRMWARE.update(original_firmware)
