@@ -10,7 +10,7 @@
 #define SWGEN1 (1U << 7)
 
 int n1x_dla_take_response(const struct n1x_dla_io *io,
-							struct n1x_dla_response *response)
+			  struct n1x_dla_response *response)
 {
 	struct n1x_dla_response captured;
 	__u32 status;
@@ -29,7 +29,7 @@ int n1x_dla_take_response(const struct n1x_dla_io *io,
 	err = io->read32(io->context, MAILBOX1, &captured.data);
 	if (err)
 		return err;
-	/* L4T R38.4 ISR ordering; HAL-1 RV32 and T35x RV64 wait for this ACK.
+	/* Clear IRQMCLR and IRQSCLR before writing the MAILBOX0 response ACK.
 	 * HAL-1 firmware sets SWGEN1 in IRQMSET before each mailbox response.
 	 */
 	err = io->write32(io->context, IRQMCLR, SWGEN1);
@@ -46,7 +46,7 @@ int n1x_dla_take_response(const struct n1x_dla_io *io,
 }
 
 int n1x_dla_decode_response(const struct n1x_dla_response *response,
-							struct n1x_dla_response_fields *fields)
+			    struct n1x_dla_response_fields *fields)
 {
 	struct n1x_dla_response_fields decoded;
 

@@ -27,7 +27,7 @@ def main():
                     return 'reviewed'
                 if str(path) == '/sys/firmware/acpi/platform_profile':
                     return 'quiet'
-                if path.parent == Path('/sys/bus/platform/devices/NVDA200A:00'):
+                if path.parent == Path('/sys/kernel/debug/n1x-npu-bootstrap'):
                     return 'task_verified=1 lpwr_accepted=1 power_accepted=1'
                 return read_text(path, *args, **kwargs)
 

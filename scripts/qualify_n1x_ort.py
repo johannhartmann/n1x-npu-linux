@@ -36,6 +36,7 @@ from test_n1x_ort import _build_three_stage_onnx
 
 ENDPOINT = Path("/sys/bus/platform/devices/NVDA200A:00")
 SROOT = Path("/sys/bus/platform/devices/NVDA8600:00")
+DEBUGFS = Path("/sys/kernel/debug/n1x-npu-bootstrap")
 MODULE_SYS = Path("/sys/module/n1x_npu_bootstrap")
 ACCEL_NODE = "/dev/accel/accel0"
 
@@ -50,7 +51,7 @@ def _fields(text: str) -> dict[str, str]:
 
 def ensure_npu_started() -> bool:
     if MODULE_SYS.exists():
-        st = _fields((ENDPOINT / "status").read_text()) if (ENDPOINT / "status").exists() else {}
+        st = _fields((DEBUGFS / "status").read_text()) if (DEBUGFS / "status").exists() else {}
         if st.get("task_verified") == "1" and Path(ACCEL_NODE).exists():
             return False
         if (ENDPOINT / "shutdown").exists():
@@ -62,7 +63,7 @@ def ensure_npu_started() -> bool:
             group_type.write_text("DMA\n")
     ko = ROOT / "driver/n1x_npu_bootstrap.ko"
     subprocess.run(["/usr/bin/insmod", str(ko)], check=True)
-    st = _fields((ENDPOINT / "status").read_text())
+    st = _fields((DEBUGFS / "status").read_text())
     if st.get("task_verified") != "1" or not Path(ACCEL_NODE).exists():
         raise RuntimeError(f"in-kernel autostart did not set task_verified=1: {st}")
     return True

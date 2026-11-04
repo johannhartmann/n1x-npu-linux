@@ -5,13 +5,13 @@
 #define IDLESTATE 0x4c
 
 int n1x_dla_wait_idle(const struct n1x_dla_io *io,
-					__u32 polls, __u32 interval_us)
+		      __u32 polls, __u32 interval_us)
 {
 	__u32 attempt, value;
 	int err;
 
 	if (!io || !io->read32 || !polls || polls > 5001 ||
-		(polls > 1 && (!interval_us || !io->delay_us)))
+	    (polls > 1 && (!interval_us || !io->delay_us)))
 		return -EINVAL;
 	for (attempt = 0; attempt < polls; attempt++) {
 		err = io->read32(io->context, IDLESTATE, &value);

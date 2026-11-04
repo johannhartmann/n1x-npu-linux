@@ -740,7 +740,7 @@ int map_and_init_windows_dll(const char *dll_path) {
         }
     }
 
-    /* Set up deterministic 256 MB Windows heap arena */
+    /* Set up deterministic 2 GB Windows heap arena */
     g_win_heap_base = static_cast<uint8_t *>(
         mmap(nullptr, kWinHeapSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     if (g_win_heap_base == MAP_FAILED) {

@@ -24,18 +24,18 @@ static void put64(__u8 *out, __u64 value)
 }
 
 int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
-						const struct n1x_dla_task_args *args)
+			  const struct n1x_dla_task_args *args)
 {
 	__u8 descriptor[N1X_DLA_TASK_V2_BYTES] = {0};
 
 	/* Copy parameters before writing so overlapping input/output is harmless. */
 	if (!out || !args || out_size < sizeof(descriptor) ||
-		(args->next & 255) || !args->address_list ||
-		(args->address_list & 255) || !args->num_addresses)
+	    (args->next & 255) || !args->address_list ||
+	    (args->address_list & 255) || !args->num_addresses)
 		return -EINVAL;
-	/* L4T R38.4 dla_task_descriptor: packed, aligned(4), version 2.
-	 * Both HAL-1 RV32 and T35x RV64 firmware verify version at 8, engine at 9,
-	 * queue at 20 and next-pointer alignment, and copies a 60-byte header.
+	/* Version 2 DLA task descriptor (packed, 4-byte aligned, 60-byte header):
+	 * firmware verifies version at +8, engine at +9, queue at +20, and
+	 * 256-byte alignment of next-task and address-list pointers.
 	 */
 	put64(descriptor, args->next);
 	descriptor[8] = 2;
@@ -49,14 +49,14 @@ int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
 }
 
 int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
-								const struct n1x_dla_task_args *args,
-								__u64 fence_address, __u32 fence_value)
+				 const struct n1x_dla_task_args *args,
+				 __u64 fence_address, __u32 fence_value)
 {
 	__u8 descriptor[N1X_DLA_FENCED_TASK_V2_BYTES] = {0};
 	int err;
 
 	if (!out || out_size < sizeof(descriptor) || !fence_address ||
-		(fence_address & 3))
+	    (fence_address & 3))
 		return -EINVAL;
 	err = n1x_dla_build_task_v2(descriptor, sizeof(descriptor), args);
 	if (err)
@@ -70,15 +70,15 @@ int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
 	put64(descriptor + 65, fence_address);
 	put32(descriptor + 73, fence_value);
 	/* Byte 77 terminates the stream. Padding through byte 255 covers HAL-1
-	 * aligned 256-byte cache fetches (and T35x 16-byte lookahead reads).
+	 * aligned 256-byte cache fetches.
 	 */
 	memcpy(out, descriptor, sizeof(descriptor));
 	return 0;
 }
 
 int n1x_dla_build_bypass_fenced_task_v2(__u8 *out, size_t out_size,
-										const struct n1x_dla_task_args *args,
-										__u64 fence_address, __u32 fence_value)
+					const struct n1x_dla_task_args *args,
+					__u64 fence_address, __u32 fence_value)
 {
 	__u8 descriptor[N1X_DLA_FENCED_TASK_V2_BYTES];
 	int err;
@@ -87,21 +87,21 @@ int n1x_dla_build_bypass_fenced_task_v2(__u8 *out, size_t out_size,
 	if (!out || !args || out_size < sizeof(descriptor) || args->next)
 		return -EINVAL;
 	err = n1x_dla_build_fenced_task_v2(descriptor, sizeof(descriptor), args,
-									fence_address, fence_value);
+					   fence_address, fence_value);
 	if (err)
 		return err;
-	descriptor[41] = 1; /* Recovered HAL-1 flag / L4T DLA_DESC_FLAGS_BYPASS_EXEC. */
+	descriptor[41] = 1; /* DLA_DESC_FLAGS_BYPASS_EXEC */
 	memcpy(out, descriptor, sizeof(descriptor));
 	return 0;
 }
 
 int n1x_dla_build_context_header(__u8 *out, size_t out_size,
-								__u64 checkpoint, __u8 context_tag)
+				 __u64 checkpoint, __u8 context_tag)
 {
 	__u8 header[N1X_DLA_CONTEXT_HEADER_BYTES] = {0};
 
 	if (!out || out_size < sizeof(header) || !checkpoint ||
-		(checkpoint & 255) || checkpoint > ((__u64)1 << 36) - 256)
+	    (checkpoint & 255) || checkpoint > ((__u64)1 << 36) - 256)
 		return -EINVAL;
 	header[0] = 1;
 	header[1] = context_tag;
@@ -111,25 +111,25 @@ int n1x_dla_build_context_header(__u8 *out, size_t out_size,
 }
 
 int n1x_dla_build_context_fenced_task_v2(__u8 *out, size_t out_size,
-										const struct n1x_dla_task_args *args,
-										__u64 fence_address, __u32 fence_value,
-										__u64 context_header, __u8 restore)
+					 const struct n1x_dla_task_args *args,
+					 __u64 fence_address, __u32 fence_value,
+					 __u64 context_header, __u8 restore)
 {
 	__u8 descriptor[N1X_DLA_FENCED_TASK_V2_BYTES];
 	int err;
 
 	if (!out || !args || out_size < sizeof(descriptor) || args->next ||
-		args->num_addresses > 512 ||
-		args->address_list > ((__u64)1 << 36) - n1x_dla_address_list_bytes(args->num_addresses) ||
-		fence_address > ((__u64)1 << 36) - 4 || !context_header ||
-		(context_header & 255) || context_header > ((__u64)1 << 36) - 256 || restore > 1)
+	    args->num_addresses > 512 ||
+	    args->address_list > ((__u64)1 << 36) - n1x_dla_address_list_bytes(args->num_addresses) ||
+	    fence_address > ((__u64)1 << 36) - 4 || !context_header ||
+	    (context_header & 255) || context_header > ((__u64)1 << 36) - 256 || restore > 1)
 		return -EINVAL;
 	err = n1x_dla_build_fenced_task_v2(descriptor, sizeof(descriptor), args,
-									fence_address, fence_value);
+					   fence_address, fence_value);
 	if (err)
 		return err;
-	/* 1046ee loads the context header only with bit 2 set. The consumer
-	 * tests bit 1 before reading the saved-work checkpoint for restoration.
+	/* Bit 2 (0x04) enables the context header pointer at +51; bit 1 (0x02)
+	 * instructs the firmware consumer to restore from a saved checkpoint.
 	 */
 	put16(descriptor + 41, 4 | (restore ? 2 : 0));
 	put64(descriptor + 51, context_header);
@@ -145,7 +145,7 @@ size_t n1x_dla_address_list_bytes(__u16 count)
 }
 
 int n1x_dla_build_address_list(__u8 *out, size_t out_size,
-								const __u64 *addresses, __u16 count)
+			       const __u64 *addresses, __u16 count)
 {
 	size_t bytes = n1x_dla_address_list_bytes(count);
 	unsigned int i;

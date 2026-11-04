@@ -6,7 +6,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Broker-only query for preflighting the kernel's retained-DMA budget.
+/* Internal helper for preflighting the kernel's retained-DMA budget.
  * This is not part of NVIDIA's cuDLA ABI and is intentionally not installed
  * as a public header.
  */
