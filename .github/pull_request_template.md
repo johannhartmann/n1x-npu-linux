@@ -4,7 +4,7 @@
 
 ## Verification
 
-<!-- Commands and outcomes. Distinguish static/emulated, modeled transport,
+<!-- Commands and outcomes. Distinguish offline unit tests, modeled transport,
      real CUDA and physical DLA execution; list relevant unperformed checks. -->
 
 ## Hardware or compatibility impact

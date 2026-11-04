@@ -8,6 +8,7 @@
 #include <linux/acpi.h>
 #include <linux/capability.h>
 #include <linux/component.h>
+#include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/dma-map-ops.h>
 #include <linux/dma-mapping.h>
@@ -20,6 +21,8 @@
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/seq_file.h>
+#include <linux/slab.h>
 #include <linux/wait.h>
 #include "n1x_dla_boot.h"
 #include "n1x_dla_command.h"
@@ -39,7 +42,8 @@
 #define N1X_REGION5_STRIDE 52U
 #define N1X_REGION5_BYTES (((N1X_REGION5_ALLOC - N1X_REGION5_OFFSET - 8U) / \
 				N1X_REGION5_STRIDE) * N1X_REGION5_STRIDE + 8U)
-/* GB10/T264 display controller register holding the 4 KiB-shifted VBIOS carveout offset. */
+/* GB10/T264 SVP0 (NVDA3000) register offset holding the 4 KiB-shifted VBIOS carveout offset. */
+#define N1X_SVP0_VBIOS_LOCATOR_OFFSET 0x82bc80ULL
 #define N1X_DISP_VBIOS_LOCATOR_PHYS 0x1182bc80ULL
 #define N1X_VBIOS_CARVEOUT_BASE 0x80000600ULL
 #define N1X_VBIOS_CARVEOUT_SIZE 0x110000U
@@ -59,7 +63,7 @@ MODULE_PARM_DESC(enable_preempt, "Permit HAL-1 preemption enablement (0x31c) and
 static DECLARE_WAIT_QUEUE_HEAD(boot_waitq);
 static atomic_t boot_irq_count = ATOMIC_INIT(0);
 static bool boot_irq_registered;
-static struct {
+static struct n1x_boot_preempt_state {
 	struct n1x_dla_control_result transaction;
 	bool attempted, accepted;
 	int error;
@@ -83,7 +87,7 @@ static dma_addr_t boot_dma;
 static int boot_error;
 static bool boot_attempted;
 static bool boot_stopping, boot_hfrp_held, boot_upload_held, boot_unpinned;
-static struct {
+static struct n1x_boot_shutdown_state {
 	struct n1x_hfrp_stop_result transport;
 	const char *stage;
 	u32 irq_owned, irq_mask_before, irq_mask_after;
@@ -91,7 +95,7 @@ static struct {
 	bool attempted, hardware_off, released;
 	int error;
 } boot_shutdown;
-static struct {
+static struct n1x_boot_hfrp_state {
 	struct n1x_hfrp_channel channel;
 	struct n1x_hfrp_version version;
 	struct n1x_hfrp_exchange_result exchange;
@@ -107,14 +111,14 @@ static struct {
 	u32 phase;
 	int error;
 } boot_hfrp;
-static struct {
+static struct n1x_boot_ping_state {
 	void *buffer;
 	dma_addr_t dma;
 	u32 owned, mask_before, masked, word;
 	bool attempted, verified;
 	int error;
 } boot_ping;
-static struct {
+static struct n1x_boot_config_state {
 	void *buffer;
 	dma_addr_t dma;
 	struct n1x_dla_control_result transaction;
@@ -122,20 +126,20 @@ static struct {
 	bool attempted, valid;
 	int error;
 } boot_config;
-static struct {
+static struct n1x_boot_region5_state {
 	void *buffer;
 	dma_addr_t dma;
 	struct n1x_dla_control_result transaction;
 	bool attempted, registered;
 	int error;
 } boot_region5;
-static struct {
+static struct n1x_boot_config_apply_state {
 	struct n1x_dla_control_result transaction;
 	bool attempted, accepted;
 	int error;
 } boot_config_apply;
 
-static struct {
+static struct n1x_boot_lpwr_state {
 	void *buffer;
 	dma_addr_t dma;
 	struct n1x_dla_control_result transaction;
@@ -191,8 +195,8 @@ static int n1x_boot_offset(struct n1x_boot_endpoint *endpoint, u32 logical,
 			return -ERANGE;
 		return 0;
 	}
-	/* Upload has no DLA writer. Opt-in ping/control phases use only recovered
-	 * route/mask/method/mailbox registers; no core-start or reset.
+	/* DLA access uses only the HAL-1 route/mask/method/mailbox registers;
+	 * core boot and reset are driven via SROOT and HFRP.
 	 */
 	if (write ? (logical != 0xd24 && logical != 0x6c && logical != 0x68 &&
 			logical != 4 && logical != 0x40) :
@@ -301,6 +305,27 @@ static int n1x_boot_board_policy(const void *data, size_t size)
 	return n1x_dla_prepare_gating(&boot_hfrp.policy, &boot_hfrp.gating);
 }
 
+static resource_size_t n1x_boot_vbios_locator_phys(void)
+{
+	resource_size_t phys = N1X_DISP_VBIOS_LOCATOR_PHYS;
+	struct acpi_device *adev;
+
+	adev = acpi_dev_get_first_match_dev("NVDA3000", NULL, -1);
+	if (adev) {
+		struct device *phys_dev = acpi_get_first_physical_node(adev);
+
+		if (phys_dev && dev_is_platform(phys_dev)) {
+			struct platform_device *pdev = to_platform_device(phys_dev);
+			struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+
+			if (res && resource_size(res) >= N1X_SVP0_VBIOS_LOCATOR_OFFSET + sizeof(u32))
+				phys = res->start + N1X_SVP0_VBIOS_LOCATOR_OFFSET;
+		}
+		acpi_dev_put(adev);
+	}
+	return phys;
+}
+
 static int n1x_boot_live_board_policy(void)
 {
 	void __iomem *locator_io;
@@ -309,7 +334,7 @@ static int n1x_boot_live_board_policy(void)
 	void *rom;
 	int err;
 
-	locator_io = ioremap(N1X_DISP_VBIOS_LOCATOR_PHYS, sizeof(u32));
+	locator_io = ioremap(n1x_boot_vbios_locator_phys(), sizeof(u32));
 	if (!locator_io)
 		return -ENOMEM;
 	locator = readl(locator_io);
@@ -598,9 +623,8 @@ static int n1x_boot_ping_once(void)
 		return err;
 	io = (struct n1x_dla_io){boot_dla, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
 	dma_wmb();
-	/* Original Windows direct wrapper receives flags=0: method 1, not 0x301.
-	 * The result is in DMA memory; no mailbox ACK or IRQ handler is needed
-	 * by the emulated success path. Physical behavior is still unqualified.
+	/* Method 1 (flags=0) writes completion word 0x44444444 directly to the
+	 * 256-byte-aligned DMA page without raising a SWGEN1 mailbox response.
 	 */
 	err = n1x_dla_send_method(&io, 1, boot_ping.dma >> 8, 5001, 1000);
 	if (err)
@@ -671,8 +695,8 @@ free:
 	return err;
 }
 
-/* Caller holds boot_lock; exactly the observed Windows region-5 allocation
- * layout, without a ring consumer, task submission or configuration import.
+/* Caller holds boot_lock; register the 1 MiB HAL-1 region-5 circular ring
+ * descriptor via SET_REGIONS (command 11) before configuration import.
  */
 static int n1x_boot_init_region5_once(void)
 {
@@ -1889,15 +1913,79 @@ static struct platform_driver n1x_boot_driver = {
 	},
 };
 
+static struct dentry *boot_debugfs_dir;
+
+static int n1x_debugfs_emit_attr(struct seq_file *m,
+				 ssize_t (*show)(struct device *,
+						 struct device_attribute *,
+						 char *))
+{
+	struct device *dev = NULL;
+	ssize_t len;
+	char *buf;
+
+	buf = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+	mutex_lock(&boot_lock);
+	if (boot_dla)
+		dev = get_device(boot_dla->dev);
+	mutex_unlock(&boot_lock);
+	if (!dev) {
+		kfree(buf);
+		return -ENODEV;
+	}
+	len = show(dev, NULL, buf);
+	put_device(dev);
+	if (len > 0)
+		seq_write(m, buf, len);
+	kfree(buf);
+	return len < 0 ? (int)len : 0;
+}
+
+static int n1x_debugfs_status_show(struct seq_file *m, void *v)
+{
+	(void)v;
+	return n1x_debugfs_emit_attr(m, status_show);
+}
+DEFINE_SHOW_ATTRIBUTE(n1x_debugfs_status);
+
+static int n1x_debugfs_hfrp_status_show(struct seq_file *m, void *v)
+{
+	(void)v;
+	return n1x_debugfs_emit_attr(m, hfrp_status_show);
+}
+DEFINE_SHOW_ATTRIBUTE(n1x_debugfs_hfrp_status);
+
+static int n1x_debugfs_shutdown_status_show(struct seq_file *m, void *v)
+{
+	(void)v;
+	return n1x_debugfs_emit_attr(m, shutdown_status_show);
+}
+DEFINE_SHOW_ATTRIBUTE(n1x_debugfs_shutdown_status);
+
 static int __init n1x_boot_init(void)
 {
+	int err;
+
 	if (firmware_variant > 1)
 		return -EINVAL;
-	return platform_driver_register(&n1x_boot_driver);
+	err = platform_driver_register(&n1x_boot_driver);
+	if (err)
+		return err;
+	boot_debugfs_dir = debugfs_create_dir("n1x-npu-bootstrap", NULL);
+	debugfs_create_file("status", 0400, boot_debugfs_dir, NULL,
+			    &n1x_debugfs_status_fops);
+	debugfs_create_file("hfrp_status", 0400, boot_debugfs_dir, NULL,
+			    &n1x_debugfs_hfrp_status_fops);
+	debugfs_create_file("shutdown_status", 0400, boot_debugfs_dir, NULL,
+			    &n1x_debugfs_shutdown_status_fops);
+	return 0;
 }
 module_init(n1x_boot_init);
 static void __exit n1x_boot_exit(void)
 {
+	debugfs_remove_recursive(boot_debugfs_dir);
 	platform_driver_unregister(&n1x_boot_driver);
 }
 module_exit(n1x_boot_exit);
