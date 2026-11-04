@@ -35,12 +35,11 @@ static struct n1x_boot_endpoint *boot_sroot,*boot_dla;
 static struct {bool verified;} boot_ping;
 static struct {void *buffer;dma_addr_t dma;struct n1x_dla_control_result transaction;
  u8 data[252];bool attempted,valid;int error;} boot_config;
-static bool enable_config_snapshot,machine_ok,allocation_fail,stale,sent;
+static bool allocation_fail,stale,sent;
 static u8 allocation[4096] __attribute__((aligned(256)));
 static dma_addr_t allocation_address;
 static int gate_error,mask_error,allocations,frees,barriers,read_barriers,io_calls,fail_at,cases;
 static u32 response_word,response_data,method_data;
-static bool n1x_boot_machine(void) {return machine_ok;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *ep) {assert(ep==&endpoint);return gate_error;}
 static int dma_set_mask_and_coherent(struct device *dev,u64 mask)
 {assert(dev==&device && mask==DMA_BIT_MASK(36));return mask_error;}
@@ -76,7 +75,7 @@ static void dma_rmb(void) {read_barriers++;}
     harness += function
     harness += r'''
 static void reset(void)
-{boot_sroot=boot_dla=&endpoint;boot_ping.verified=true;enable_config_snapshot=machine_ok=true;
+{boot_sroot=boot_dla=&endpoint;boot_ping.verified=true;
  allocation_fail=stale=sent=false;allocation_address=0x100001000ULL;
  gate_error=mask_error=allocations=frees=barriers=read_barriers=io_calls=0;fail_at=-1;
  response_word=0x1602;response_data=allocation_address>>8;method_data=0;
@@ -88,9 +87,7 @@ static void check(int expected,int allocs,int free_count,bool attempted,bool val
  for(size_t i=0;i<sizeof(boot_config.data);i++)assert(boot_config.data[i]==(valid?((i*13+2)&255):0));
  if(attempted){assert(n1x_boot_read_config_once()==-EALREADY);assert(allocations==1);}cases++;}
 int main(void)
-{reset();enable_config_snapshot=false;check(-EPERM,0,0,false,false);
- reset();machine_ok=false;check(-EPERM,0,0,false,false);
- reset();boot_sroot=NULL;check(-ENODEV,0,0,false,false);
+{reset();boot_sroot=NULL;check(-ENODEV,0,0,false,false);
  reset();boot_dla=NULL;check(-ENODEV,0,0,false,false);
  reset();boot_ping.verified=false;check(-ENODEV,0,0,false,false);
  reset();gate_error=-EOPNOTSUPP;check(-EOPNOTSUPP,0,0,false,false);

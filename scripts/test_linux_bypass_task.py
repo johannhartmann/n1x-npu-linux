@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     function = source[source.index('static int n1x_boot_drain_task_idle('):
-                      source.index('static ssize_t bypass_task_store(')]
+                      source.index('/* Explicit diagnostic only.')]
     harness = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -47,7 +47,7 @@ static struct {bool registered;} boot_region5;
 static struct {bool accepted;} boot_config_apply,boot_lpwr;
 static struct n1x_dla_job boot_task;
 static struct n1x_dla_job_queue boot_queue;
-static bool enable_bypass_task,machine_ok,allocation_fail,sent;
+static bool allocation_fail,sent;
 static unsigned char allocation[4096] __attribute__((aligned(256)));
 static dma_addr_t allocation_address;
 static int gate_error,mask_error,allocations,frees,barriers,io_calls,fail_at,cases;
@@ -57,7 +57,6 @@ static bool idle_flood;
 static u32 response_word,response_data,method_data,preexisting;
 enum {NORMAL,COALESCED,NO_REPLY,ACCEPTANCE_ONLY,NO_FENCE,EXEC_ERROR,LATE_ERROR,DUPLICATE,STALE_FENCE};
 static int behavior;
-static bool n1x_boot_machine(void) {return machine_ok;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *ep) {assert(ep==&endpoint);return gate_error;}
 static int dma_set_mask_and_coherent(struct device *dev,u64 mask)
 {assert(dev==&device && mask==DMA_BIT_MASK(36));return mask_error;}
@@ -120,7 +119,7 @@ static void dma_rmb(void) {}
     harness += r'''
 static void reset(void)
 {boot_sroot=boot_dla=&endpoint;boot_ping.verified=boot_region5.registered=true;
- boot_config_apply.accepted=boot_lpwr.accepted=enable_bypass_task=machine_ok=true;
+ boot_config_apply.accepted=boot_lpwr.accepted=true;
  allocation_fail=sent=false;allocation_address=0x100002000ULL;
  idle_before=idle_during=idle_after=idle_acks=0;idle_flood=false;
  gate_error=mask_error=allocations=frees=barriers=io_calls=stage=delays=post_ack_reads=0;fail_at=-1;
@@ -154,8 +153,6 @@ static void prepare_direct(void)
 int main(void)
 {reset();check(0,1,0,true,true);int baseline=io_calls;assert(boot_task.accepted && boot_task.signal_seen);
  reset();behavior=COALESCED;check(0,1,0,true,true);
- reset();enable_bypass_task=false;check(-EPERM,0,0,false,false);
- reset();machine_ok=false;check(-EPERM,0,0,false,false);
  reset();boot_sroot=NULL;check(-ENODEV,0,0,false,false);
  reset();boot_dla=NULL;check(-ENODEV,0,0,false,false);
  reset();boot_ping.verified=false;check(-ENODEV,0,0,false,false);

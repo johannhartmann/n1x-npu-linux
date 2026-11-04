@@ -5,7 +5,6 @@
 
 #define N1X_SROOT_MAX_WORDS 14
 #define N1X_SROOT_CMD_UPLOAD 0x18
-#define N1X_SROOT_CMD_REINIT 0x1a
 
 /* Send a command and payload words over the SROOT mailbox aperture. */
 int n1x_sroot_send(const struct n1x_dla_io *io, __u32 stride,
@@ -38,7 +37,4 @@ int n1x_sroot_exchange(const struct n1x_dla_io *io, __u32 stride,
 		       __u8 command, const __u32 *words, __u8 count,
 		       struct n1x_sroot_reply *reply,
 		       __u32 polls, __u32 interval_us);
-
-/* Build the 3-word payload for SROOT reinitialization command 0x1a. */
-int n1x_sroot_build_reinit(__u32 words[3], const __u8 *request, size_t size);
 #endif

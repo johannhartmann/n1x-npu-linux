@@ -5,74 +5,36 @@ import re
 import subprocess
 import tempfile
 
-TRIGGERS = {
-    'start': b'start\n',
-    'prepare_hfrp': b'prepare\n',
-    'upload': b'upload\n',
-    'ping': b'ping\n',
-    'init_region5': b'init\n',
-    'read_config': b'read\n',
-    'apply_config': b'apply\n',
-    'apply_lpwr': b'apply\n',
-    'bypass_task': b'run\n',
-    'shutdown': b'stop\n',
-}
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def shutdown_harness():
     text = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
-    state = text[text.index('struct n1x_boot_endpoint {'):text.index('static bool n1x_boot_machine(')]
+    state = text[text.index('struct n1x_boot_endpoint {'):text.index('static int n1x_boot_group_member(')]
     code = text[text.index('static int n1x_boot_stop_hardware('):text.index('static DEVICE_ATTR_WO(shutdown);')]
-    start_fn = text[text.index('static int n1x_boot_start_once('):text.index('static ssize_t start_store(')]
-    stores = []
-    for phase in TRIGGERS:
-        if phase == 'shutdown':
-            continue
-        start = text.index('static ssize_t '+phase+'_store(')
-        stores.append(text[start:text.index('static DEVICE_ATTR_WO(', start)])
-    names = set(re.findall(r'\b(n1x_boot_\w+)\(\)', ''.join(stores)))-{'n1x_boot_machine', 'n1x_boot_start_once'}
-    writer_checks = '\n'.join(
-        f'assert({phase}_store(&device,NULL,"{payload.decode().strip()}",{len(payload)-1}) == -ESHUTDOWN);'
-        for phase, payload in TRIGGERS.items() if phase != 'shutdown')
+    start_fn = text[text.index('static int n1x_boot_start_once('):text.index('static struct attribute *boot_attrs[]')]
+    names = set(re.findall(r'\b(n1x_boot_\w+)\(\)', start_fn))-{'n1x_boot_start_once'}
     writer_harness = (
-        'static bool enable_hfrp,enable_upload,enable_ping,enable_region5,'
-        'enable_config_snapshot,enable_config_apply,enable_lpwr_config,enable_bypass_task;\n'
         'static int start_step,start_fail_step;\n'
         + ''.join(
             'static int '+name+'(void) {assert(start_fail_step>=0);return ++start_step==start_fail_step?-EREMOTEIO:0;}\n'
             for name in sorted(names))
     )
     writer_harness += start_fn + r'''
-int n1x_hfrp_query_power_state(const struct n1x_dla_io *io,struct n1x_hfrp_channel *c,
- const struct n1x_hfrp_version *v,u32 p,u32 delay,struct n1x_hfrp_power_state *s,
- struct n1x_hfrp_exchange_result *r) {assert(0);return -EIO;}
-''' + ''.join(stores)+'''
-static void check_stopped_writers(void) {
- start_fail_step=-1;
- boot_stopping=true;
-'''+writer_checks+r'''
- assert(!boot_lock);
-}
 static void check_single_start(void) {
  for(int fail=0;fail<=8;fail++){
-  boot_stopping=false;machine=privileged=true;
+  boot_stopping=false;privileged=true;
   dla_ep.hfrp=(void *)1;boot_dla=&dla_ep;boot_sroot=&sroot_ep;
-  enable_hfrp=enable_upload=enable_ping=enable_region5=true;
-  enable_config_snapshot=enable_config_apply=enable_lpwr_config=enable_bypass_task=true;
   boot_hfrp.attempted=boot_attempted=boot_ping.attempted=boot_region5.attempted=false;
   boot_config.attempted=boot_config_apply.attempted=boot_lpwr.attempted=boot_task.attempted=false;
   boot_hfrp.error=boot_error=boot_ping.error=boot_region5.error=0;
   boot_config.error=boot_config_apply.error=boot_lpwr.error=boot_task.error=0;
   start_step=0;start_fail_step=fail;
-  ssize_t ret=start_store(&device,NULL,"start",5);
-  assert(ret==(fail?-EREMOTEIO:5) && start_step==(fail?fail:8));
+  int ret=n1x_boot_start_once();
+  assert(ret==(fail?-EREMOTEIO:0) && start_step==(fail?fail:8));
  }
- enable_bypass_task=false;start_step=0;start_fail_step=0;
- assert(start_store(&device,NULL,"start",5)==-EPERM && !start_step);
- enable_bypass_task=true;boot_ping.attempted=true;
- assert(start_store(&device,NULL,"start",5)==-EALREADY && !start_step);
+ boot_ping.attempted=true;start_step=0;start_fail_step=0;
+ assert(n1x_boot_start_once()==-EALREADY && !start_step);
 }
 '''
     harness = r'''
@@ -105,7 +67,7 @@ struct n1x_dla_accel {bool locked;int bytes;};
 static struct device device={0,0,NULL},sroot_device={0,1,NULL},foreign={0,2,NULL};
 static struct n1x_boot_endpoint dla_ep,sroot_ep;
 static struct n1x_dla_accel accel;
-static bool machine=true,privileged=true;
+static bool privileged=true;
 static int dma_frees,module_refs,pm_puts,mask,gates,accesses,drains,stops;
 static int gate_fail,io_fail,drain_error,stop_error;
 static bool mask_stuck,confirm=true;
@@ -114,7 +76,6 @@ static void mutex_lock(int *p) {assert(!*p);*p=1;}
 static void mutex_unlock(int *p) {assert(*p);*p=0;}
 static bool capable(int cap) {assert(cap==17);return privileged;}
 static bool sysfs_streq(const char *a,const char *b) {return !strcmp(a,b)||!strcmp(a,"stop\n");}
-static bool n1x_boot_machine(void) {return machine;}
 static void *dev_get_drvdata(struct device *d) {return d->data;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *e)
 {assert(boot_lock && (e==&dla_ep||e==&sroot_ep));return ++gates==gate_fail?-EIO:0;}
@@ -171,7 +132,7 @@ static void reset(void)
  boot_ping.buffer=boot_config.buffer=boot_region5.buffer=boot_lpwr.buffer=(void *)1;
  boot_ping.dma=boot_config.dma=boot_region5.dma=boot_lpwr.dma=1;
  boot_task.buffer=(void *)1;boot_task.dma=1;
- machine=privileged=confirm=true;mask_stuck=false;mask=0xff;route=0xff;
+ privileged=confirm=true;mask_stuck=false;mask=0xff;route=0xff;
  dma_frees=pm_puts=gates=accesses=drains=stops=0;
  gate_fail=io_fail=drain_error=stop_error=0;
 }
@@ -190,16 +151,16 @@ int main(void)
  reset();assert(shutdown_store(&device,NULL,"no",2)==-EPERM && !gates);
  reset();assert(n1x_boot_stop_device(&foreign)==-ENODEV);
  assert(n1x_boot_stop_device(&sroot_device)==-ENODEV && !gates);
- for(int i=0;i<15;i++){
+ for(int i=0;i<14;i++){
   reset();switch(i){
-  case 0:machine=false;break;case 1:boot_hfrp.powered=false;break;
-  case 2:boot_hfrp.error=-EIO;break;case 3:boot_queue.poisoned=true;break;
-  case 4:boot_queue.active=true;break;case 5:boot_error=-EIO;break;
-  case 6:boot_result.reply_valid=false;break;case 7:boot_result.idle_observed=false;break;
-  case 8:boot_result.reply.status=1;break;case 9:boot_result.reply.detail=1;break;
-  case 10:boot_ping.verified=false;break;case 11:boot_config.valid=false;break;
-  case 12:boot_region5.registered=false;break;case 13:boot_config_apply.accepted=false;break;
-  case 14:boot_task.verified=false;break;}
+  case 0:boot_hfrp.powered=false;break;
+  case 1:boot_hfrp.error=-EIO;break;case 2:boot_queue.poisoned=true;break;
+  case 3:boot_queue.active=true;break;case 4:boot_error=-EIO;break;
+  case 5:boot_result.reply_valid=false;break;case 6:boot_result.idle_observed=false;break;
+  case 7:boot_result.reply.status=1;break;case 8:boot_result.reply.detail=1;break;
+  case 9:boot_ping.verified=false;break;case 10:boot_config.valid=false;break;
+  case 11:boot_region5.registered=false;break;case 12:boot_config_apply.accepted=false;break;
+  case 13:boot_task.verified=false;break;}
   failed();assert(!gates && !accesses && !stops);
  }
  for(int i=1;i<=2;i++){reset();gate_fail=i;failed();assert(!accesses);}
@@ -223,7 +184,7 @@ int main(void)
  assert(!boot_buffer && !boot_task.buffer && !boot_ping.buffer && !accel.bytes);
  assert(!boot_hfrp_held && !boot_upload_held && !boot_lock && !accel.locked);
  assert(!n1x_boot_stop_device(&device) && stops==1 && dma_frees==6 && pm_puts==3);
- check_stopped_writers();assert(stops==1 && accesses==4 && dma_frees==6);
+ assert(stops==1 && accesses==4 && dma_frees==6);
  check_single_start();
  reset();boot_attempted=boot_upload_held=false;boot_hfrp_held=true;
  boot_ping.attempted=boot_config.attempted=boot_region5.attempted=false;

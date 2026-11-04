@@ -5,9 +5,9 @@
 - **System**: ASUS ProArt P16 H7607BA, BIOS `H7607BA.300`, NVIDIA RTX Spark / N1X (`t254`).
 - **ACPI Endpoints**: `NVDA200A` (`_HRV=0x34`, DLA HAL 1, SMMUv3 stream `0x2b`) and `NVDA8600` (`_HRV=1`, noncoherent `SROOT` DMA requester, SMMUv3 stream `0x01`).
 - **Kernel**: ARM64 Linux kernel (`>= 6.12`) with the [`NVDA8600` noncoherent DMA quirk](../patches/arm64-acpi-iort-nvda8600-noncoherent-dma.patch).
-- **Vendor Inputs**: Windows ARM64 driver `617.42` (`nvlddmkm.sys`, `nvdla_runtime.dll`), TensorRT `11.4` (`libnvdla_compiler.so`, `nvdla_compiler.dll`), and Linux cuDLA `13.4.92` (`libcudla.so.1`).
+- **Vendor Inputs**: Windows ARM64 driver `617.42` (`nvlddmkm.sys`), TensorRT `11.4` (`libnvdla_compiler.so`, `nvdla_compiler.dll`), and Linux cuDLA `13.4.92` (`libcudla.so.1`).
 
-By default (`strict_platform=0`, `autostart=1`), `n1x_npu_bootstrap.ko` dynamically discovers the ACPI endpoints, `_CRS` MMIO apertures, IORT SMMUv3 mappings, and live VBIOS policy carveout (`0x1182bc80`), brings up firmware in C on probe, and exposes `/dev/accel/accel0`. Passing `strict_platform=1` enforces exact DMI board/BIOS matching.
+`n1x_npu_bootstrap.ko` dynamically discovers the ACPI endpoints, `_CRS` MMIO apertures, IORT SMMUv3 mappings, and live VBIOS policy carveout (`0x1182bc80`), brings up firmware in C on probe, and exposes `/dev/accel/accel0`.
 
 ## Hardware Qualification Summary
 

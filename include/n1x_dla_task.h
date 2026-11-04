@@ -45,45 +45,4 @@ int n1x_dla_build_bypass_fenced_task_v2(__u8 *out, size_t out_size,
 size_t n1x_dla_address_list_bytes(__u16 count);
 int n1x_dla_build_address_list(__u8 *out, size_t out_size,
 			       const __u64 *addresses, __u16 count);
-
-struct n1x_dla_buffer_range {
-	__u64 address;
-	__u64 bytes;
-};
-
-struct n1x_dla_memory_view {
-	struct n1x_dla_buffer_range mapping;
-	__u64 logical_bytes;
-};
-
-struct n1x_dla_model_address {
-	__u64 offset, bytes;
-	__u16 memory_index;
-};
-
-struct n1x_dla_task_buffer {
-	__u64 address, logical_bytes, mapped_bytes;
-};
-
-/* Resolve model address-list entries into task-local buffer mappings. */
-int n1x_dla_resolve_task_buffers(struct n1x_dla_task_buffer *out,
-				 size_t out_count,
-				 const struct n1x_dla_memory_view *memories,
-				 __u16 num_memories,
-				 const struct n1x_dla_model_address *addresses,
-				 __u16 num_addresses,
-				 const __u16 *task_indices,
-				 __u16 num_task_addresses);
-
-struct n1x_dla_il_range {
-	__u64 address;
-	__u32 dma_bytes;
-	__u16 instructions;
-};
-
-/* Validate a 12-byte instruction-list (IL) slice against mapped task buffers. */
-int n1x_dla_validate_il_slice(struct n1x_dla_il_range *out,
-			      const __u8 *slice, size_t slice_size,
-			      const struct n1x_dla_buffer_range *buffers,
-			      __u16 num_buffers);
 #endif

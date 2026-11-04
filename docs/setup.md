@@ -33,7 +33,6 @@ Unpack the **NVIDIA 617.42 Windows ARM64** driver (`SHA-256 425a75f54655ddcc8ee6
 | Required File | SHA-256 |
 | --- | --- |
 | `sources/nvidia/Display.Driver/nvlddmkm.sys` | `73b3187cdf84c0306df78595e49626d096e84dfc1e6356543db57b145007f987` |
-| `sources/nvidia/Display.Driver/nvdla_runtime.dll` | `c58e3425eeee93f89b1ae68f814552aa1cacaaf85d913ca12a9b14f83902d49b` |
 
 Extract and verify the SROOT and DLA firmware images:
 
@@ -62,7 +61,7 @@ sudo install -Dm600 sources/sroot-v1.bin /usr/lib/firmware/nvidia/n1x/sroot-v1.b
 make module
 ```
 
-By default (`strict_platform=0`), `n1x_npu_bootstrap.ko` reads the VBIOS policy directly from the live hardware carveout (`0x1182bc80`), so no `.rom` file is needed in `/usr/lib/firmware`.
+`n1x_npu_bootstrap.ko` reads the VBIOS policy directly from the live hardware carveout (`0x1182bc80`), so no `.rom` file is needed in `/usr/lib/firmware`.
 
 ## 6. Hardware Qualification
 
@@ -81,4 +80,4 @@ Build and install the `n1x-npu-driver` Arch package (see [updates](updates.md)),
 sudo systemctl enable --now n1x-npu.service
 ```
 
-[`99-n1x-npu.rules`](../packaging/udev/99-n1x-npu.rules) and [`n1x-npu.service`](../packaging/systemd/n1x-npu.service) switch the `NVDA200A:00` and `NVDA8600:00` IOMMU groups from `identity` to `DMA`, load `n1x_npu_bootstrap` (`autostart=1`), and expose `/dev/accel/accel0` (`0660 root:render`, `TAG+="uaccess"`).
+[`99-n1x-npu.rules`](../packaging/udev/99-n1x-npu.rules) and [`n1x-npu.service`](../packaging/systemd/n1x-npu.service) switch the `NVDA200A:00` and `NVDA8600:00` IOMMU groups from `identity` to `DMA`, load `n1x_npu_bootstrap`, and expose `/dev/accel/accel0` (`0660 root:render`, `TAG+="uaccess"`).

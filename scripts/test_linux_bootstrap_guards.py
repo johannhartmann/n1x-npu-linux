@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
-    guards = source[source.index('static bool n1x_boot_machine('):
+    guards = source[source.index('static int n1x_boot_group_member('):
                     source.index('static int n1x_boot_read(')]
     harness = r'''
 #include <assert.h>
@@ -22,10 +22,6 @@ def main():
 #include <errno.h>
 #include "n1x_dla_registers.h"
 typedef uint32_t u32;
-enum {DMI_SYS_VENDOR,DMI_PRODUCT_NAME,DMI_BIOS_VERSION};
-static bool strict_platform = true;
-static const char *dmi_values[3];
-static bool dmi_match(int key,const char *expected) {return !strcmp(dmi_values[key],expected);}
 struct acpi_device {struct {bool cca_seen,coherent_dma;} flags;};
 struct device {struct acpi_device *adev;uint64_t *dma_mask;bool coherent;};
 struct n1x_boot_endpoint {struct device *dev;size_t bytes;u32 first;bool sroot;};
@@ -67,12 +63,7 @@ static struct n1x_boot_endpoint reset(bool root)
 static void check(struct n1x_boot_endpoint *ep,int expected)
 {assert(n1x_boot_dma_gate(ep)==expected);assert(group_gets==group_puts);cases++;}
 int main(void)
-{dmi_values[0]="ASUS";dmi_values[1]="ProArt P16 H7607BA";dmi_values[2]="H7607BA.300";
- assert(n1x_boot_machine());
- for(int i=0;i<3;i++){const char *saved=dmi_values[i];dmi_values[i]="other";
- assert(!n1x_boot_machine());strict_platform=false;assert(n1x_boot_machine());
- strict_platform=true;dmi_values[i]=saved;}
- for(int root=0;root<2;root++){
+{for(int root=0;root<2;root++){
  struct n1x_boot_endpoint ep=reset(root);check(&ep,0);
  ep=reset(root);domain.type=11;check(&ep,0);
  ep=reset(root);device.adev=NULL;check(&ep,-EOPNOTSUPP);
@@ -85,9 +76,6 @@ int main(void)
  ep=reset(root);dma_backend=false;check(&ep,-EOPNOTSUPP);
  ep=reset(root);spec_present=false;check(&ep,-EOPNOTSUPP);
  ep=reset(root);spec.num_ids=0;check(&ep,-EOPNOTSUPP);
- ep=reset(root);spec.num_ids=2;check(&ep,-EOPNOTSUPP);
- ep=reset(root);spec.ids[0]^=1;check(&ep,-EOPNOTSUPP);
- strict_platform=false;check(&ep,0);strict_platform=true;
  ep=reset(root);group_present=false;check(&ep,-EOPNOTSUPP);
  ep=reset(root);shared=true;check(&ep,-EINVAL);
  }

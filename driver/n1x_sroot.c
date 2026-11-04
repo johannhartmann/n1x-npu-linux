@@ -217,25 +217,3 @@ int n1x_sroot_exchange(const struct n1x_dla_io *io, __u32 stride,
 		return err;
 	return n1x_sroot_receive(io, stride, reply, polls, interval_us);
 }
-
-int n1x_sroot_build_reinit(__u32 words[3], const __u8 *request, size_t size)
-{
-	__u32 tag = 0, mode = 1;
-	unsigned int i;
-
-	if (!words || !request || (size != 4 && size != 8))
-		return -EINVAL;
-	for (i = 0; i < 4; i++)
-		tag |= (__u32)request[i] << (8 * i);
-	if (size == 8) {
-		mode = 0;
-		for (i = 0; i < 4; i++)
-			mode |= (__u32)request[4 + i] << (8 * i);
-	}
-	if (!valid_image_tag(tag) || (mode != 1 && mode != 2))
-		return -EINVAL;
-	words[0] = tag;
-	words[1] = 0;
-	words[2] = mode;
-	return 0;
-}

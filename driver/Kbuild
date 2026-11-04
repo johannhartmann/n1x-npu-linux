@@ -10,7 +10,6 @@ n1x_npu_bootstrap-y := \
 	n1x_dla_core.o \
 	n1x_dla_job.o \
 	n1x_dla_job_control.o \
-	n1x_dla_model.o \
 	n1x_dla_preempt.o \
 	n1x_dla_registers.o \
 	n1x_dla_response.o \
