@@ -114,7 +114,7 @@ def main():
         def start(label):
             record(action='startup requested', label=label)
             subprocess.run([sys.executable, str(ROOT/'scripts/qualify_p16_start.py'),
-                            '--through', 'relu_probe', '--enable-accel',
+                            '--through', 'bypass_task', '--enable-accel',
                             '--log', str(out/(label+'-startup.jsonl'))], check=True)
             if (MODULE/'srcversion').read_text().strip() != version:
                 raise RuntimeError('loaded source version differs from qualified build')
@@ -145,7 +145,7 @@ def main():
         except BaseException as exc:
             record(failed=True, error=str(exc), automatic_retry=False,
                    module_present=MODULE.exists())
-            for name in ('shutdown_status', 'hfrp_status', 'status', 'relu_status'):
+            for name in ('shutdown_status', 'hfrp_status', 'status'):
                 try:
                     record(cached_status=name, value=(ENDPOINT/name).read_text())
                 except OSError as status_error:

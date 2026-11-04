@@ -98,10 +98,9 @@ def assemble_rgb(planes,cb,cr):
 
 
 class CpuReference:
-    """Independent ONNX Runtime CPU executor, exclusively for validation."""
+    """Independent ONNX CPU executor, exclusively for validation."""
     def __init__(self,path,threads=4):
         import onnx
-        import onnxruntime as ort
         raw=path.read_bytes()
         if hashlib.sha256(raw).hexdigest()!=MODEL_SHA256:raise ValueError('source ONNX hash mismatch')
         model=onnx.load_model_from_string(raw)
@@ -114,8 +113,13 @@ class CpuReference:
         model.graph.output.extend([onnx.helper.make_tensor_value_info(nodes[-1].output[0],onnx.TensorProto.FLOAT,[1,9,'height','width'])])
         del model.graph.value_info[:]
         onnx.checker.check_model(model)
-        options=ort.SessionOptions();options.intra_op_num_threads=threads
-        self.session=ort.InferenceSession(model.SerializeToString(),sess_options=options,providers=['CPUExecutionProvider'])
+        try:
+            import onnxruntime as ort
+            options=ort.SessionOptions();options.intra_op_num_threads=threads
+            self.session=ort.InferenceSession(model.SerializeToString(),sess_options=options,providers=['CPUExecutionProvider'])
+        except ImportError:
+            from onnx.reference import ReferenceEvaluator
+            self.session=ReferenceEvaluator(model)
 
     def __call__(self,data):
-        return self.session.run(None,{'input':np.ascontiguousarray(data,dtype=np.float32)})[0]
+        return np.asarray(self.session.run(None,{'input':np.ascontiguousarray(data,dtype=np.float32)})[0],dtype=np.float32)

@@ -22,8 +22,8 @@ struct device {int unused;};
 struct n1x_boot_endpoint {struct device *dev;};
 static struct device device,foreign;
 static struct n1x_boot_endpoint ep={&device},*boot_dla,*boot_sroot;
-static bool enable_accel,machine_ok,boot_relu_numeric,boot_stopping;
-static struct n1x_dla_job boot_task,boot_relu;
+static bool enable_accel,machine_ok,boot_stopping;
+static struct n1x_dla_job boot_task;
 static struct n1x_dla_job_queue boot_queue;
 static struct {bool accepted;} boot_lpwr;
 static struct {bool powered;struct {bool boot_tables_valid;} policy;} boot_hfrp;
@@ -45,30 +45,28 @@ int n1x_dla_job_execute(struct n1x_dla_job_queue *q,const struct n1x_dla_io *io,
 '''
     tests = r'''
 static void reset(void)
-{boot_stopping=false;enable_accel=machine_ok=boot_relu_numeric=true;boot_dla=boot_sroot=&ep;
+{boot_stopping=false;enable_accel=machine_ok=true;boot_dla=boot_sroot=&ep;
  boot_task.verified=boot_lpwr.accepted=boot_hfrp.powered=boot_hfrp.policy.boot_tables_valid=true;
- boot_relu.attempted=false;gates=drains=runs=gate_error=drain_error=run_error=0;}
+ gates=drains=runs=gate_error=drain_error=run_error=0;}
 static void check(struct device *dev,int expected,int g,int d,int r)
 {struct n1x_dla_job job={0};struct n1x_dla_job_ops ops={.context=&job};
  assert(n1x_boot_accel_submit(dev,&job,&ops)==expected);
  assert(!boot_lock&&gates==g&&drains==d&&runs==r&&job.attempted==(r!=0));cases++;}
 int main(void)
 {
- for(int mode=0;mode<10;mode++){
+ for(int mode=0;mode<9;mode++){
   reset();
   switch(mode){case 0:enable_accel=false;break;case 1:machine_ok=false;break;
   case 2:boot_dla=NULL;break;case 3:boot_sroot=NULL;break;case 4:boot_task.verified=false;break;
   case 5:boot_lpwr.accepted=false;break;case 6:boot_hfrp.powered=false;break;
-  case 7:boot_hfrp.policy.boot_tables_valid=false;break;
-  case 8:boot_relu.attempted=true;boot_relu_numeric=false;break;case 9:break;}
-  check(mode==9?&foreign:&device,-ENODEV,0,0,0);
+  case 7:boot_hfrp.policy.boot_tables_valid=false;break;case 8:break;}
+  check(mode==8?&foreign:&device,-ENODEV,0,0,0);
  }
  reset();gate_error=-EOPNOTSUPP;check(&device,-EOPNOTSUPP,1,0,0);
  reset();boot_stopping=true;check(&device,-ENODEV,0,0,0);
  reset();drain_error=-ENOTRECOVERABLE;check(&device,-ENOTRECOVERABLE,1,1,0);
  reset();run_error=-ETIMEDOUT;check(&device,-ETIMEDOUT,1,1,1);
  reset();check(&device,0,1,1,1);
- reset();boot_relu.attempted=true;check(&device,0,1,1,1);
  printf("%d actual accel backend readiness/locking cases passed; no hardware access\n",cases);
 }
 '''

@@ -20,6 +20,7 @@ sys.path.insert(0,str(ROOT/'runtime'))
 from cudla_broker import Device,FRONTEND_SHA256,BROKER
 from superres_image import CpuReference,MODEL_SHA256,assemble_rgb,fixed_tiles,open_luminance,tiled_planes
 from loadable import Model
+from n1x_compiler import ensure_reference_loadable
 
 LOADABLE_SHA256='c1ffde5d1eb9c7486a08ecc1470a1b633a11c7a71411f8fb36064d16dbcfc1c0'
 
@@ -31,7 +32,7 @@ def main():
     args=parser.parse_args()
     if os.geteuid()==0:parser.error('run as an unprivileged desktop user; the installed broker isolates RAWIO')
     profile=Path('/sys/firmware/acpi/platform_profile').read_text().strip()
-    path=ROOT/'results/native-compile-t254-superres/superres.nvda'
+    path=ensure_reference_loadable('superres',ROOT)
     model=Model.from_file(path)
     if model.sha256!=LOADABLE_SHA256:parser.error('model differs from qualified super-resolution artifact')
     required=(len(model.image)+8192+4095)&~4095

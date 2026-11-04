@@ -9,7 +9,7 @@
 #else
 #include <drm/drm.h>
 #endif
-/* Experimental ABI. No compatibility with NVIDIA cuDLA is implied. */
+/* Userspace ABI for /dev/accel/accel* on NVIDIA N1X (GB10/T264) DLA. */
 #define N1X_DLA_ABI_VERSION 2
 #define N1X_DLA_MAX_IMAGE (32U << 20)
 #define N1X_DLA_RETAIN_LIMIT (64U << 20)
@@ -52,8 +52,7 @@ struct n1x_dla_accel_read {
 };
 /* Opt-in reuse of a successfully completed, non-preemptible trusted task.
  * The kernel restricts patches to caller-registered writable ranges, intended
- * for model I/O. The CAP_SYS_RAWIO caller remains responsible for selecting
- * those ranges; the standard backend registers only tensor inputs/outputs.
+ * for model I/O; the standard backend registers only tensor inputs/outputs.
  * Retains the allocation, including after error. Replaces the prior result ID.
  */
 struct n1x_dla_accel_patch { __u64 offset, bytes, data_ptr; };

@@ -31,7 +31,6 @@ sys.path.insert(0, str(ROOT / "demo"))
 
 from n1x_dla import Device as Transport
 from n1x_ort import InferenceSession, canonicalize_onnx_model
-from npu_trigger import TRIGGERS, trigger
 from ort_demo import FERPLUS_LABELS, build_ferplus_gallery
 from select_npu_dma_domains import apply as apply_dma, plan as plan_dma
 from test_n1x_ort import _build_three_stage_onnx
@@ -52,76 +51,22 @@ def _fields(text: str) -> dict[str, str]:
 def ensure_npu_started() -> bool:
     if MODULE_SYS.exists():
         st = _fields((ENDPOINT / "status").read_text()) if (ENDPOINT / "status").exists() else {}
-        sh = (
-            _fields((ENDPOINT / "shutdown_status").read_text())
-            if (ENDPOINT / "shutdown_status").exists()
-            else {}
-        )
-        if (
-            st.get("task_verified") == "1"
-            and sh.get("hardware_off", "0") == "0"
-            and sh.get("released", "0") == "0"
-            and Path(ACCEL_NODE).exists()
-        ):
+        if st.get("task_verified") == "1" and Path(ACCEL_NODE).exists():
             return False
-        if sh.get("hardware_off", "0") != "1" and (ENDPOINT / "shutdown").exists():
-            os.sync()
-            trigger(ENDPOINT / "shutdown", b"stop\n")
         subprocess.run(["/usr/bin/rmmod", "n1x_npu_bootstrap"], check=True)
-    rom_src = ROOT / "results/p16-bios300-physical.rom"
-    rom_dst = Path("/usr/lib/firmware/nvidia/n1x/p16-bios300-physical.rom")
-    if not rom_dst.exists() and rom_src.exists():
-        rom_dst.parent.mkdir(parents=True, exist_ok=True)
-        rom_dst.write_bytes(rom_src.read_bytes())
     rows = plan_dma()
     apply_dma(rows)
     ko = ROOT / "driver/n1x_npu_bootstrap.ko"
-    subprocess.run(
-        [
-            "/usr/bin/insmod",
-            str(ko),
-            "strict_platform=0",
-            "enable_irq=1",
-            "enable_preempt=1",
-            "enable_hfrp=1",
-            "enable_upload=1",
-            "enable_ping=1",
-            "enable_region5=1",
-            "enable_config_snapshot=1",
-            "enable_config_apply=1",
-            "enable_lpwr_config=1",
-            "enable_bypass_task=1",
-            "enable_accel=1",
-        ],
-        check=True,
-    )
-    phases = (
-        ("prepare_hfrp", "hfrp_status", "power_accepted"),
-        ("upload", "status", "idle_observed"),
-        ("ping", "status", "ping_verified"),
-        ("init_region5", "status", "region5_registered"),
-        ("read_config", "status", "config_valid"),
-        ("apply_config", "status", "config_apply_accepted"),
-        ("apply_lpwr", "status", "lpwr_accepted"),
-        ("bypass_task", "status", "task_verified"),
-    )
-    for phase, status_file, flag in phases:
-        os.sync()
-        trigger(ENDPOINT / phase, TRIGGERS[phase])
-        st = _fields((ENDPOINT / status_file).read_text())
-        if st.get(flag) != "1":
-            raise RuntimeError(f"phase {phase} did not set {flag}=1: {st}")
+    subprocess.run(["/usr/bin/insmod", str(ko)], check=True)
+    st = _fields((ENDPOINT / "status").read_text())
+    if st.get("task_verified") != "1" or not Path(ACCEL_NODE).exists():
+        raise RuntimeError(f"in-kernel autostart did not set task_verified=1: {st}")
     return True
 
 
 def stop_and_unload_npu() -> dict[str, str]:
-    os.sync()
-    trigger(ENDPOINT / "shutdown", b"stop\n")
-    st = _fields((ENDPOINT / "shutdown_status").read_text())
-    if st.get("error") != "0" or st.get("hardware_off") != "1" or st.get("released") != "1":
-        raise RuntimeError(f"clean shutdown failed: {st}")
     subprocess.run(["/usr/bin/rmmod", "n1x_npu_bootstrap"], check=True)
-    return st
+    return {"unloaded": "1"}
 
 
 def qualify_mnist12(tmpdir: str) -> dict:

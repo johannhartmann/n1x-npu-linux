@@ -7,6 +7,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'runtime'))
 from loadable import Model
+from n1x_compiler import ensure_reference_loadable
 
 
 def main():
@@ -21,9 +22,9 @@ def main():
     assert 'insufficient retained-DMA budget for complete broker session' in source
 
     paths = [
-        ROOT/'results/native-compile-t254/relu.nvda',
-        ROOT/'results/native-compile-t254-superres/superres.nvda',
-        ROOT/'results/native-compile-t254-resnet18-b7/resnet18-b7.nvda',
+        ensure_reference_loadable('relu', ROOT),
+        ensure_reference_loadable('superres', ROOT),
+        ensure_reference_loadable('resnet18-b7', ROOT),
     ]
     library = c.CDLL(str(ROOT/'runtime/cudla/libnvcudla.so'))
     query = library.n1x_cudla_materialized_image_size

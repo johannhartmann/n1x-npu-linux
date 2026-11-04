@@ -16,6 +16,7 @@ import sys
 import tarfile
 import tempfile
 import urllib.request
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = (
@@ -104,6 +105,55 @@ def download(relative, url, expected):
             temporary.unlink(missing_ok=True)
 
 
+def _fetch_windows_compiler():
+    url = 'https://developer.download.nvidia.com/compute/machine-learning/tensorrt/11.4.0/zip/TensorRT-Enterprise-11.4.0.106-Windows-arm64-cuda-13.4-Release-external.zip'
+    size = 332016940
+
+    def get_range(a, b):
+        req = urllib.request.Request(url, headers={'Range': f'bytes={a}-{b}'})
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            if resp.status != 206:
+                raise ValueError(f'expected HTTP 206 Partial Content, got {resp.status}')
+            data = resp.read()
+            if len(data) != b - a + 1:
+                raise ValueError('short HTTP range response')
+            return data
+
+    tail = get_range(size - 65536, size - 1)
+    idx = tail.rfind(b'PK\x05\x06')
+    if idx < 0:
+        raise ValueError('missing ZIP end-of-central-directory record')
+    _, disk, cdisk, n1, n2, cs, co, _ = struct.unpack_from('<4s4H2IH', tail, idx)
+    if disk != 0 or cdisk != 0 or n1 != n2:
+        raise ValueError('unexpected multi-disk ZIP archive')
+    cd = get_range(co, co + cs - 1)
+    pos = 0
+    while pos < len(cd):
+        hdr = struct.unpack_from('<4s6H3I5H2I', cd, pos)
+        if hdr[0] != b'PK\x01\x02':
+            raise ValueError('corrupt ZIP central directory entry')
+        nl, xl, cl = hdr[10:13]
+        name = cd[pos + 46:pos + 46 + nl].decode('utf-8')
+        pos += 46 + nl + xl + cl
+        if name.lower().endswith('nvdla_compiler.dll'):
+            method, crc, comp_size, uncomp_size, offset = hdr[4], hdr[7], hdr[8], hdr[9], hdr[-1]
+            lhdr = get_range(offset, offset + 29)
+            lfields = struct.unpack('<4s5H3I2H', lhdr)
+            start = offset + 30 + lfields[-2] + lfields[-1]
+            compressed = get_range(start, start + comp_size - 1)
+            raw = zlib.decompress(compressed, -15) if method == 8 else compressed
+            if len(raw) != uncomp_size or (zlib.crc32(raw) & 0xffffffff) != crc:
+                raise ValueError('Windows compiler ZIP CRC/size mismatch')
+            if hashlib.sha256(raw).hexdigest() != WINDOWS[1]:
+                raise ValueError('Windows compiler SHA-256 mismatch')
+            target = ROOT / WINDOWS[0]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open('xb') as stream:
+                stream.write(raw)
+            return
+    raise ValueError('nvdla_compiler.dll not found in TensorRT ZIP archive')
+
+
 def unpack_public():
     archive = ROOT/ASSETS[0][0]
     destination = (ROOT/FRONTEND[0]).parents[1]
@@ -134,7 +184,7 @@ def unpack_public():
         with path.open('xb') as stream:
             stream.write(payload)
     if not verified(ROOT/WINDOWS[0], WINDOWS[1]):
-        subprocess.run([sys.executable, str(ROOT/'scripts/fetch_windows_compiler.py')], cwd=ROOT, check=True)
+        _fetch_windows_compiler()
         if not verified(ROOT/WINDOWS[0], WINDOWS[1]):
             raise ValueError('Windows compiler missing after extraction')
 

@@ -68,13 +68,16 @@ def atomic_symlink(path, target):
 
 
 def models(selection):
+    import sys
+    sys.path.insert(0, str(ROOT/'runtime'))
+    from n1x_compiler import ensure_reference_loadable
     manifest = json.loads((ROOT/'config/vision-models.json').read_text())
     rows = []
     if selection in ('superres', 'all'):
-        rows.append(('superres', ROOT/'results/native-compile-t254-superres/superres.nvda', SUPERRES_SHA256))
+        rows.append(('superres', ensure_reference_loadable('superres', ROOT), SUPERRES_SHA256))
     if selection in ('vision', 'all'):
         for name, values in manifest['models'].items():
-            rows.append((name, ROOT/'results'/('native-compile-t254-'+name)/(name+'.nvda'), values['sha256']))
+            rows.append((name, ensure_reference_loadable(name, ROOT), values['sha256']))
     return rows
 
 

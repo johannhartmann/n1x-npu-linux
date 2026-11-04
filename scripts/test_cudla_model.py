@@ -12,6 +12,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'runtime'))
 import loadable
+from n1x_compiler import ensure_reference_loadable
 
 
 class Desc(c.Structure):
@@ -95,9 +96,9 @@ size_t tensor_size() { return sizeof(n1x::Tensor); }
                 finally:
                     if model:lib.destroy(model)
         fixtures = [
-            ROOT/'results/native-compile-t254/relu.nvda',
-            ROOT/'results/native-compile-t254-conv1x1/conv1x1.nvda',
-            ROOT/'results/native-compile-t254-conv1x1_relu/conv1x1_relu.nvda',
+            ensure_reference_loadable('relu', ROOT),
+            ensure_reference_loadable('conv1x1', ROOT),
+            ensure_reference_loadable('conv1x1_relu', ROOT),
         ]
         for path in fixtures:
             data = path.read_bytes()

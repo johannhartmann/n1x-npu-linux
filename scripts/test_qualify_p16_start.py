@@ -21,7 +21,6 @@ def main():
                     calls, records = [], []
                     (dev/'hfrp_status').write_text('power_accepted=1 configured=1 phase=5 error=0\n' if after else 'power_accepted=0\n')
                     (dev/'status').write_text('attempted=0\n')
-                    (dev/'relu_status').write_text('numeric_verified=0\n')
 
                     def record(**row):
                         records.append(row)
