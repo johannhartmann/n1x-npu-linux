@@ -53,6 +53,8 @@ def ensure_npu_started() -> bool:
         st = _fields((ENDPOINT / "status").read_text()) if (ENDPOINT / "status").exists() else {}
         if st.get("task_verified") == "1" and Path(ACCEL_NODE).exists():
             return False
+        if (ENDPOINT / "shutdown").exists():
+            (ENDPOINT / "shutdown").write_text("stop\n")
         subprocess.run(["/usr/bin/rmmod", "n1x_npu_bootstrap"], check=True)
     for dev in (ENDPOINT, SROOT):
         group_type = dev / "iommu_group/type"
@@ -67,6 +69,8 @@ def ensure_npu_started() -> bool:
 
 
 def stop_and_unload_npu() -> dict[str, str]:
+    if (ENDPOINT / "shutdown").exists():
+        (ENDPOINT / "shutdown").write_text("stop\n")
     subprocess.run(["/usr/bin/rmmod", "n1x_npu_bootstrap"], check=True)
     return {"unloaded": "1"}
 
