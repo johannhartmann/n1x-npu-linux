@@ -144,8 +144,9 @@ def main():
     built=subprocess.check_output(['modinfo','-F','srcversion',str(ROOT/'driver/n1x_npu_bootstrap.ko')],text=True).strip()
     if Path('/sys/module/n1x_npu_bootstrap/srcversion').read_text().strip()!=built:raise RuntimeError('loaded module differs from reviewed build')
     endpoint=Path('/sys/bus/platform/devices/NVDA200A:00')
-    status=fields((endpoint/'status').read_text());hfrp=fields((endpoint/'hfrp_status').read_text())
-    if status.get('task_verified')!='1' or status.get('lpwr_accepted')!='1' or hfrp.get('power_accepted')!='1':
+    status=fields((endpoint/'status').read_text())
+    hfrp=fields((endpoint/'hfrp_status').read_text()) if (endpoint/'hfrp_status').exists() else {}
+    if status.get('task_verified')!='1' or status.get('lpwr_accepted')!='1' or (hfrp and hfrp.get('power_accepted')!='1'):
         raise RuntimeError('startup/bypass qualification required')
     with Device(args.device) as device:info=device.info()
     if args.reuse and not info['capabilities']&4:

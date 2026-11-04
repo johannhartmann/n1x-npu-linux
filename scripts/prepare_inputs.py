@@ -10,6 +10,7 @@ import hashlib
 import io
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -50,11 +51,30 @@ MANUAL = (
      'c58e3425eeee93f89b1ae68f814552aa1cacaaf85d913ca12a9b14f83902d49b'),
 )
 FIRMWARE = (
-    ('sources/dla-profile1-verified.bin', '2754b289e39b8d9ae9383d952f738bd1c5027fdd2573a564f664f9f66ac2f997'),
-    ('sources/dla-t35x-verified.bin', '8f5b76232c982a15d44806e7e90b094abcbe3ae377e6b05bda127b492e0fad75'),
-    ('sources/dla-p16-sroot-v0.bin', '0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4'),
-    ('sources/dla-p16-sroot-v1.bin', '6b1e8192fc1e61944e9b2a84251b7d18f305025ffb2cfa1de8677f8f98b59ad4'),
+    ('sources/dla-p16-sroot-v0.bin', 0x1405800, 67508,
+     '0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4'),
+    ('sources/dla-p16-sroot-v1.bin', 0x13f5040, 67508,
+     '6b1e8192fc1e61944e9b2a84251b7d18f305025ffb2cfa1de8677f8f98b59ad4'),
 )
+
+
+def _pe_slice(pe_bytes, rva, size):
+    e_lfanew = struct.unpack_from('<I', pe_bytes, 0x3c)[0]
+    if pe_bytes[e_lfanew:e_lfanew + 4] != b'PE\x00\x00':
+        raise ValueError('invalid PE signature')
+    machine, num_sections = struct.unpack_from('<HH', pe_bytes, e_lfanew + 4)
+    opt_size = struct.unpack_from('<H', pe_bytes, e_lfanew + 20)[0]
+    if machine != 0xaa64:
+        raise ValueError('expected ARM64 PE image')
+    sec_base = e_lfanew + 24 + opt_size
+    for i in range(num_sections):
+        off = sec_base + i * 40
+        vsize, va, raw_size, raw_ptr = struct.unpack_from('<IIII', pe_bytes, off + 8)
+        span = max(vsize, raw_size)
+        if va <= rva and rva + size <= va + span:
+            file_off = raw_ptr + (rva - va)
+            return pe_bytes[file_off:file_off + size]
+    raise ValueError(f'RVA {hex(rva)} not found in PE sections')
 
 
 def verified(path, expected):
@@ -79,7 +99,6 @@ def download(relative, url, expected):
                 shutil.copyfileobj(response, stream)
             stream.close()
             verified(temporary, expected)
-            # Refuse an unexpected file that appeared during the download.
             path.hardlink_to(temporary)
         finally:
             temporary.unlink(missing_ok=True)
@@ -123,7 +142,7 @@ def unpack_public():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fetch', action='store_true', help='download hash-pinned public assets and unpack compilers locally')
-    parser.add_argument('--extract-firmware', action='store_true', help='extract pinned firmware from the locally supplied Windows KMD')
+    parser.add_argument('--extract-firmware', action='store_true', help='extract pinned SROOT firmware from the locally supplied Windows KMD')
     args = parser.parse_args()
     try:
         if args.fetch:
@@ -131,23 +150,21 @@ def main():
                 download(*item)
             unpack_public()
         if args.extract_firmware:
-            from extract_profile1_firmware import extract, extract_boot_variant
-            from extract_firmware import extract as extract_hal2
             kmd = ROOT/MANUAL[0][0]
             if not verified(kmd, MANUAL[0][1]):
                 raise ValueError('supply the pinned Windows KMD first; see docs/setup.md')
-            for index, (relative, digest) in enumerate(FIRMWARE):
+            pe_bytes = kmd.read_bytes()
+            for relative, rva, size, digest in FIRMWARE:
                 target = ROOT/relative
                 if not verified(target, digest):
-                    if index == 0:
-                        extract(kmd, target)
-                    elif index == 1:
-                        extract_hal2(kmd, target)
-                    else:
-                        extract_boot_variant(kmd, target, 1, index-2)
-                    if not verified(target, digest):
-                        raise ValueError(f'firmware extraction failed: {target}')
-        required = [FRONTEND, NATIVE, WINDOWS, *MANUAL, *FIRMWARE,
+                    blob = _pe_slice(pe_bytes, rva, size)
+                    if hashlib.sha256(blob).hexdigest() != digest:
+                        raise ValueError(f'extracted firmware hash mismatch: {target}')
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with target.open('xb') as stream:
+                        stream.write(blob)
+        required = [FRONTEND, NATIVE, WINDOWS, *MANUAL,
+                    *((p, sha) for p, _, _, sha in FIRMWARE),
                     *((p, sha) for p, _, sha in ASSETS[2:])]
         missing = []
         for relative, digest in required:

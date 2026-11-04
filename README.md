@@ -55,7 +55,6 @@ End-to-end execution of ONNX Model Zoo's `emotion-ferplus-8.onnx` (37 nodes lowe
 git clone https://github.com/johannhartmann/n1x-npu-linux.git
 cd n1x-npu-linux
 python3.12 -m venv venv
-venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 make check
 ```
 
@@ -71,7 +70,7 @@ See [docs/setup.md](docs/setup.md) for vendor firmware/compiler acquisition and 
 | `runtime/` | Native `t254` compiler (`libn1x_compiler.so`, `n1x-compile`), ONNX EP (`libn1x_ort.so`, `n1x-ort-run`, `n1x_ort.py`), and cuDLA backend (`libnvcudla.so`) |
 | `demo/` | `./demo-onnx`, `./demo-superres`, `./demo-denoise`, and `./demo-classify` |
 | `packaging/`, `config/` | Arch `PKGBUILD`, `systemd` service (`n1x-npu.service`), and `udev` rules (`99-n1x-npu.rules`) |
-| `scripts/`, `tests/` | Qualification tools, packaging helpers, and unit/fault-injection test suites |
+| `scripts/` | Qualification tools, packaging helpers, and unit/fault-injection test suites |
 | `docs/` | [Architecture](docs/architecture.md), [setup](docs/setup.md), [status](docs/status.md), [shutdown/reload](docs/shutdown-reload.md), [cuDLA backend](docs/cudla-backend.md), and [hardware receipts](docs/evidence/README.md) |
 
 ## License

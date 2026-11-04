@@ -19,10 +19,7 @@
 #define N1X_DLA_CAP_RAWIO_REQUIRED 1U
 #define N1X_DLA_CAP_RETAIN_UNTIL_REBOOT 2U
 #define N1X_DLA_CAP_REEXEC_IO 4U
-/* With this bit, the privileged sysfs shutdown may invalidate all results and
- * release retained DMA after checked device stop. Close/unregister alone never
- * releases it. The retention flag keeps its historical name for compatibility.
- */
+/* Indicates support for checked HFRP device power-down and DMA reclamation. */
 #define N1X_DLA_CAP_CONTROLLED_STOP 8U
 #define N1X_DLA_CAP_STATISTICS 16U
 #define N1X_DLA_CAP_PREEMPT 32U

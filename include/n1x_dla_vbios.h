@@ -21,62 +21,34 @@ struct n1x_dla_vbios_policy {
 	__u8 boot_tables_valid;
 };
 
-/* Decode three already located BIT 'l' subtables (directory indices 2, 3, 4)
- * into host-endian fields. Bounds and the observed first-byte version gate
- * (>= 0x10) are checked. No ROM access, calibration, override selection or
- * hardware programming. Raw header/flag/tuning values have no inferred units.
- * The caller must prove ROM provenance and locate each buffer within that ROM;
- * this is not a complete VBIOS directory parser or power-policy validator.
- * General/allocation tables are not inputs to this partial decoder, so it
- * leaves boot_tables_valid=0. Use the full ROM parser for startup inputs.
- * Output is unchanged on failure; success does not authorize applying policy.
- */
+/* Decode BIT 'l' (0x6c) subtables (directory indices 2, 3, 4) into host-endian fields. */
 int n1x_dla_decode_vbios_policy(const __u8 *frequency, size_t frequency_size,
-								const __u8 *tuning, size_t tuning_size,
-								const __u8 *gating, size_t gating_size,
-								struct n1x_dla_vbios_policy *out);
+				const __u8 *tuning, size_t tuning_size,
+				const __u8 *gating, size_t gating_size,
+				struct n1x_dla_vbios_policy *out);
 
 struct n1x_dla_vbios_location {
 	__u32 bit_offset, rom_base, directory_offset;
 	__u32 frequency_offset, tuning_offset, gating_offset;
 };
 
-/* Find one unambiguous BIT 'l' policy in an immutable ROM window, at most
- * 0x110000 bytes. Checks checksum, all nested bounds, nonzero table pointers
- * and version gates for directory indices 0..4, including the general feature
- * mask and raw allocation words. Success sets boot_tables_valid=1. Uses the
- * Windows preceding aligned AA55 ROM-base rule; at most 32 checksummed BIT
- * headers are examined. No physical
- * mapping, file access or hardware writes. Both outputs unchanged on failure.
- * This locates data, not firmware provenance or authority to program hardware.
- */
+/* Locate and parse the BIT 'l' (0x6c) policy table within a VBIOS image window. */
 int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
-								struct n1x_dla_vbios_policy *out,
-								struct n1x_dla_vbios_location *location);
+			       struct n1x_dla_vbios_policy *out,
+			       struct n1x_dla_vbios_location *location);
 
-/* Verify the PCI Expansion ROM Data Structure ("PCIR") at location->rom_base
- * matches the N1X iGPU/VBIOS carrier (vendor 0x10de, device 0x2e03).
- */
+/* Verify the PCI Expansion ROM Data Structure ("PCIR") matches N1X (0x10de:0x2e03). */
 int n1x_dla_verify_vbios_pcir(const __u8 *data, size_t size,
-								const struct n1x_dla_vbios_location *location);
+			      const struct n1x_dla_vbios_location *location);
 
 struct n1x_dla_gating_policy {
 	__u32 request_mask;
-	/* Windows outer bytes 0x31d..0x325, retained without invented enum names. */
 	__u8 policy_bytes[9];
 	__u8 slcg_override;
-	/* Windows HAL bytes 0x47d, 0x47e, 0x484, 0x485. */
 	__u8 hal_flags[4];
 };
 
-/* Derive normal HAL-1 defaults from a fully decoded board policy. Implements
- * the observed low-to-high feature-bit order, PPS zero substitutions and
- * request-mask calculation. No registry overrides or pre-silicon owner mode.
- * Rejects a partial decoder result and feature bit 0 (global init rejection).
- * Unknown feature bits have no effect, as in the pinned Windows updater.
- * Output unchanged on failure. No hardware access or physical power claim;
- * caller still establishes provenance and implements all required setup.
- */
+/* Derive HAL-1 power/clock gating defaults and request_mask from a parsed VBIOS policy. */
 int n1x_dla_prepare_gating(const struct n1x_dla_vbios_policy *policy,
-							struct n1x_dla_gating_policy *out);
+			   struct n1x_dla_gating_policy *out);
 #endif
