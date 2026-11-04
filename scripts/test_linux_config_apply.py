@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     function = source[source.index('static int n1x_boot_apply_config_once('):
-                      source.index('static ssize_t apply_config_store(')]
+                      source.index('/* Windows setup preserves')]
     harness = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -34,12 +34,11 @@ static struct {bool verified;} boot_ping;
 static struct {bool registered;} boot_region5;
 static struct {void *buffer;u64 dma;bool valid;unsigned char data[252];} boot_config;
 static struct {struct n1x_dla_control_result transaction;bool attempted,accepted;int error;} boot_config_apply;
-static bool enable_config_apply,machine_ok,stale,sent;
+static bool stale,sent;
 static unsigned char retained_buffer[4096] __attribute__((aligned(256)));
 static unsigned char original[4096];
 static int gate_error,barriers,io_calls,fail_at,cases;
 static u32 response_word,response_data,method_data;
-static bool n1x_boot_machine(void) {return machine_ok;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *ep) {assert(ep==&endpoint);return gate_error;}
 static int n1x_boot_read(void *context,u32 offset,u32 *value)
 {assert(context==&endpoint);int index=io_calls++;
@@ -67,7 +66,7 @@ static void dma_wmb(void) {barriers++;}
     harness += r'''
 static void reset(void)
 {boot_sroot=boot_dla=&endpoint;boot_ping.verified=boot_region5.registered=true;
- enable_config_apply=machine_ok=true;stale=sent=false;gate_error=barriers=io_calls=0;fail_at=-1;
+ stale=sent=false;gate_error=barriers=io_calls=0;fail_at=-1;
  for(size_t i=0;i<sizeof(original);i++)original[i]=i&255;
  memcpy(retained_buffer,original,sizeof(original));
  boot_config.buffer=retained_buffer;boot_config.dma=0x100002000ULL;boot_config.valid=true;
@@ -84,9 +83,7 @@ static void check(int expected,bool attempted,bool accepted)
  else assert(!memcmp(retained_buffer,original,sizeof(original)));
  cases++;}
 int main(void)
-{reset();enable_config_apply=false;check(-EPERM,false,false);
- reset();machine_ok=false;check(-EPERM,false,false);
- reset();boot_sroot=NULL;check(-ENODEV,false,false);
+{reset();boot_sroot=NULL;check(-ENODEV,false,false);
  reset();boot_dla=NULL;check(-ENODEV,false,false);
  reset();boot_ping.verified=false;check(-ENODEV,false,false);
  reset();boot_region5.registered=false;check(-ENODEV,false,false);

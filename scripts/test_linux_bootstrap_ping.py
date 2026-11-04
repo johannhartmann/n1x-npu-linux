@@ -36,7 +36,7 @@ static struct device device;
 static struct n1x_boot_endpoint endpoint={&device};
 static struct n1x_boot_endpoint *boot_dla,*boot_sroot;
 static struct n1x_dla_sroot_load_result boot_result;
-static bool enable_ping,machine_ok,boot_attempted;
+static bool boot_attempted;
 static struct {void *buffer;dma_addr_t dma;u32 owned,mask_before,masked,word;
  bool attempted,verified;int error;} boot_ping;
 static unsigned char allocation[4096];
@@ -46,7 +46,6 @@ static int gate_error,mask_error,complete_after,method_busy,send_count;
 static bool allocation_fail,method_sent;
 static u32 current_mask,owned_mask,method_data;
 static int barriers,read_barriers;
-static bool n1x_boot_machine(void) {return machine_ok;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *ep) {assert(ep==&endpoint);return gate_error;}
 static int dma_set_mask_and_coherent(struct device *dev,u64 mask)
 {assert(dev==&device && mask==DMA_BIT_MASK(36));return mask_error;}
@@ -85,7 +84,7 @@ static void dma_rmb(void) {read_barriers++;}
     harness += function
     harness += r'''
 static void reset(void)
-{enable_ping=machine_ok=boot_attempted=true;boot_dla=boot_sroot=&endpoint;
+{boot_attempted=true;boot_dla=boot_sroot=&endpoint;
  memset(&boot_result,0,sizeof(boot_result));boot_result.reply_valid=boot_result.idle_observed=1;
  memset(&boot_ping,0,sizeof(boot_ping));allocation_address=0x100000000ULL;
  allocations=frees=io_calls=delays=word_reads=gate_error=mask_error=0;
@@ -96,9 +95,7 @@ static void check(int expected,int allocs,int free_count,bool attempted,bool ver
  assert(boot_ping.attempted==attempted && boot_ping.verified==verified);
  assert(!!boot_ping.buffer==attempted);assert(read_barriers==(int)verified);cases++;}
 int main(void)
-{reset();enable_ping=false;check(-EPERM,0,0,false,false);
- reset();machine_ok=false;check(-EPERM,0,0,false,false);
- reset();boot_dla=NULL;check(-ENODEV,0,0,false,false);
+{reset();boot_dla=NULL;check(-ENODEV,0,0,false,false);
  reset();boot_sroot=NULL;check(-ENODEV,0,0,false,false);
  reset();boot_attempted=false;check(-ENODEV,0,0,false,false);
  reset();boot_result.reply_valid=0;check(-ENODEV,0,0,false,false);

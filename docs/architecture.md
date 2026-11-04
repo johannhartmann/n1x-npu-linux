@@ -9,14 +9,14 @@ The NVIDIA N1X (`t254`) NPU exposes two ACPI platform devices that are bound as 
 | `NVDA200A` (`NVDA2042`) | `0x34` | DLA HAL-1 MMIO aperture (`0x40000` B), HFRP mailbox, GSI `234` IRQ | `0x2b` | Coherent (`_CCA = 1`) |
 | `NVDA8600` | `0x01` | `SROOT` secure firmware upload DMA requester (`180` B MMIO) | `0x01` | Noncoherent (`_CCA = 0`) |
 
-When `strict_platform=0` (default), the driver discovers both `_CRS` MMIO apertures, IORT SMMUv3 mappings, and the live VBIOS policy carveout dynamically without hardcoded DMI board/BIOS checks.
+The driver discovers both `_CRS` MMIO apertures, IORT SMMUv3 mappings, and the live VBIOS policy carveout dynamically without hardcoded DMI board/BIOS checks.
 
 ## 2. VBIOS Policy & HFRP Bring-Up
 
 ### Live VBIOS Carveout (`0x1182bc80`)
 [`n1x_boot_live_board_policy()`](../driver/n1x_npu_boot_linux.c) reads the display VBIOS locator register at `0x1182bc80` (`N1X_DISP_VBIOS_LOCATOR_PHYS`), computes the physical carveout base (`((u64)(locator >> 12) << 16) + 0x40000`), and parses the BIT `0x6c` table ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)) to extract the board's clock/power/gating policy (`892.8 MHz` nominal, gating mask `0x70`).
 
-### 8-Stage In-Kernel Bring-Up (`autostart=1`)
+### 8-Stage In-Kernel Bring-Up
 When both endpoints bind, `n1x_boot_master_bind()` runs the 8-stage initialization sequence in C:
 
 1. **`prepare_hfrp`**: Resumes runtime PM, performs HFRP handshake and version discovery (`v1.5`), sends the VBIOS policy table, and powers on the DLA rails/clocks (`POWER_CONTROL` `0x400`).

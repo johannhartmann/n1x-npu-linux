@@ -44,8 +44,6 @@ WINDOWS = ('sources/tensorrt-11.4/nvdla_compiler.dll',
 MANUAL = (
     ('sources/nvidia/Display.Driver/nvlddmkm.sys',
      '73b3187cdf84c0306df78595e49626d096e84dfc1e6356543db57b145007f987'),
-    ('sources/nvidia/Display.Driver/nvdla_runtime.dll',
-     'c58e3425eeee93f89b1ae68f814552aa1cacaaf85d913ca12a9b14f83902d49b'),
 )
 FIRMWARE = (
     ('sources/sroot-v0.bin', 0x1405800, 67508,

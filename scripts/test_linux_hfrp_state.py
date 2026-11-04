@@ -33,13 +33,12 @@ struct n1x_boot_endpoint {struct device *dev;void *hfrp;};
 static struct device dla_dev,other_dev;
 static struct n1x_boot_endpoint ep={&dla_dev,&dla_dev},sroot;
 static struct n1x_boot_endpoint *boot_dla,*boot_sroot;
-static bool enable_hfrp,machine_ok,privileged,boot_stopping;
+static bool privileged,boot_stopping;
 static int boot_lock,locks,queries,logs,emits,reply_error,cases;
 #define CAP_SYS_RAWIO 17
 static bool capable(int cap) {assert(cap==CAP_SYS_RAWIO);return privileged;}
 static bool sysfs_streq(const char *a,const char *b)
 {size_t n=strlen(b);return !strncmp(a,b,n) && (!a[n] || (a[n]=='\n' && !a[n+1]));}
-static bool n1x_boot_machine(void) {return machine_ok;}
 static void mutex_lock(int *lock) {assert(lock==&boot_lock && !*lock);*lock=1;locks++;}
 static void mutex_unlock(int *lock) {assert(lock==&boot_lock && *lock);*lock=0;}
 static int n1x_boot_hfrp_write(void *ctx,u32 off,u32 value)
@@ -70,7 +69,7 @@ int n1x_hfrp_query_power_state(const struct n1x_dla_io *io,struct n1x_hfrp_chann
 ''' + store + show + r'''
 static void reset(void)
 {boot_stopping=false;memset(&boot_hfrp,0,sizeof(boot_hfrp));boot_dla=&ep;boot_sroot=&sroot;ep.hfrp=&dla_dev;
- enable_hfrp=machine_ok=privileged=true;locks=queries=logs=emits=reply_error=0;
+ privileged=true;locks=queries=logs=emits=reply_error=0;
  assert(!boot_lock);boot_hfrp.attempted=boot_hfrp.powered=true;boot_hfrp.phase=5;
  boot_hfrp.channel.state=N1X_HFRP_READY;boot_hfrp.exchange.reply.header=0x5678;
  boot_hfrp.state_attempted=true;boot_hfrp.state_error=-EIO;
@@ -88,8 +87,6 @@ static void cached(void)
 int main(void)
 {reset();privileged=false;rejected(&dla_dev,"query\n",-EPERM,0);
  reset();rejected(&dla_dev,"query extra\n",-EPERM,0);
- reset();enable_hfrp=false;rejected(&dla_dev,"query\n",-EPERM,1);
- reset();machine_ok=false;rejected(&dla_dev,"query\n",-EPERM,1);
  reset();boot_dla=NULL;rejected(&dla_dev,"query\n",-ENODEV,1);
  reset();rejected(&other_dev,"query\n",-ENODEV,1);
  reset();ep.hfrp=NULL;rejected(&dla_dev,"query\n",-ENODEV,1);

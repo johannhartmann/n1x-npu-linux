@@ -30,10 +30,6 @@ def main():
     source = shutdown_harness()
     # Keep the real bootstrap stop/refcount code and the shared modeled kernel
     # edges, replacing only the isolated protocol stub with the actual C code.
-    start = source.index('int n1x_hfrp_query_power_state(')
-    # The one-line query stub ends on its declaration line.
-    end = source.index('return -EIO;}', start)+len('return -EIO;}')
-    source = source[:start]+source[end:]
     start = source.index('static int n1x_boot_hfrp_read(')
     end = source.index('static void dma_free_coherent(', start)
     source = source[:start]+r'''

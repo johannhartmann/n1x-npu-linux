@@ -27,4 +27,4 @@ pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_npu_reload.py" \
   --cycles 2 --output-dir "$PWD/results/NEW-reload"
 ```
 
-When `autostart=1` (default), `sudo modprobe -r n1x_npu_bootstrap` (or `sudo systemctl stop n1x-npu.service`) executes `n1x_boot_stop_device()` automatically during module unload.
+`sudo modprobe -r n1x_npu_bootstrap` (or `sudo systemctl stop n1x-npu.service`) executes `n1x_boot_stop_device()` automatically during module unload.
