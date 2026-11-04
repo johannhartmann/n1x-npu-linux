@@ -2,10 +2,12 @@
 #ifndef N1X_DLA_ACCEL_UAPI_H
 #define N1X_DLA_ACCEL_UAPI_H
 #include <linux/types.h>
-#ifdef __KERNEL__
+#if defined(__KERNEL__)
 #include <drm/drm.h>
-#else
+#elif defined(__has_include) && __has_include("libdrm/drm.h")
 #include <libdrm/drm.h>
+#else
+#include <drm/drm.h>
 #endif
 /* Experimental ABI. No compatibility with NVIDIA cuDLA is implied. */
 #define N1X_DLA_ABI_VERSION 2
