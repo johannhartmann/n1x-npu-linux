@@ -1,36 +1,11 @@
-# Setup and reproduction
+# Setup and Reproduction
 
-This guide starts from a fresh checkout on an already enabled ARM64 P16.
-It builds research tools and artifacts locally. Section 4 includes CUDA-backed
-transport tests with a modeled NPU. Section 5 covers privileged board-ROM
-acquisition and local firmware installation; section 6 explicitly starts and
-qualifies the physical NPU. Review those steps before running them.
+## 1. Prerequisites
 
-## 1. Platform prerequisites
+- **Kernel**: `7.2.8-23-rtx-spark-npu` with matching headers (see [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux) and [`patches/linux-7.2.8-p16-sroot-noncoherent-dma.patch`](../patches/linux-7.2.8-p16-sroot-noncoherent-dma.patch)).
+- **Host Packages (Arch/ARM64)**: `base-devel`, `python`, `uv`, `bubblewrap`, `gdb`, `openssl`, `libdrm`, `acpica`, `7zip`, and CUDA (`/opt/cuda`) for the optional cuDLA backend.
 
-The physical driver currently requires ASUS ProArt P16 H7607BA, BIOS
-`H7607BA.300`, and kernel **`7.2.8-23-rtx-spark-npu`** with matching
-headers. Start with the separate [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux).
-The driver itself is an out-of-tree Linux kernel module and has no Omarchy
-dependency. The named kernel is the currently qualified reference build, not
-the driver identity: it carries the scoped noncoherent SROOT DMA quirk required
-by this P16 BIOS. This repository does not supply a generic distribution
-installer or signed kernel package. The exact reference kernel and quirk are
-documented in [Linux backend](research/linux-backend.md). Earlier kernel-build and
-FRTS/UKI experiments are indexed as historical workflows in [the tool index](../scripts/README.md).
-
-Preserve the known-working boot entry when preparing a test kernel. Standard
-kernel module `vermagic` checks apply when loading `n1x_npu_bootstrap.ko`.
-No command below changes a bootloader entry.
-
-Tool dependencies on an Arch/Omarchy ARM64 host are a C/C++ toolchain, make,
-binutils, Python, `uv`, bubblewrap, GDB, OpenSSL development headers, libdrm
-headers and ACPICA `iasl`. A 7-Zip CLI can unpack the vendor installer. The
-cuDLA backend additionally needs the installed CUDA toolkit (`/opt/cuda` by
-default, including `cuda.h` and its driver stub) and the real NVIDIA CUDA
-driver at runtime. Install matching kernel headers separately.
-
-## 2. Checkout and Python environments
+## 2. Checkout and Python Environments
 
 ```sh
 git clone https://github.com/johannhartmann/n1x-npu-linux.git
@@ -42,12 +17,7 @@ mkdir -p sources results
 make check
 ```
 
-`make test` needs only a C compiler. `make test-portable` additionally uses the
-analysis environment and modeled OS/transport boundaries, with no vendor
-files, GPU, root or kernel tree. The native compiler stage needs ARM64 and
-unprivileged bubblewrap namespaces; do not replace its sandbox with root.
-
-The optional image/reference environment is separate:
+Optional image environment for `./demo-superres`:
 
 ```sh
 uv venv --python 3.12 sources/superres-venv
@@ -55,202 +25,81 @@ uv pip install --python sources/superres-venv/bin/python --require-hashes \
   --only-binary :all: -r requirements-superres.lock
 ```
 
-## 3. Acquire the pinned inputs
+## 3. Acquire Pinned Inputs
 
-The input helper downloads the public cuDLA archive, native compiler Debian
-package, ONNX Model Zoo models (`super-resolution-10.onnx`, `emotion-ferplus-8.onnx`,
-`mnist-12.onnx`) and NASA sample photograph used by the demos. It also invokes the
-existing range-based Windows compiler extractor. Hashes are checked before use;
-existing mismatched files are refused. Packages are unpacked into ignored
-directories and are not installed system-wide.
+Download the public cuDLA archive (`13.4.92`), Linux ARM64 TensorRT compiler package (`11.4`), ONNX Model Zoo models (`super-resolution-10.onnx`, `emotion-ferplus-8.onnx`, `mnist-12.onnx`), Windows ARM64 `nvdla_compiler.dll`, and sample image:
 
 ```sh
 venv/bin/python scripts/prepare_inputs.py --fetch
 ```
 
-An initial nonzero result is expected while manually supplied Windows-driver
-files or extracted firmware are still missing; all missing paths are listed.
-Re-running `--fetch` reuses verified inputs. Plain `prepare_inputs.py` only
-checks hashes and never downloads or extracts anything.
-
-Public package sources are NVIDIA's [cuDLA SBSA archive index](https://developer.download.nvidia.com/compute/cuda/redist/libcudla/linux-sbsa/)
-and [Debian SBSA package index](https://developer.download.nvidia.com/compute/cuda/repos/debian12/sbsa/).
-The [Windows compiler acquisition](research/model-probe.md#native-compiler-counterpart-acquired)
-and [model research](research/github-demo-research.md) record the remaining source context.
-
-Supply **NVIDIA 617.42 Windows ARM64** driver files separately. Obtain the
-matching vendor package and unpack it without running its installer, for example:
+Unpack the **NVIDIA 617.42 Windows ARM64** driver (`SHA-256 425a75f54655ddcc8ee6859cec49bc431a17ef18094daaf59f205b159fb6e2bd`) into `sources/nvidia/`:
 
 ```sh
 7z x /absolute/path/to/NVIDIA-617.42-ARM64.exe -osources/nvidia 'Display.Driver/*'
 ```
 
-The installer previously used has SHA-256
-`425a75f54655ddcc8ee6859cec49bc431a17ef18094daaf59f205b159fb6e2bd`.
-The helper checks the extracted files, so it also accepts an equivalent
-extraction from another vendor container with identical contents:
-
-| Required path | SHA-256 |
+| Required File | SHA-256 |
 | --- | --- |
 | `sources/nvidia/Display.Driver/nvlddmkm.sys` | `73b3187cdf84c0306df78595e49626d096e84dfc1e6356543db57b145007f987` |
 | `sources/nvidia/Display.Driver/nvdla_runtime.dll` | `c58e3425eeee93f89b1ae68f814552aa1cacaaf85d913ca12a9b14f83902d49b` |
 
-Extract and verify the local firmware artifacts:
+Extract and verify the SROOT and DLA firmware images:
 
 ```sh
 venv/bin/python scripts/prepare_inputs.py --extract-firmware
 venv/bin/python scripts/prepare_inputs.py
 ```
 
-This creates the HAL-1/HAL-2 research images and SROOT variants 0/1, without
-hardware access. Only HAL 1 and remapper-1 SROOT variant 0 are used by the P16
-startup below; the other images support existing offline regression tests.
-Additional vendor-runtime, auxiliary-driver or ACPI inputs are needed for
-some historical research suites, as their individual documents explain.
+## 4. Build Userspace Runtime, Compiler, and Models
 
-## 4. Compile the checked models offline
+Build the native `t254` compiler (`runtime/libn1x_compiler.so`, `runtime/n1x-compile`), heterogeneous ONNX runtime (`runtime/libn1x_ort.so`, `runtime/n1x-ort-run`), and cuDLA backend (`runtime/cudla/libnvcudla.so`):
 
-On a fresh workspace with the inputs above:
+```sh
+make runtime cudla
+make test-compiler
+make test-cudla
+```
+
+To reproduce the four hash-pinned cuDLA fixture loadables (`relu`, `conv1x1`, `conv1x1_relu`, `superres`):
 
 ```sh
 venv/bin/python scripts/build_models.py --superres
 ```
 
-The helper constructs ReLU, Conv, Conv → ReLU and the trained super-resolution
-graph. Native compiler calls run in the existing device-free bubblewrap
-sandbox; Windows backend passes execute under Unicorn. Original packed
-constants are replayed before final serialization. Every final loadable hash
-must match the checked artifact. Omit `--superres` for the three small fixtures.
+## 5. Install Firmware and Build Kernel Module
 
-The [offline reproduction receipt](evidence/offline-reproduction-2026-10-28.json) records
-a clean source export with no pre-existing model/capture outputs, Python 3.12
-and all four expected loadable hashes. It does not establish physical execution.
-
-`scripts/build_models.py` is the hash-pinned fixture workflow used to reproduce
-those exact checked artifacts; it refuses existing output directories to preserve
-previous captures (`results/model-build.jsonl` and `results/model-build.log`).
-For general in-process `t254` compilation (`FP16` and `INT8` multi-branch DAGs)
-and heterogeneous `DLA + Host` ONNX execution without Unicorn emulation, `make runtime`
-builds `runtime/libn1x_compiler.so` (`runtime/n1x-compile`) and `runtime/libn1x_ort.so`
-(`runtime/n1x-ort-run`, [`runtime/n1x_ort.py`](../runtime/n1x_ort.py), [`./demo-onnx`](../demo-onnx));
-see the [ONNX Execution Provider design](designs/n1x-onnx-execution-provider.md).
-
-The generated paths include `results/native-compile-t254/relu.nvda`, the
-corresponding `-conv1x1`, `-conv1x1_relu` and `-superres` directories,
-`results/relu-probe/` and `results/p16-relu-template.bin`.
-
-```sh
-make runtime cudla
-make test-cudla
-```
-
-If you built the super-resolution model and created the optional image
-environment, also run:
-
-```sh
-sources/superres-venv/bin/python scripts/test_superres_image.py
-```
-
-`make test-cudla` uses the real installed CUDA driver but a modeled NPU
-transport; it does not start DLA firmware. The image test uses the CPU ONNX
-reference and likewise makes no claim of physical NPU execution.
-
-## 5. Board input and module build
-
-By default (`strict_platform=0`), `n1x_npu_bootstrap.ko` dynamically discovers
-the board's VBIOS clock/power/gating policy directly from the live hardware
-carveout (`0x1182bc80`), so a pre-captured `.rom` file in `/usr/lib/firmware`
-is not required at runtime. For offline verification against the Windows KMD
-parser (or when running with `strict_platform=1` on the P16), use the
-[bounded read-only board ROM procedure](research/p16-board-start.md#reproducible-read-only-acquisition)
-to create `results/p16-bios300-physical.rom` (SHA-256
-`a82af14d15effa98a75b19d9135421c7c27f20cca7398d0b0a7ba87547b8b64c`).
-
-Install the checked SROOT image into the firmware search path:
+Install the extracted SROOT firmware images and compile `n1x_npu_bootstrap.ko`:
 
 ```sh
 sudo install -Dm600 sources/dla-p16-sroot-v0.bin /usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin
 sudo install -Dm600 sources/dla-p16-sroot-v1.bin /usr/lib/firmware/nvidia/n1x/p16-sroot-v1.bin
-venv/bin/python scripts/verify_p16_board_policy.py results/p16-bios300-physical.rom
-make test-p16-stop
 make module
 ```
 
-These `make` targets do not load the module or boot firmware. Ensure the
-installed kernel/header pair is the exact audited release. The ReLU template
-and board capture are installed by the startup qualifier after hash checks.
+By default (`strict_platform=0`), `n1x_npu_bootstrap.ko` reads the VBIOS policy directly from the live hardware carveout (`0x1182bc80`), so no `.rom` file is needed in `/usr/lib/firmware`.
 
-Install the small privileged runtime and the checked super-resolution model as
-root-owned files. Review the listed artifacts before authenticating:
+To install the optional privileged cuDLA broker for `./demo-superres`, `./demo-denoise`, and `./demo-classify`:
 
 ```sh
 pkexec /usr/bin/python3 "$PWD/scripts/install_cudla_broker.py" --models superres
 ```
 
-The installer does not touch the running device. It installs the broker under
-`/usr/libexec`, pinned libraries/models under `/usr/lib/n1x-npu-linux`, and a
-`0600 root:root` udev rule for the next accel-node creation. The desktop demos,
-image decoders, Python environments, ONNX Runtime and output handling remain
-unprivileged. The installer creates a dedicated, file-less `n1x-dla` system
-identity; the broker drops to it with only `CAP_SYS_RAWIO` after
-opening its fixed root-owned artifacts and device handles. It rejects duplicate
-or aggregate-overbudget model selections, verifies that the complete requested
-session fits the live retained-DMA budget before the first submission, and
-terminates stalled protocol I/O after 60 seconds. Completed allocations remain
-retained after a broker exits; use the checked shutdown/reload procedure below
-to reclaim them. A fence or idle notification alone is not a safe release
-boundary.
+## 6. Hardware Qualification
 
-## 6. Explicit hardware qualification after reboot
-
-Replacing an older module without shutdown support, or an instance whose stop
-has failed, requires a reboot of the **same qualified NPU kernel**. Keep the
-known-working boot entry.
-Then, when ready to run the bounded qualification (the current power profile is recorded and left unchanged):
+To run the full startup, inference, shutdown, and reload qualification sequence on the P16:
 
 ```sh
 pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_p16_reload.py" \
   --cycles 2 --output-dir "$PWD/results/NEW-reload"
 ```
 
-The output directory must be new. The qualifier starts firmware when needed,
-runs baseline and same-model changing-input jobs with allocation checks,
-stops and releases DMA, tests module ownership, unloads,
-reloads and verifies inference again. Logs are durable and the first failure
-stops the sequence. [Shutdown/reload](shutdown-reload.md) gives the exact contract.
-Qualifiers record the selected platform profile without changing it. No service
-or timer is installed to enforce a profile.
+## 7. Enable Automatic Startup at Boot
 
-Only after successful reload and reuse qualification, run the
-[full-image demo](../demo/README.md). Its complete physical 512x512 and
-1024x1024 runs passed on the audited P16; see the
-[hardware receipt](evidence/npu-hardware-2026-10-28.json). See [status](status.md)
-before making broader hardware claims. Setup, model generation and offline tests do not establish
-successful physical boot, teardown or inference by themselves.
-
-## 7. Enable qualified startup at boot
-
-This step is only for the exact board/BIOS/kernel combination after section 6
-has completed successfully. Install the source-pinned Arch package described in
-[updates](updates.md), then enable its service:
+Build and install the `n1x-npu-bootstrap-rtx-spark` Arch package (see [updates](updates.md)), then enable the systemd service:
 
 ```sh
-sudo systemctl enable n1x-npu.service
+sudo systemctl enable --now n1x-npu.service
 ```
 
-On the next boot of `7.2.8-23-rtx-spark-npu`, [`99-n1x-npu.rules`](../packaging/udev/99-n1x-npu.rules)
-and [`n1x-npu.service`](../packaging/systemd/n1x-npu.service) switch the isolated
-`NVDA200A:00` and `NVDA8600:00` IOMMU groups from `identity` to `DMA`, load
-`n1x_npu_bootstrap` (which executes the 8-stage bring-up in C via `autostart=1`),
-and expose `/dev/accel/accel0` (`0660 root:render`, `TAG+="uaccess"`). It does
-not change the power profile, retry a rejected operation or unload a
-partially initialized module. Check it after reboot with:
-
-```sh
-systemctl status n1x-npu.service
-test -c /dev/accel/accel0
-python3 scripts/check_update_readiness.py
-```
-
-Disable the service before testing a new BIOS, kernel, firmware image or board.
-Keep the known-working P16 and stock Omarchy entries in the boot menu.
+[`99-n1x-npu.rules`](../packaging/udev/99-n1x-npu.rules) and [`n1x-npu.service`](../packaging/systemd/n1x-npu.service) switch the `NVDA200A:00` and `NVDA8600:00` IOMMU groups from `identity` to `DMA`, load `n1x_npu_bootstrap` (`autostart=1`), and expose `/dev/accel/accel0` (`0660 root:render`, `TAG+="uaccess"`).

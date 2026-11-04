@@ -1,24 +1,13 @@
 # NVIDIA N1X NPU on Linux
 
 [![Offline checks](https://github.com/johannhartmann/n1x-npu-linux/actions/workflows/offline.yml/badge.svg)](https://github.com/johannhartmann/n1x-npu-linux/actions/workflows/offline.yml)
-[GPL-2.0-only + MIT](LICENSING.md) · [Setup](docs/setup.md) · [Support status](docs/status.md) · [Updates](docs/updates.md) · [Contributing](CONTRIBUTING.md)
+[GPL-2.0-only + MIT](LICENSING.md) · [Architecture](docs/architecture.md) · [Setup](docs/setup.md) · [Status](docs/status.md) · [Updates](docs/updates.md) · [Contributing](CONTRIBUTING.md)
 
-Experimental Linux driver, **native `t254` compiler (`FP16`/`INT8`)**, **heterogeneous
-ONNX Execution Provider (`N1xInferenceSession`)**, and **NVIDIA cuDLA backend for the
-N1X NPU/DLA** in the ASUS ProArt P16 H7607BA / RTX Spark. Compile and run standard
-ONNX Model Zoo graphs (`emotion-ferplus-8`, `mnist-12`, `super-resolution-10`) or
-execute inference through NVIDIA's original Linux cuDLA frontend, rebuild the
-checked model fixtures, and explore the recovered firmware and driver protocols.
+Linux kernel driver (`n1x_npu_bootstrap.ko`), **native `t254` compiler (`FP16`/`INT8`)**, **heterogeneous ONNX Execution Provider (`N1xInferenceSession`)**, and **NVIDIA cuDLA backend** for the NVIDIA N1X NPU/DLA (`NVDA200A` / `NVDA8600`) in the ASUS ProArt P16 H7607BA / RTX Spark.
 
-The implementation was reconstructed from NVIDIA's Windows ARM64 driver and
-checked against original-code emulation, public Jetson sources and physical
-P16 execution. A Windows installation is not required. Vendor libraries,
-firmware and compiler inputs are acquired separately and verified by hash.
+## Demos
 
-## See it run
-
-The complete 3× super-resolution output below came from the physical N1X DLA.
-Open the result for the full 1536×1536 image.
+### 1. 3× Super-Resolution (`./demo-superres`)
 
 <table>
 <tr><th>Input · 512×512</th><th>N1X DLA output · 1536×1536</th></tr>
@@ -28,19 +17,11 @@ Open the result for the full 1536×1536 image.
 </tr>
 </table>
 
-NASA sample, distributed by scikit-image. [Image provenance and hashes](demo/assets/README.md).
-The learned four-convolution graph runs on DLA; CPU work handles image preparation,
-chroma resizing, pixel rearrangement and independent validation.
+**[Run `./demo-superres` →](demo/README.md)** · [Image hashes & provenance](demo/assets/README.md) · [DnCNN denoising & ResNet-18 classification (`./demo-denoise`, `./demo-classify`)](demo/vision.md)
 
-**[Run the super-resolution demo →](demo/README.md)**
+### 2. Heterogeneous ONNX Execution Provider (`./demo-onnx`)
 
-### FER+ facial emotion recognition on the N1X DLA (`./demo-onnx --model emotion`)
-
-The 6-preset 64×64 facial expression gallery below ran end-to-end on the physical
-N1X DLA through [`N1xInferenceSession`](runtime/n1x_ort.py) (`1 DLAStage`, `0 HostStages`
-for all 37 nodes of ONNX Model Zoo's `emotion-ferplus-8.onnx`, `1.37 ms` in `FP16`
-and `0.98 ms` in auto-calibrated `INT8` via `REEXEC_IO`, `6/6` top-1 agreement with
-the FP32 ONNX reference):
+End-to-end execution of ONNX Model Zoo's `emotion-ferplus-8.onnx` (37 nodes lowered into a single `t254` `.nvda` loadable, `1.37 ms` in `FP16` and `0.98 ms` in auto-calibrated `INT8` via `REEXEC_IO`, `6/6` top-1 agreement with the FP32 reference):
 
 <p><a href="demo/assets/emotion-ferplus-gallery-dla.png"><img src="demo/assets/emotion-ferplus-gallery-dla.png" width="760" alt="FER+ 6-expression gallery evaluated on the physical N1X DLA in FP16 and INT8"></a></p>
 
@@ -49,131 +30,50 @@ the FP32 ONNX reference):
 ./demo-onnx --model emotion --precision int8 --output-dir results/emotion-ferplus-int8
 ```
 
-**[Run `./demo-onnx` (`emotion`, `mnist`, `superres`) →](demo/README.md#heterogeneous-onnx-execution-provider-demo-demo-onnx)** ·
-Additional examples: [full-image DnCNN denoising and ResNet-18 classification](demo/vision.md).
+**[Run `./demo-onnx` (`emotion`, `mnist`, `superres`) →](demo/README.md#heterogeneous-onnx-execution-provider-demo-demo-onnx)**
 
-## Supported platform
+## Features & Hardware Support
 
-`n1x_npu_bootstrap` is a Linux kernel module; it is not an Omarchy component.
-The module source and recovered RTX Spark protocol are kept in this repository.
-By default (`strict_platform=0`), the driver dynamically discovers the NPU and
-SROOT endpoints from ACPI (`NVDA200A` `_HRV=0x34`, `NVDA8600` `_HRV=1`), their
-`_CRS` MMIO apertures, their IORT SMMUv3 mappings, and the board's live VBIOS
-clock/power/gating policy carveout (via the hardware locator register at
-`0x1182bc80`), without requiring hardcoded DMI board strings or a pre-dumped
-VBIOS `.rom` file.
-The co-installable `linux-rtx-spark-npu` build provides the generic `NVDA8600`
-(`_HRV=1`) noncoherent SROOT DMA-coherency quirk for N1X BIOSes that omit
-`ROT0._CCA`. Omarchy is the host distribution used for qualification, not part
-of the driver or package identity.
+- **Dynamic ACPI & VBIOS Discovery (`strict_platform=0`)**: Binds `NVDA200A` (`_HRV=0x34`) and `NVDA8600` (`_HRV=1` `SROOT`) via `<linux/component.h>`, discovers `_CRS` MMIO apertures and IORT SMMUv3 mappings dynamically, and parses the live VBIOS BIT `0x6c` clock/gating policy from the hardware carveout (`0x1182bc80`).
+- **In-Kernel Bring-Up, PM & Frequency Scaling (`autostart=1`)**: Executes the 8-stage HFRP/SROOT bring-up in C on probe, supports `.suspend` / `.resume` power transitions, and exposes `/sys/bus/platform/devices/NVDA200A:00/npu_freq_khz` (`892.8 MHz`–`1500 MHz`, `2.31x` throughput boost).
+- **`/dev/accel/accel0` DRM Accelerator**: Supports `EXEC`, `REEXEC` (in-place I/O patching with zero DMA allocations), `READ`, `STATS` (v2 hardware layer profiling), `CONTROL` (HAL-1 checkpoint preemption & resume), zero-copy read-only `mmap()` (`N1X_DLA_CAP_MMAP`), and automatic per-FD `postclose()` DMA cleanup.
+- **Native `t254` Compiler & ONNX Execution Provider**: [`runtime/libn1x_compiler.so`](runtime/n1x_compile.cpp) and [`runtime/libn1x_ort.so`](runtime/n1x_ort.cpp) ([`N1xInferenceSession`](runtime/n1x_ort.py)) compile and execute `FP16` (`CHW16`) and `INT8` (`CHW32`, per-tensor and per-channel) multi-branch DAGs in-process with SHA-256 `.nvda` caching.
 
-Physical hardware qualification was recorded on **ASUS ProArt P16 H7607BA**,
-BIOS **H7607BA.300**, and kernel **7.2.8-23-rtx-spark-npu** (`strict_platform=1`
-remains available as an optional module parameter to enforce those exact pins).
-Start with the related [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux)
-for workstation enablement; this repository supplies the NPU implementation and
-research tools, not a generic distribution/kernel installer.
-
-| Capability | Physical evidence on this P16 |
+| Capability | Measured Result on ASUS ProArt P16 (`7.2.8-23-rtx-spark-npu`) |
 | --- | --- |
-| Firmware startup and cuDLA ReLU / Conv / Conv → ReLU | 48 numerical jobs matched independent references exactly |
-| Completed-task I/O reuse | Changing inputs, 15 fixture REEXECs, one allocation per loaded graph |
-| Healthy shutdown and module reload | Two cycles with zero retained backing, normal unload and successful inference after reload |
-| Complete 3× super-resolution | 512×512 → 1536×1536 and 1024×1024 → 3072×3072; 461 DLA windows and whole-image reference checks |
-| DnCNN denoising and ResNet-18 classification | [Six image runs, 657 NPU submissions](docs/evidence/vision-hardware-2026-10-29.json); independent numerical checks and bounded reuse across images |
-| Native `t254` compiler (`libn1x_compiler.so`) & `INT8` / DAG lowering | In-process compilation of `FP16` and `INT8` (per-tensor & per-channel) multi-branch DAGs into `.nvda` loadables |
-| Heterogeneous ONNX Execution Provider (`libn1x_ort.so`, `N1xInferenceSession`) | [Design & qualification](docs/designs/n1x-onnx-execution-provider.md): C++ `CHW16`/`CHW32` surface packing, cycle-free `DLA + Host` graph partitioning, `INT8` auto-calibration, and `REEXEC_IO` reuse |
-| Dynamic frequency scaling (`npu_freq_khz`) | HFRP clock scaling from `892.8 MHz` to `1500 MHz` (`2.31x` measured throughput increase on physical NPU) |
+| cuDLA ReLU / Conv / Conv → ReLU & reload | 48 jobs, 15 `REEXEC`s, 2 full stop/unload/reload cycles ([receipt](docs/evidence/npu-hardware-2026-10-28.json)) |
+| 3× super-resolution (`./demo-superres`) | 512×512 → 1536×1536 (`0.856 s`) and 1024×1024 → 3072×3072 (`2.181 s`), `RMSE <= 0.000162` |
+| DnCNN denoising & ResNet-18 (`./demo-denoise`, `./demo-classify`) | 657 NPU submissions; DnCNN PSNR `20.73 -> 31.83 dB`, ResNet-18 top-1 exact match ([receipt](docs/evidence/vision-hardware-2026-10-29.json)) |
+| ONNX Execution Provider (`./demo-onnx`) | `emotion-ferplus-8` (`1.37 ms` `FP16` / `0.98 ms` `INT8`), `mnist-12` (`0.33 ms`), `super-resolution-10` (`1.04 ms`) ([receipt](docs/evidence/n1x-ort-hardware-2026-11-01.json)) |
+| Dynamic frequency scaling (`npu_freq_khz`) | `892.8 MHz` → `1500 MHz` (`224.2 ms` → `97.1 ms` on 64-tile super-resolution, `2.31x` speedup) |
 
-[Exact cuDLA/reload measurements](docs/evidence/npu-hardware-2026-10-28.json)
-· [ONNX EP & compiler measurements](docs/evidence/n1x-ort-hardware-2026-11-01.json)
-· [Current limits](docs/status.md)
+## Quick Start
 
-This is an experimental driver. By default (`autostart=1`, `strict_platform=0`,
-`require_rawio=0`, `enable_irq=true`, `enable_preempt=true`, `debug_sysfs=0`),
-`n1x_npu_bootstrap` binds both ACPI endpoints (`NVDA200A` and `NVDA8600`) via
-`<linux/component.h>`, executes the 8-stage firmware bring-up automatically in C
-once both endpoints are bound, exposes `/dev/accel/accel0` (`0660 root:render`,
-`TAG+="uaccess"` via [`99-n1x-npu.rules`](packaging/udev/99-n1x-npu.rules)),
-supports zero-copy read-only `mmap()` of completed job buffers (`N1X_DLA_CAP_MMAP`),
-reclaims completed job DMA allocations per file descriptor on `postclose()`,
-and supports system `.suspend` / `.resume` power transitions. Uncertain firmware
-or DMA failures remain fail-closed (`accel->stop_failed`), preserving allocations
-and lifetime references until confirmed hardware shutdown or reboot.
-Failed-channel recovery, arbitrary TensorRT engine deserialization, asynchronous
-scheduling and CUDA Graphs remain unsupported.
-
-## Get started
-
-**To use the NPU:** follow [setup and reproduction](docs/setup.md), then the
-[super-resolution demo](demo/README.md). Setup covers the exact platform,
-pinned vendor inputs, offline compilation, initial hardware qualification and
-the optional qualified boot service.
-
-**To explore or contribute without NVIDIA hardware:**
+**Build and run portable tests (no NPU hardware or vendor files required):**
 
 ```sh
 git clone https://github.com/johannhartmann/n1x-npu-linux.git
 cd n1x-npu-linux
-make test                      # C compiler + make only
 python3.12 -m venv venv
 venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-make check                     # consistency + portable protocol/lifetime tests
+make check
 ```
 
-These checks need no vendor files, GPU or root. `make help` lists the build and
-test targets. Building a module does not install or load it. Hardware commands
-are separate and preserve the selected power profile.
+**Build kernel module, compiler, and ONNX runtime on the P16:**
 
-## Architecture
+See [docs/setup.md](docs/setup.md) for vendor firmware/compiler acquisition and [docs/updates.md](docs/updates.md) for building and installing the `n1x-npu-bootstrap-rtx-spark` Arch package (`scripts/build_arch_module_package.py`).
 
-```text
-1. Heterogeneous ONNX Execution Provider & Native Compiler (./demo-onnx, N1xInferenceSession)
-   .onnx model (FP16 or auto-calibrated INT8)
-     → runtime/n1x_ort.py (canonicalization, DLA + Host graph partitioning, SHA-256 .nvda cache)
-     → runtime/libn1x_compiler.so (in-process t254 DAG compiler → .nvda loadables)
-     → runtime/libn1x_ort.so (C++ CHW16/CHW32 surface packing + retained REEXEC_IO)
-     → runtime/libn1x_dla.so → /dev/accel/accel0 → Linux driver → physical N1X DLA
-
-2. NVIDIA cuDLA Frontend & Confined IPC Broker (./demo-superres, ./demo-vision)
-   unprivileged image/validation application
-     → fixed binary protocol → root-owned capability-confined broker
-     → CUDA buffers
-     → NVIDIA's original libcudla.so.1
-     → this project's libnvcudla.so backend
-     → blocking CUDA staging + RAWIO-only Linux accel transport
-     → Linux driver → extracted firmware → physical N1X DLA
-```
-
-[ONNX Execution Provider design](docs/designs/n1x-onnx-execution-provider.md) · [cuDLA API and backend](docs/cudla-backend.md) · [Shutdown and reload](docs/shutdown-reload.md)
-
-## Repository map
+## Repository Layout
 
 | Path | Contents |
 | --- | --- |
-| [`driver/`](driver/README.md), [`include/`](include/README.md), `patches/` | Kernel implementation (`n1x_npu_bootstrap.ko`), UAPI (`uapi/n1x_dla_accel.h`), compiler/ORT C ABIs (`n1x_compiler.h`, `n1x_ort.h`) and scoped kernel patches |
-| [`runtime/`](runtime/README.md) | Native `t254` compiler (`libn1x_compiler.so`), C-backed ONNX Execution Provider (`libn1x_ort.so`, `n1x_ort.py`), cuDLA backend (`libnvcudla.so`), and `.nvda` materialization |
-| [`demo/`](demo/README.md) | Super-resolution, denoising, classification, and heterogeneous ONNX (`./demo-onnx`) examples |
-| [`scripts/`](scripts/README.md), `tests/` | Operational commands, research tools and regression harnesses |
-| [`docs/`](docs/README.md) | Maintained setup, architecture designs (`docs/designs/`) and support guides |
-| [`docs/evidence/`](docs/evidence/README.md) | Immutable measurement and reproduction receipts |
-| [`docs/research/`](docs/research/README.md) | Detailed protocol, firmware, compiler and historical boot investigations |
+| `driver/`, `include/`, `patches/` | Kernel module (`n1x_npu_bootstrap.ko`), `/dev/accel/accel0` UAPI (`uapi/n1x_dla_accel.h`), compiler/ORT C ABIs (`n1x_compiler.h`, `n1x_ort.h`), and kernel patches |
+| `runtime/` | Native `t254` compiler (`libn1x_compiler.so`, `n1x-compile`), ONNX EP (`libn1x_ort.so`, `n1x-ort-run`, `n1x_ort.py`), and cuDLA backend (`libnvcudla.so`) |
+| `demo/` | `./demo-onnx`, `./demo-superres`, `./demo-denoise`, and `./demo-classify` |
+| `packaging/`, `config/` | Arch `PKGBUILD`, `systemd` service (`n1x-npu.service`), and `udev` rules (`99-n1x-npu.rules`) |
+| `scripts/`, `tests/` | Qualification tools, packaging helpers, and unit/fault-injection test suites |
+| `docs/` | [Architecture](docs/architecture.md), [setup](docs/setup.md), [status](docs/status.md), [shutdown/reload](docs/shutdown-reload.md), [cuDLA backend](docs/cudla-backend.md), and [hardware receipts](docs/evidence/README.md) |
 
-[Documentation index](docs/README.md) · [Tool index](scripts/README.md) · [Development guide](CONTRIBUTING.md)
+## License
 
-Local vendor inputs, generated loadables, environments and logs stay in ignored
-`sources/`, `results/` and `venv/`. Research reports retain their dated observations;
-[status](docs/status.md) is the current support summary.
-
-## Contribute and report issues
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the test matrix and contribution workflow.
-Use [GitHub issues](https://github.com/johannhartmann/n1x-npu-linux/issues/new/choose)
-for reproducible bugs and feature requests, and [SECURITY.md](SECURITY.md) for
-security-sensitive reports. Related work: [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux)
-and [spark_hwmon telemetry](https://github.com/johannhartmann/spark_hwmon).
-
-Kernel components use **GPL-2.0-only**; userspace and analysis components use
-**MIT**, subject to existing file-level notices. See [LICENSING.md](LICENSING.md)
-and [NOTICE](NOTICE). NVIDIA/ASUS product names identify the hardware and
-vendor interfaces; this is an independent community project.
+Kernel components are licensed under **GPL-2.0-only**; userspace and test components are licensed under **MIT** ([LICENSING.md](LICENSING.md), [NOTICE](NOTICE)). Related repositories: [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux) and [spark_hwmon](https://github.com/johannhartmann/spark_hwmon).

@@ -1,152 +1,30 @@
-# Controlled shutdown and module reload
+# Controlled Shutdown and Module Reload
 
-The controlled healthy shutdown passed **two physical unload/reload cycles**
-on the audited P16 using module `1ED6855E6645BEEF8DA3534` and kernel
-`7.2.8-23-rtx-spark-npu`. Each startup passed the firmware/ReLU probes,
-eight baseline cuDLA jobs and eight changing-input reuse jobs. Both stops
-confirmed power-off, released all retained allocations and balanced lifetime
-references. Open clients blocked unload; closing them allowed ordinary removal,
-then fresh firmware startup and correct inference without rebooting.
-See the [hardware receipt](evidence/npu-hardware-2026-10-28.json).
+## HFRP Power-Down Contract
 
-Earlier builds without stop support, or any instance with a failed/uncertain
-stop, still need a reboot before replacement. The
-[first failed attempt](evidence/reload-attempt-2026-10-28.json) and
-[lifecycle review](evidence/lifecycle-review-2026-10-28.json) document the corrected
-host-side assumptions. Healthy reload qualification is not failed-channel
-recovery or suspend/resume support. No new kernel or boot entry is required.
+[`driver/n1x_npu_boot_linux.c`](../driver/n1x_npu_boot_linux.c) implements the HAL-1 shutdown sequence reconstructed from `nvlddmkm.sys` (`0xd447d0` $\rightarrow$ `0xd4a4f0` $\rightarrow$ `0xd405f0`, request mask `0x70`):
 
-## Recovered contract
+1. **Quiesce `/dev/accel/accel0`**: [`n1x_dla_accel_stop()`](../driver/n1x_dla_accel.c) acquires `accel->lock`, marks `accel->stopped = true`, and blocks new submissions.
+2. **Preflight Gate**: Requires healthy HFRP setup, gating mask `0x70`, completed `SROOT` upload, and no active or poisoned task queue (`-ENOTRECOVERABLE` otherwise).
+3. **Idle Drain & Interrupt Mask**: Drains pending firmware idle messages, reads `0xd2c` (`owned`) and `0xd28` (`mask`), and masks owned interrupt bits via `0xd24` (`mask & owned`).
+4. **HFRP Immediate Power-Off**: Sends `POWER_CONTROL` (`0x400`) payload `43 00` (MTCMOS OFF, RAIL OFF, CLOCK OFF), verifies the synchronous `43 00` reply, and queries power state `0x1af` to confirm the low three gating bits equal `0x07` ([`driver/n1x_hfrp_setup.c`](../driver/n1x_hfrp_setup.c)).
+5. **DMA & Reference Release**: Frees bootstrap DMA allocations and unmapped accel job buffers, orphans any VMA-mapped job (`job->owner = NULL`, freed when the last VMA closes in `n1x_accel_vm_close()`), and drops runtime PM and module references.
 
-The pinned Windows ARM64 KMD (SHA-256
-`73b3187cdf84c0306df78595e49626d096e84dfc1e6356543db57b145007f987`)
-contains this original HAL-1 stop chain:
+If any shutdown step fails, `accel->stop_failed` latches fail-closed retention so DMA allocations, runtime PM, and module references remain pinned until reboot. The same checked stop/start sequence is used by `.remove()`, `.shutdown()`, and system sleep `.suspend()` / `.resume()`.
 
-```text
-d39de0 -> runtime vtable +1f8 -> 1423b0 -> primary vtable +278
-        -> d447d0 -> HAL +3d8 (no-op for HAL 1) -> HAL +d0
-        -> d4a4f0 -> outer +c8 / d405f0 (request 0x70)
-        -> HFRP POWER_CONTROL 400, payload 43 00 on v1.5
-```
+## Build and Qualify
 
-With requested state 3, the wrapper also reaches `d44870`, which calls the stop
-path again (the power policy suppresses already pending transitions), then
-allocation teardown `d438b0`. The latter releases the retained configuration,
-trace and task-related allocations. `scripts/inspect_kmd_shutdown.py` executes
-the constructors, actual vtable thunks, stop wrappers and original power policy
-in Unicorn. Transport, OS services and allocation teardown are modeled.
-Ghidra exports in ignored `results/kmd-ghidra-stop-*.txt` corroborate the chain.
-
-The Windows HAL returns success even after a power-command failure. Linux
-does **not** copy that behavior. The Linux implementation requires the exact
-two-byte immediate-off reply, then the independently requested `0x1af` power
-state byte's low three gating bits to equal 7. The complete byte is retained
-for diagnostics; upper bits are not additional gating conditions (original
-query decoder `0xd41630` masks with 7). Original Windows wakeup consumes bits 0/1/2 as pending
-clock/domain/rail gating. The query alone is not an engine-idle proof.
-
-NVIDIA's [Linux power-control implementation](https://github.com/OE4T/linux-nv-oot/blob/33227347c89543042e0eda352db5de852983c8a3/drivers/video/tegra/host/nvdla/port/pm/nvdla_pm_hfrp_cmd_v1_3.c)
-names the request bits MTCMOS OFF, RAIL OFF and CLOCK OFF. Immediate gating is
-synchronous; delayed-off completion uses separate events. This driver sends
-only the immediate bits, without guessed timings, voltages or reset values.
-
-## Linux lifetime and ordering
-
-1. Lock the accel device, waiting for any synchronous EXEC/REEXEC to finish.
-   Mark it stopped before entering the backend; reject all future execution.
-2. Acquire `boot_lock`, the same lock order used by submission. Block every
-   startup/configuration sysfs writer. Shutdown is terminal for this instance.
-3. Require healthy HFRP setup, supported board gating policy, a completed SROOT
-   upload, successful previously attempted bootstrap phases and no active,
-   poisoned or orphaned queue. Uncertain transactions cannot enter cleanup.
-4. Drain only the recognized firmware idle notifications; never manufacture a
-   completion or acknowledge unknown errors. Mask the owned DLA interrupt
-   sources and read back the mask while the aperture is still powered.
-   Preserve the raw values as diagnostics; do not require every bit of the
-   raw route/mask intersection to become zero. The P16 retains bit 24, whose
-   meaning is unknown; the original Windows KMD makes no such assertion.
-   When `enable_irq=true` (the default), the `NVDA200A:00` IRQ handler ignores
-   activity once `boot_stopping` is set (`READ_ONCE(boot_stopping)`) and is
-   released by devres on driver unbind.
-5. Send immediate clock/domain/rail OFF and validate reply plus power-state
-   query. No DLA-aperture register access occurs after power-off.
-6. Free all bootstrap DMA (ReLU, bypass task, LPWR, region 5, config, ping and
-   completed SROOT staging), then all remaining unmapped accel allocations while
-   its lock excludes READ, EXEC, `mmap` and close callbacks (any job still
-   mapped via `mmap()` is orphaned with `job->owner = NULL` and freed when its
-   last VMA closes in `n1x_accel_vm_close()`).
-7. Balance both DLA runtime references, the SROOT runtime reference and both
-   self-held module references. Open DRM clients retain their normal module
-   references and must close before `rmmod` can succeed.
-8. Unload normally; devres unregisters the accel node, unmaps MMIO and disables
-   runtime PM. Load the module again and run the full startup and numerical
-   inference sequence with fresh software state.
-
-SROOT staging is released only on its completed synchronous upload path,
-followed by firmware idle and any attempted DMA-ping qualification. Failed or
-uncertain SROOT transactions remain quarantined. There is no command that
-claims to cancel an in-flight secure upload.
-
-Any stop failure preserves every DMA allocation (`accel->stop_failed`), PM
-reference and module pin, blocks further work, records the first error and
-refuses to repeat the stop. A reboot remains required for these exceptional
-states. This is deliberate error handling; `rmmod -f`, software counter resets
-and freeing potentially active memory are not recovery. The platform shutdown
-and system `.suspend` / `.resume` callbacks (`n1x_boot_pm_suspend` /
-`n1x_boot_pm_resume`) use the same checked stop/start path.
-
-## Build and qualify
-
-Use the pinned local inputs and environment from the existing bring-up guide:
+Run the offline shutdown and transport regression suite:
 
 ```sh
-make module cudla
-venv/bin/python scripts/inspect_kmd_shutdown.py
-venv/bin/python scripts/test_hfrp_stop.py
-venv/bin/python scripts/test_linux_shutdown.py
-venv/bin/python scripts/test_linux_accel.py
-venv/bin/python scripts/test_linux_accel_backend.py
+make test-p16-stop
 ```
 
-Offline results: original Windows stop dispatch and same-object stop/wakeup
-policy reproduced; two supported version encodings matched; 405 protocol
-failure/negative cases, all 256 state-byte comparisons, 434 joined Linux
-shutdown/HFRP transport cases, ownership/refcount/error cases and actual accel
-allocation cleanup passed. The joined tests model DMA/PM edges but execute the
-real Linux shutdown handler and HFRP protocol code together.
-These tests use modeled hardware and cannot replace the next command.
-
-From a fresh audited boot, or a healthy running instance of the matching build
-with sufficient retention budget (keep the current profile; it is only recorded):
+Run the physical two-cycle stop/unload/reload qualification on the P16:
 
 ```sh
 pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_p16_reload.py" \
   --cycles 2 --output-dir "$PWD/results/NEW-reload"
 ```
 
-Run from the repository root. The destination must be new. This performs a
-fresh startup when needed, eight independent-process cuDLA jobs plus eight
-changing-input jobs with the same three models kept loaded (five REEXECs), checked shutdown,
-zero-retained-memory verification, rejection of EXEC after stop, refusal to
-unload with an open client, successful unload after close, then fresh startup
-and the same sixteen numerical jobs. Each reuse group must consume exactly
-one kernel allocation; every output is compared to its independent reference.
-It repeats the cycle and leaves the final
-working device running. Each operation is logged before execution; a failure
-stops the sequence without an automatic retry. Only the final successful
-receipt establishes hardware reload qualification. Kernel logs are saved
-before the run, after each reload cycle and on a reported failure. Cached
-shutdown status includes the failing phase, raw IRQ masks, power/query reply
-headers and payloads, publication attempts and channel state; collecting these
-fields does not touch powered-off MMIO.
-
-For a later manual stop after successful qualification:
-
-```sh
-sudo python3 scripts/npu_trigger.py shutdown
-sudo cat /sys/bus/platform/devices/NVDA200A:00/shutdown_status
-sudo rmmod n1x_npu_bootstrap
-```
-
-Require `error=0 hardware_off=1 released=1` before unload. A busy module means
-clients or an unsuccessful shutdown still hold references; never force it.
+When `autostart=1` (default), `sudo modprobe -r n1x_npu_bootstrap` (or `sudo systemctl stop n1x-npu.service`) executes `n1x_boot_stop_device()` automatically during module unload.

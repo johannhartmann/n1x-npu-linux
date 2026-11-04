@@ -1,96 +1,37 @@
-# Omarchy and kernel updates
+# Arch Package and Kernel Updates
 
-The NPU bootstrap has been physically qualified on ASUS ProArt P16
-H7607BA.300 with `7.2.8-23-rtx-spark-npu`. By default (`strict_platform=0`),
-the driver dynamically discovers the ACPI endpoints and live VBIOS policy
-carveout (`strict_platform=1` remains available to pin the exact P16 DMI board
-and BIOS strings), while standard kernel module `vermagic` ties the compiled
-`.ko` to its target kernel release. The separately named kernel package remains
-installed alongside normal `linux-omarchy`; ordinary Omarchy package updates
-do not turn a new stock kernel into an NPU kernel.
+## Building and Installing the Package
 
-## Current release
-
-Build the source-pinned module package with matching headers:
+Build the `n1x-npu-bootstrap-rtx-spark` Arch package from the committed `driver/`, `include/`, `runtime/`, and `packaging/` trees:
 
 ```sh
 python3 scripts/build_arch_module_package.py
+sudo pacman -U results/arch-module-package/n1x-npu-bootstrap-rtx-spark-*.pkg.tar.*
 ```
 
-The builder exports the committed driver, userspace runtime, headers and
-boot-service files into a fresh directory under `results/arch-module-package/`
-and checks the compiled module's kernel release. Review the resulting PKGBUILD
-and package, then install the package file with
-`sudo pacman -U /absolute/path/to/the-built-package.pkg.tar.xz` in a terminal.
-It places `n1x_npu_bootstrap.ko` in the versioned module tree, runs `depmod`,
-installs `n1x-npu.service` plus its fail-closed starter, and installs the
-userspace libraries (`libn1x_dla.so`, `libn1x_compiler.so`, `libn1x_ort.so`),
-CLI tools (`n1x-compile`, `n1x-ort-run`), C headers (`/usr/include/n1x_*.h`),
-and Python runtime modules (`/usr/lib/n1x-npu/python/`). It does not install
-vendor firmware, enable the service or change boot entries. Its dependency
-prevents removal of the audited kernel while this driver package is installed.
+The package installs:
+- `/usr/lib/modules/7.2.8-23-rtx-spark-npu/updates/n1x-npu-bootstrap/n1x_npu_bootstrap.ko`
+- `/usr/lib/udev/rules.d/99-n1x-npu.rules` and `/usr/lib/systemd/system/n1x-npu.service`
+- `/usr/lib/{libn1x_dla.so,libn1x_compiler.so,libn1x_ort.so}` and `/usr/bin/{n1x-compile,n1x-ort-run}`
+- `/usr/include/{n1x_dla.h,n1x_compiler.h,n1x_ort.h,uapi/n1x_dla_accel.h}`
+- `/usr/lib/n1x-npu/python/{n1x_dla.py,n1x_compiler.py,n1x_ort.py,loadable.py}`
 
-Do not enable automatic startup until the exact machine has completed the
-manual startup, inference and checked shutdown/reload qualification in
-[setup](setup.md). On that qualified machine, enable it once:
+Enable automatic startup at boot:
 
 ```sh
-sudo systemctl enable n1x-npu.service
+sudo systemctl enable --now n1x-npu.service
 ```
 
-When enabled on a system with `NVDA200A:00` and `NVDA8600:00`, the unit ensures
-both isolated IOMMU groups are switched from `identity` to `DMA` and loads
-`n1x_npu_bootstrap` (`autostart=1`), which executes the verified 8-stage bring-up
-sequence in C on component bind and performs confirmed hardware shutdown on
-`systemctl stop` / `modprobe -r`. It has no retry or force-unload path. A
-failure remains pinned for inspection until reboot, just like the manual
-qualifier.
+## Post-Update Readiness Check
 
-Set the hook's `repo=` variable in `config/omarchy-npu-post-update` to the
-quoted absolute path of your checkout. Then install the user-level hook once:
+Install the optional Omarchy post-update hook (`config/omarchy-npu-post-update`) to check kernel/module/DKMS alignment after system updates:
 
 ```sh
 omarchy hook install post-update config/omarchy-npu-post-update
+python3 scripts/check_update_readiness.py
 ```
 
-The hook runs the read-only readiness check after Omarchy updates and reports
-when the running kernel, board/BIOS, package ownership or loaded module differs.
-It also detects an NVIDIA userspace/module version mismatch for the NPU kernel.
-The external NVIDIA, SPBM and CPUID modules are installed via DKMS for the
-audited NPU kernel. The original test modules were backed up under
-`/var/lib/p16-platform/boot-hook-backup/npu-test-modules/`. A future NVIDIA or
-kernel update still requires checking the DKMS builds and the staged UKI before
-rebooting into the NPU kernel.
-Run `python3 scripts/check_update_readiness.py` at any time. The unprivileged
-check requires the audited external modules to be installed and selected from
-DKMS. It cannot verify root-owned boot-menu/EFI files or prove physical inference.
-Verify the current Limine images separately with
-`pkexec /usr/bin/python3 "$PWD/scripts/check_update_readiness.py" --boot`.
+## Updating to a New Kernel Release
 
-Keep the known-working `linux-p16-asus-23` and stock Omarchy boot entries.
-After an update, verify the selected Limine image and fallback with the
-privileged audit appropriate to that entry, then boot the NPU kernel and run
-the bounded qualification from [setup](setup.md) before treating it as healthy.
-Do not reload the NPU after an uncertain firmware or DMA error; reboot the
-same audited kernel first, as documented in [shutdown/reload](shutdown-reload.md).
-
-## Moving to a new kernel
-
-1. Import the new Omarchy kernel recipe into a separate source tree. Preserve
-   the existing NPU kernel package, UKI and boot menu entry.
-2. Rebase the scoped SROOT noncoherent DMA patch and any required P16 platform
-   patches. Inspect the resulting DMA/IOMMU behavior; a clean patch apply or
-   successful build is insufficient.
-3. Build a new, uniquely named kernel and headers package, external NVIDIA
-   modules and an independent UKI. Verify module vermagic, initramfs contents,
-   EFI digest, Limine entry and fallback before manual boot.
-4. Keep `n1x-npu.service` disabled and boot the new kernel without automatically
-   loading the research NPU driver.
-   Check input, display, storage, NVIDIA and SROOT DMA on the physical board.
-5. Update the driver's explicit kernel gate and package release only after
-   review. Rebuild the module and rerun offline regression plus bounded
-   physical startup, shutdown, reload and numerical inference checks. Record
-   the new evidence before replacing the audited release in the docs.
-
-BIOS updates invalidate the current board policy and ACPI assumptions. Keep
-NPU use disabled until firmware tables and DMA behavior are audited again.
+1. Apply [`patches/linux-7.2.8-p16-sroot-noncoherent-dma.patch`](../patches/linux-7.2.8-p16-sroot-noncoherent-dma.patch) (`NVDA8600` `_HRV=1` noncoherent DMA quirk) to the target kernel tree and build the kernel and headers packages.
+2. Update `_kernel_release` in [`packaging/arch/PKGBUILD`](../packaging/arch/PKGBUILD), rebuild the package via `scripts/build_arch_module_package.py`, and run `make check` plus [`scripts/qualify_p16_reload.py`](../scripts/qualify_p16_reload.py).
