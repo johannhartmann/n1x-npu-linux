@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     source = (ROOT / 'driver/n1x_npu_boot_linux.c').read_text()
-    state = source[source.index('static struct {\n\tstruct n1x_hfrp_channel'):
+    state = source[source.index('static struct n1x_boot_hfrp_state {'):
                    source.index('} boot_hfrp;') + len('} boot_hfrp;')]
     store = source[source.index('static ssize_t query_power_state_store('):
                    source.index('static DEVICE_ATTR_WO(query_power_state);')]

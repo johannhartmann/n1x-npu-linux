@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     function = source[source.index('static int n1x_boot_drain_task_idle('):
-                      source.index('/* Explicit diagnostic only.')]
+                      source.index('static ssize_t query_power_state_store(')]
     harness = r'''
 #include <assert.h>
 #include <stdbool.h>

@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     function = source[source.index('static int n1x_boot_apply_config_once('):
-                      source.index('/* Windows setup preserves')]
+                      source.index('static int n1x_boot_apply_lpwr_once(')]
     harness = r'''
 #include <assert.h>
 #include <stdbool.h>

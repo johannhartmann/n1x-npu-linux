@@ -1,10 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
+#include <linux/string.h>
 #include "n1x_dla_command.h"
 
 #define MTHDID 0x68
 #define MTHDWDAT 0x6c
 #define MTHD_PENDING (1U << 16)
+
+static void put32(__u8 *out, __u32 value)
+{
+	out[0] = value;
+	out[1] = value >> 8;
+	out[2] = value >> 16;
+	out[3] = value >> 24;
+}
+
+static void put64(__u8 *out, __u64 value)
+{
+	put32(out, (__u32)value);
+	put32(out + 4, (__u32)(value >> 32));
+}
 
 int n1x_dla_send_method(const struct n1x_dla_io *io, __u32 method,
 						__u32 data, __u32 polls, __u32 interval_us)
@@ -35,7 +50,6 @@ int n1x_dla_build_region(__u8 *out, size_t out_size, __u32 region,
 						__u64 address, __u32 bytes)
 {
 	__u8 record[16];
-	unsigned int i;
 
 	if (!out || out_size < sizeof(record) || (region != 1 && region != 3 && region != 5) ||
 		!address || (address & 3) || !bytes || (region == 5 && bytes < 8) || address > ~(__u64)0 - bytes)
@@ -43,14 +57,10 @@ int n1x_dla_build_region(__u8 *out, size_t out_size, __u32 region,
 	/* Packed SET_REGIONS payload, verified against Windows d49c20,
 	 * T35x regions 1/3 and HAL-1 regions 1/3/5. The command points at this record, not at address.
 	 */
-	for (i = 0; i < 4; i++) {
-		record[i] = region >> (8 * i);
-		record[12 + i] = bytes >> (8 * i);
-	}
-	for (i = 0; i < 8; i++)
-		record[4 + i] = address >> (8 * i);
-	for (i = 0; i < sizeof(record); i++)
-		out[i] = record[i];
+	put32(record, region);
+	put64(record + 4, address);
+	put32(record + 12, bytes);
+	memcpy(out, record, sizeof(record));
 	return 0;
 }
 
@@ -59,14 +69,11 @@ int n1x_dla_build_command23(__u8 *out, size_t out_size, __u8 context_47d,
 {
 	__u8 record[40] = {1, context_47d != 0};
 	__u32 scaled = context_490 ? provider_f4 * 2000U : 0;
-	unsigned int i;
 
 	if (!out || out_size < sizeof(record))
 		return -EINVAL;
-	for (i = 0; i < 4; i++)
-		record[2 + i] = scaled >> (8 * i);
-	for (i = 0; i < sizeof(record); i++)
-		out[i] = record[i];
+	put32(record + 2, scaled);
+	memcpy(out, record, sizeof(record));
 	return 0;
 }
 
@@ -87,7 +94,6 @@ int n1x_dla_build_preempt_request(__u8 *out, size_t out_size, __u64 dma,
 {
 	__u8 request[N1X_DLA_PREEMPT_REQUEST_BYTES] = {0};
 	__u64 post;
-	unsigned int i;
 
 	if (!out || out_size < sizeof(request) || !dma || (dma & 255) ||
 		dma > ((__u64)1 << 36) - sizeof(request) || !fence || (fence & 3) ||
@@ -97,21 +103,15 @@ int n1x_dla_build_preempt_request(__u8 *out, size_t out_size, __u64 dma,
 	post = dma + 256;
 	request[0] = 1;
 	/* Preserve Windows' sequence at packed +3 despite zero preaction length. */
-	for (i = 0; i < 4; i++)
-		request[3 + i] = sequence >> (8 * i);
+	put32(request + 3, sequence);
 	request[11] = 27;
 	request[256] = request[269] = 0x80; /* WRITE_SEM */
-	for (i = 0; i < 8; i++) {
-		request[13 + i] = post >> (8 * i);
-		request[257 + i] = fence >> (8 * i);
-		request[270 + i] = fence >> (8 * i);
-	}
-	for (i = 0; i < 4; i++) {
-		request[265 + i] = submitted >> (8 * i);
-		request[278 + i] = sequence >> (8 * i);
-	}
+	put64(request + 13, post);
+	put64(request + 257, fence);
+	put64(request + 270, fence);
+	put32(request + 265, submitted);
+	put32(request + 278, sequence);
 	/* Byte 282 is TERM. Both cache blocks belong to this allocation. */
-	for (i = 0; i < sizeof(request); i++)
-		out[i] = request[i];
+	memcpy(out, request, sizeof(request));
 	return 0;
 }

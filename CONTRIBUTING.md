@@ -21,4 +21,4 @@ make check
 
 - Kernel C code under `driver/` and `include/` follows standard Linux kernel coding style (`checkpatch.pl` clean).
 - Cover protocol, `ioctl`, `mmap`, or DMA lifetime changes with offline unit tests in `scripts/test_*.py`.
-- Keep vendor binaries, firmware images, ROM captures, generated `.nvda` loadables, and virtual environments out of Git ([LICENSING.md](LICENSING.md), [NOTICE](NOTICE)).
+- Keep vendor binaries, firmware images, generated `.nvda` loadables, and virtual environments out of Git ([LICENSING.md](LICENSING.md), [NOTICE](NOTICE)).

@@ -1,4 +1,4 @@
-N1X NPU Linux research project
+NVIDIA N1X NPU on Linux
 Copyright (c) 2026 Johann Hartmann and contributors
 
 Project source licensing is mapped in LICENSING.md. Existing file-level notices
@@ -6,16 +6,13 @@ are preserved. This project is an independent implementation; it is not an
 NVIDIA or ASUS release.
 
 External inputs are acquired locally and are not included in Git:
-- NVIDIA Windows ARM64 driver 617.42 and extracted firmware/runtime libraries.
-- NVIDIA TensorRT 11.4 DLA compilers and Linux cuDLA 13.4.92 frontend.
-- Board-specific ASUS/NVIDIA BIOS ROM captures.
+- NVIDIA Windows ARM64 driver 617.42 and extracted SROOT firmware / Mtl3 compiler libraries.
+- NVIDIA TensorRT 11.4 DLA compiler and Linux cuDLA 13.4.92 frontend.
 Their original distribution terms and notices remain with those inputs.
 
-Protocol research uses NVIDIA-authored Jetson linux-nv-oot sources and the open
-NVDLA project as references. Exact revisions and URLs are recorded in docs/.
-The linux-nv-oot implementation is GPL-2.0-only; existing GPL declarations in
-this repository are retained. Generated vendor disassembly/decompiler exports
-stay in ignored results/ and are not distributed here.
+Hardware protocol definitions reference NVIDIA-authored Jetson linux-nv-oot
+sources and the open NVDLA project. The linux-nv-oot implementation is
+GPL-2.0-only; existing GPL declarations in this repository are retained.
 
 Super-resolution, emotion recognition and MNIST source models:
   ONNX Model Zoo, sub_pixel_cnn_2016 / super-resolution-10.onnx (Apache-2.0)

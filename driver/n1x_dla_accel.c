@@ -417,13 +417,16 @@ static int reexec_ioctl(struct drm_device *drm, void *data, struct drm_file *fil
 	for (i = 0; i < req->num_patches; i++) {
 		u8 *dst = job->task.buffer + N1X_JOB_PREFIX + patches[i].offset;
 		u8 *src = copies[i];
-		size_t b;
+		u8 tmp[256];
+		size_t b, chunk;
 
-		for (b = 0; b < patches[i].bytes; b++) {
-			u8 tmp = dst[b];
-
-			dst[b] = src[b];
-			src[b] = tmp;
+		for (b = 0; b < patches[i].bytes; b += chunk) {
+			chunk = patches[i].bytes - b;
+			if (chunk > sizeof(tmp))
+				chunk = sizeof(tmp);
+			memcpy(tmp, dst + b, chunk);
+			memcpy(dst + b, src + b, chunk);
+			memcpy(src + b, tmp, chunk);
 		}
 	}
 	saved = job->task;

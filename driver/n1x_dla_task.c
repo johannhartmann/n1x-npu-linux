@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
+#include <linux/string.h>
 #include "n1x_dla_task.h"
 
 static void put16(__u8 *out, __u16 value)
@@ -7,18 +8,26 @@ static void put16(__u8 *out, __u16 value)
 	out[0] = value;
 	out[1] = value >> 8;
 }
+
+static void put32(__u8 *out, __u32 value)
+{
+	out[0] = value;
+	out[1] = value >> 8;
+	out[2] = value >> 16;
+	out[3] = value >> 24;
+}
+
 static void put64(__u8 *out, __u64 value)
 {
-	unsigned int i;
-
-	for (i = 0; i < 8; i++)
-		out[i] = value >> (8 * i);
+	put32(out, (__u32)value);
+	put32(out + 4, (__u32)(value >> 32));
 }
+
 int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
 						const struct n1x_dla_task_args *args)
 {
 	__u8 descriptor[N1X_DLA_TASK_V2_BYTES] = {0};
-	unsigned int i;
+
 	/* Copy parameters before writing so overlapping input/output is harmless. */
 	if (!out || !args || out_size < sizeof(descriptor) ||
 		(args->next & 255) || !args->address_list ||
@@ -35,8 +44,7 @@ int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
 	put64(descriptor + 21, args->address_list);
 	put16(descriptor + 29, args->num_addresses);
 	put64(descriptor + 33, args->timeout);
-	for (i = 0; i < sizeof(descriptor); i++)
-		out[i] = descriptor[i];
+	memcpy(out, descriptor, sizeof(descriptor));
 	return 0;
 }
 
@@ -45,7 +53,6 @@ int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
 								__u64 fence_address, __u32 fence_value)
 {
 	__u8 descriptor[N1X_DLA_FENCED_TASK_V2_BYTES] = {0};
-	unsigned int i;
 	int err;
 
 	if (!out || out_size < sizeof(descriptor) || !fence_address ||
@@ -61,13 +68,11 @@ int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
 	put16(descriptor + 62, 14); /* Opcode + u64 address + u32 value + TERM. */
 	descriptor[64] = 0x80; /* WRITE_SEM */
 	put64(descriptor + 65, fence_address);
-	for (i = 0; i < 4; i++)
-		descriptor[73 + i] = fence_value >> (8 * i);
+	put32(descriptor + 73, fence_value);
 	/* Byte 77 terminates the stream. Padding through byte 255 covers HAL-1
 	 * aligned 256-byte cache fetches (and T35x 16-byte lookahead reads).
 	 */
-	for (i = 0; i < sizeof(descriptor); i++)
-		out[i] = descriptor[i];
+	memcpy(out, descriptor, sizeof(descriptor));
 	return 0;
 }
 
@@ -76,10 +81,9 @@ int n1x_dla_build_bypass_fenced_task_v2(__u8 *out, size_t out_size,
 										__u64 fence_address, __u32 fence_value)
 {
 	__u8 descriptor[N1X_DLA_FENCED_TASK_V2_BYTES];
-	unsigned int i;
 	int err;
 
-	/* Restrict this qualification helper to a single task, not a chain. */
+	/* Single-task BYPASS_EXEC descriptor (no task chaining). */
 	if (!out || !args || out_size < sizeof(descriptor) || args->next)
 		return -EINVAL;
 	err = n1x_dla_build_fenced_task_v2(descriptor, sizeof(descriptor), args,
@@ -87,8 +91,7 @@ int n1x_dla_build_bypass_fenced_task_v2(__u8 *out, size_t out_size,
 	if (err)
 		return err;
 	descriptor[41] = 1; /* Recovered HAL-1 flag / L4T DLA_DESC_FLAGS_BYPASS_EXEC. */
-	for (i = 0; i < sizeof(descriptor); i++)
-		out[i] = descriptor[i];
+	memcpy(out, descriptor, sizeof(descriptor));
 	return 0;
 }
 
@@ -96,7 +99,6 @@ int n1x_dla_build_context_header(__u8 *out, size_t out_size,
 								__u64 checkpoint, __u8 context_tag)
 {
 	__u8 header[N1X_DLA_CONTEXT_HEADER_BYTES] = {0};
-	unsigned int i;
 
 	if (!out || out_size < sizeof(header) || !checkpoint ||
 		(checkpoint & 255) || checkpoint > ((__u64)1 << 36) - 256)
@@ -104,8 +106,7 @@ int n1x_dla_build_context_header(__u8 *out, size_t out_size,
 	header[0] = 1;
 	header[1] = context_tag;
 	put64(header + 4, checkpoint);
-	for (i = 0; i < sizeof(header); i++)
-		out[i] = header[i];
+	memcpy(out, header, sizeof(header));
 	return 0;
 }
 
@@ -115,7 +116,6 @@ int n1x_dla_build_context_fenced_task_v2(__u8 *out, size_t out_size,
 										__u64 context_header, __u8 restore)
 {
 	__u8 descriptor[N1X_DLA_FENCED_TASK_V2_BYTES];
-	unsigned int i;
 	int err;
 
 	if (!out || !args || out_size < sizeof(descriptor) || args->next ||
@@ -133,8 +133,7 @@ int n1x_dla_build_context_fenced_task_v2(__u8 *out, size_t out_size,
 	 */
 	put16(descriptor + 41, 4 | (restore ? 2 : 0));
 	put64(descriptor + 51, context_header);
-	for (i = 0; i < sizeof(descriptor); i++)
-		out[i] = descriptor[i];
+	memcpy(out, descriptor, sizeof(descriptor));
 	return 0;
 }
 
@@ -155,7 +154,6 @@ int n1x_dla_build_address_list(__u8 *out, size_t out_size,
 		return -EINVAL;
 	for (i = 0; i < count; i++)
 		put64(out + i * 8, addresses[i]);
-	for (i = count * 8; i < bytes; i++)
-		out[i] = 0;
+	memset(out + (size_t)count * 8, 0, bytes - (size_t)count * 8);
 	return 0;
 }
