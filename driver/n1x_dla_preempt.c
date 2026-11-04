@@ -4,9 +4,9 @@
 #include "n1x_dla_preempt.h"
 
 int n1x_dla_preempt(const struct n1x_dla_io *io,
-					const struct n1x_dla_preempt_ops *ops, __u64 dma,
-					__u32 task_fence, __u32 sequence,
-					struct n1x_dla_preempt_result *result)
+		    const struct n1x_dla_preempt_ops *ops, __u64 dma,
+		    __u32 task_fence, __u32 sequence,
+		    struct n1x_dla_preempt_result *result)
 {
 	struct n1x_dla_response_fields fields;
 	__u32 pending, attempt;
@@ -16,8 +16,8 @@ int n1x_dla_preempt(const struct n1x_dla_io *io,
 		return -EINVAL;
 	*result = (struct n1x_dla_preempt_result){0};
 	if (!io || !io->read32 || !io->write32 || !io->delay_us ||
-		!ops || !ops->snapshot || !dma || (dma & 255) ||
-		dma > ((__u64)1 << 36) - N1X_DLA_PREEMPT_REQUEST_BYTES || !task_fence)
+	    !ops || !ops->snapshot || !dma || (dma & 255) ||
+	    dma > ((__u64)1 << 36) - N1X_DLA_PREEMPT_REQUEST_BYTES || !task_fence)
 		return -EINVAL;
 	err = ops->snapshot(ops->context, &result->snapshot);
 	if (err)

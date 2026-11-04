@@ -13,15 +13,15 @@ The driver discovers both `_CRS` MMIO apertures, IORT SMMUv3 mappings, and the l
 
 ## 2. VBIOS Policy & HFRP Bring-Up
 
-### Live VBIOS Carveout (`0x1182bc80`)
-[`n1x_boot_live_board_policy()`](../driver/n1x_npu_boot_linux.c) reads the display VBIOS locator register at `0x1182bc80` (`N1X_DISP_VBIOS_LOCATOR_PHYS`), computes the physical carveout base (`((u64)(locator >> 12) << 16) + 0x40000`), and parses the BIT `0x6c` table ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)) to extract the board's clock/power/gating policy (`892.8 MHz` nominal, gating mask `0x70`).
+### Live VBIOS Carveout (`NVDA3000` / `0x1182bc80`)
+[`n1x_boot_live_board_policy()`](../driver/n1x_npu_boot_linux.c) resolves the `NVDA3000` (`\_SB_.SVP0`) locator register (`0x1182bc80`), computes the 32-bit physical carveout base (`(((u64)locator << 12) + N1X_VBIOS_CARVEOUT_BASE) & 0xffffffffULL`, yielding `0xe5b81800` for locator `0xffe5b812`), and parses the BIT `0x6c` table ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)) to extract the board's clock/power/gating policy (`892.8 MHz` nominal, gating mask `0x70`).
 
 ### 8-Stage In-Kernel Bring-Up
-When both endpoints bind, `n1x_boot_master_bind()` runs the 8-stage initialization sequence in C:
+When both endpoints bind, [`n1x_master_bind()`](../driver/n1x_npu_boot_linux.c) runs the 8-stage initialization sequence in C:
 
-1. **`prepare_hfrp`**: Resumes runtime PM, performs HFRP handshake and version discovery (`v1.5`), sends the VBIOS policy table, and powers on the DLA rails/clocks (`POWER_CONTROL` `0x400`).
+1. **`prepare_hfrp`**: Resumes runtime PM, performs HFRP handshake and version discovery (`v1.5`), sends the VBIOS policy table ([`driver/n1x_hfrp_setup.c`](../driver/n1x_hfrp_setup.c)), and powers on the DLA rails/clocks (HFRP command `400` / `0x190` in [`driver/n1x_hfrp.c`](../driver/n1x_hfrp.c)).
 2. **`upload`**: Streams `nvidia/n1x/sroot-v0.bin` over the noncoherent `NVDA8600` `SROOT` DMA channel and verifies the firmware boot response.
-3. **`ping`**: Executes a mailbox ping (`0x101`) to verify RISC-V firmware readiness and captures the owned interrupt route mask (`0xd2c`).
+3. **`ping`**: Sends HAL-1 method `1` (`boot_ping.dma >> 8`) to verify RISC-V firmware DMA readiness (`0x44444444`) and captures the owned interrupt route mask (`0xd2c`).
 4. **`init_region5`**: Allocates and registers the 1 MiB Region 5 telemetry/trace ring buffer.
 5. **`read_config` & `apply_config`**: Queries and applies the HAL-1 engine configuration snapshot.
 6. **`apply_lpwr`**: Configures low-power gating thresholds.
@@ -29,7 +29,7 @@ When both endpoints bind, `n1x_boot_master_bind()` runs the 8-stage initializati
 8. **`preempt` (`enable_preempt=true`)**: Sends method `0x31c` (`data = 1` $\rightarrow$ `0x1c02`) while idle to enable firmware checkpoint preemption (`0x183728`).
 
 ### Interrupt Handling (`enable_irq=true`)
-[`n1x_boot_irq_handler()`](../driver/n1x_npu_boot_linux.c) implements the `nvlddmkm.sys` (`0xd49800`) top-half contract: on GSI `234`, it checks pending bits (`0x08`) against `owned` (`0xd2c`) and `saved` (`0xd28`), masks active bits via `0xd24` (`saved & owned`), increments `boot_irq_count`, and wakes `boot_waitq`.
+[`n1x_boot_irq_handler()`](../driver/n1x_npu_boot_linux.c) handles GSI `234`: it checks pending bits (`0x08`) against `owned` (`0xd2c`) and `saved` (`0xd28`), masks active bits via `0xd24` (`saved & owned`), increments `boot_irq_count`, and wakes `boot_waitq`.
 
 ## 3. `/dev/accel/accel0` UAPI & DMA Lifetime
 
@@ -46,9 +46,10 @@ Defined in [`include/uapi/n1x_dla_accel.h`](../include/uapi/n1x_dla_accel.h) and
 | `mmap()` (`job_id << PAGE_SHIFT`) | Zero-copy read-only (`VM_READ`, `!VM_MAYWRITE`) userspace mapping of a completed job's DMA buffer via `dma_mmap_coherent()` |
 
 **Lifetime & Fail-Closed Retention**:
-- Completed jobs owned by an open `/dev/accel/accel0` file descriptor are freed automatically in [`n1x_accel_postclose()`](../driver/n1x_dla_accel.c) when the FD closes (or in [`n1x_accel_vm_close()`](../driver/n1x_dla_accel.c) when the last `mmap` VMA unmaps).
+- Completed jobs owned by an open `/dev/accel/accel0` file descriptor are freed automatically in [`postclose()`](../driver/n1x_dla_accel.c) when the FD closes (or in [`n1x_accel_vm_close()`](../driver/n1x_dla_accel.c) when the last `mmap` VMA unmaps).
 - While `job->mmap_count > 0`, `REEXEC` returns `-EBUSY` so DMA never races with userspace reads.
-- Any job that fails or times out—or any device instance whose HFRP power-down (`43 00` / state `07`) fails (`accel->stop_failed`)—retains its DMA pages until confirmed hardware shutdown or reboot.
+- Any job that fails or times out—or any device instance where a hardware power-down attempt failed (`accel->stop_failed`)—retains its DMA pages until confirmed hardware shutdown or reboot.
+- Multi-value diagnostic state (`status`, `hfrp_status`, `shutdown_status`) is exposed via `debugfs` under `/sys/kernel/debug/n1x-npu-bootstrap/`, while `/sys/bus/platform/devices/NVDA200A:00/` exposes only single-action write attributes (`shutdown`, `query_power_state`).
 
 ## 4. Native `t254` Compiler (`libn1x_compiler.so`, `n1x-compile`)
 
@@ -63,7 +64,7 @@ Implemented in [`runtime/n1x_compiler_shim.cpp`](../runtime/n1x_compiler_shim.cp
 Implemented in [`runtime/n1x_ort.cpp`](../runtime/n1x_ort.cpp) and [`runtime/n1x_ort.py`](../runtime/n1x_ort.py):
 
 1. **Canonicalization**: Resolves `auto_pad` (`SAME_UPPER`/`SAME_LOWER`), folds constant subgraphs, fuses `Conv+Add` and `Flatten/Reshape+MatMul+Add` $\rightarrow$ `Gemm`, and rewrites opset-10 `Reshape->Transpose->Reshape` sub-pixel tails into `DepthToSpace`.
-2. **Partitioning & Caching**: Partitions arbitrary ONNX graphs into cycle-free topological `DLAStage` and `HostStage` segments, compiles each `DLAStage` into an `.nvda` loadable cached by SHA-256 under `~/.cache/n1x_ort/`, and auto-calibrates `INT8` tensor/channel scales when requested.
+2. **Partitioning & Caching**: Partitions arbitrary ONNX graphs into cycle-free topological `DLA` and `Host` stages, compiles each `DLA` stage into an `.nvda` loadable cached by SHA-256 under `~/.cache/n1x/ort/`, and auto-calibrates `INT8` tensor/channel scales when requested.
 3. **Execution**: Packs `NCHW` `float32` tensors into `CHW16` (`FP16`) or `CHW32` (`INT8`) surfaces in C++17 (`n1x_ort_pack_fp32` / `n1x_ort_unpack_fp32`) and executes via `EXEC` on initial run and `REEXEC_IO` on subsequent runs.
 
 ## 6. Linux cuDLA Backend (`libnvcudla.so`)

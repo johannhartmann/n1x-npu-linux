@@ -38,7 +38,7 @@ int n1x_dla_job_fail(struct n1x_dla_job_queue *queue, struct n1x_dla_job *job, i
 }
 
 static int poll_once(const struct n1x_dla_io *io,
-						const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job)
+		     const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job)
 {
 	struct n1x_dla_response_fields fields;
 	struct n1x_dla_response response;
@@ -96,23 +96,23 @@ static int poll_once(const struct n1x_dla_io *io,
 }
 
 int n1x_dla_job_start(struct n1x_dla_job_queue *queue,
-						const struct n1x_dla_io *io,
-						const struct n1x_dla_job_ops *ops,
-						struct n1x_dla_job *job)
+		      const struct n1x_dla_io *io,
+		      const struct n1x_dla_job_ops *ops,
+		      struct n1x_dla_job *job)
 {
 	int err;
 
 	if (!queue || !io || !io->read32 || !io->write32 || !io->delay_us ||
-		!ops || !ops->publish || !ops->read_fence || !job || !job->dma ||
-		(job->dma & 255) || job->dma > (1ULL << 36) - 256)
+	    !ops || !ops->publish || !ops->read_fence || !job || !job->dma ||
+	    (job->dma & 255) || job->dma > (1ULL << 36) - 256)
 		return -EINVAL;
 	if (queue->poisoned || job->idle_blocked)
 		return -ENOTRECOVERABLE;
 	if (queue->active || queue->owner_job)
 		return -EBUSY;
 	if (job->attempted || job->fence_value || job->accepted || job->verified ||
-		job->signal_seen || job->response_valid || job->polls || job->suspended ||
-		job->preempt_completed || job->preempt_sequence || job->restore_pending)
+	    job->signal_seen || job->response_valid || job->polls || job->suspended ||
+	    job->preempt_completed || job->preempt_sequence || job->restore_pending)
 		return -EALREADY;
 	if (queue->last_fence == (__u32)~0U)
 		return -EOVERFLOW;
@@ -136,8 +136,8 @@ int n1x_dla_job_start(struct n1x_dla_job_queue *queue,
 }
 
 int n1x_dla_job_poll(struct n1x_dla_job_queue *queue,
-					const struct n1x_dla_io *io,
-					const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job)
+		     const struct n1x_dla_io *io,
+		     const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job)
 {
 	int err = owned(queue, job);
 
@@ -159,8 +159,8 @@ int n1x_dla_job_poll(struct n1x_dla_job_queue *queue,
 }
 
 int n1x_dla_job_execute(struct n1x_dla_job_queue *queue,
-						const struct n1x_dla_io *io,
-						const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job)
+			const struct n1x_dla_io *io,
+			const struct n1x_dla_job_ops *ops, struct n1x_dla_job *job)
 {
 	int err = n1x_dla_job_start(queue, io, ops, job);
 

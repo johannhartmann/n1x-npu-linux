@@ -10,6 +10,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -941,7 +942,7 @@ extern "C" int n1x_compile_json_graph(const char *json_spec,
             output_tensors.push_back(out_t);
         }
 
-        /* If set_all_tensor_formats is true (default for pure FP16 to match probe_native_graph.py),
+        /* If set_all_tensor_formats is true (default for pure FP16),
          * set data type and format on all graph tensors.
          */
         bool set_all_formats = root.bool_or("set_all_tensor_formats", !is_int8 && !explicit_qdq);
@@ -955,9 +956,20 @@ extern "C" int n1x_compile_json_graph(const char *json_spec,
         /* 4. Create Wisdom, Profile, and Compile */
         uint8_t profile_precision = explicit_qdq ? static_cast<uint8_t>(N1X_DLA_DATA_TYPE_HALF) : compute_precision;
         check_dla(NvDlaCreateWisdom(&wisdom), "NvDlaCreateWisdom");
-        std::string wisdom_dir = "/tmp/n1x_wisdom_" + std::to_string(getpid());
-        mkdir(wisdom_dir.c_str(), 0755);
-        check_dla(NvDlaWisdomOpen(wisdom, wisdom_dir.c_str()), "NvDlaWisdomOpen");
+        char wisdom_tmpl[] = "/tmp/n1x_wisdom_XXXXXX";
+        if (!mkdtemp(wisdom_tmpl)) {
+            throw std::runtime_error("mkdtemp failed for wisdom directory");
+        }
+        struct ScopedWisdomDir {
+            std::string path;
+            ~ScopedWisdomDir() {
+                std::error_code ec;
+                if (!path.empty()) {
+                    std::filesystem::remove_all(path, ec);
+                }
+            }
+        } wisdom_guard{wisdom_tmpl};
+        check_dla(NvDlaWisdomOpen(wisdom, wisdom_guard.path.c_str()), "NvDlaWisdomOpen");
         check_dla(NvDlaWisdomSetDataType(wisdom, profile_precision), "NvDlaWisdomSetDataType");
         check_dla(NvDlaWisdomSetNetworkTransient(wisdom, network), "NvDlaWisdomSetNetworkTransient");
 

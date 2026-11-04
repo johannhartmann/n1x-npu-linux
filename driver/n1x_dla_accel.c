@@ -230,19 +230,19 @@ static int exec_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 	args.num_addresses = req->num_addresses;
 	args.timeout = 1000000;
 	err = n1x_dla_build_address_list(job->task.buffer + N1X_JOB_ADDRESSES,
-									N1X_JOB_PREEMPT_REQ - N1X_JOB_ADDRESSES,
-									addresses, req->num_addresses);
+					 N1X_JOB_PREEMPT_REQ - N1X_JOB_ADDRESSES,
+					 addresses, req->num_addresses);
 	if (!err && (req->flags & N1X_DLA_EXEC_RESUMABLE)) {
 		job->task.resumable = true;
 		err = n1x_dla_build_context_header(job->task.buffer + N1X_JOB_CONTEXT_HEADER,
-											256, job->task.dma + N1X_JOB_CHECKPOINT, 0);
+						   256, job->task.dma + N1X_JOB_CHECKPOINT, 0);
 		if (!err)
 			err = n1x_dla_build_context_fenced_task_v2(job->task.buffer, 256, &args,
-														job->task.dma + N1X_JOB_FENCE, 0,
-														job->task.dma + N1X_JOB_CONTEXT_HEADER, 1);
+								   job->task.dma + N1X_JOB_FENCE, 0,
+								   job->task.dma + N1X_JOB_CONTEXT_HEADER, 1);
 	} else if (!err) {
 		err = n1x_dla_build_fenced_task_v2(job->task.buffer, 256, &args,
-											job->task.dma + N1X_JOB_FENCE, 0);
+						   job->task.dma + N1X_JOB_FENCE, 0);
 	}
 	if (err)
 		goto free_dma;
@@ -483,7 +483,7 @@ static int stats_ioctl(struct drm_device *drm, void *data, struct drm_file *file
 		}
 		dma_rmb();
 		err = n1x_dla_parse_statistics(job->task.buffer + N1X_JOB_PREFIX + req->offset,
-										req->bytes, &parsed);
+					       req->bytes, &parsed);
 		if (!err) {
 			req->count = parsed.count;
 			req->metadata_offset = parsed.metadata_offset;
@@ -579,15 +579,15 @@ static int control_ioctl(struct drm_device *drm, void *data, struct drm_file *fi
 		seq = job->task.preempt_sequence + 1;
 		WRITE_ONCE(*(__le32 *)(job->task.buffer + N1X_JOB_PREEMPT_FENCE), cpu_to_le32(~seq));
 		err = n1x_dla_build_preempt_request(job->task.buffer + N1X_JOB_PREEMPT_REQ,
-											N1X_DLA_PREEMPT_REQUEST_BYTES,
-											job->task.dma + N1X_JOB_PREEMPT_REQ,
-											job->task.dma + N1X_JOB_PREEMPT_FENCE,
-											~seq, seq);
+						    N1X_DLA_PREEMPT_REQUEST_BYTES,
+						    job->task.dma + N1X_JOB_PREEMPT_REQ,
+						    job->task.dma + N1X_JOB_PREEMPT_FENCE,
+						    ~seq, seq);
 		if (err)
 			goto unlock;
 		dma_wmb();
 		err = accel->control->preempt(drm->dev, &job->task, &preempt_ops,
-										job->task.dma + N1X_JOB_PREEMPT_REQ, seq, &result);
+					      job->task.dma + N1X_JOB_PREEMPT_REQ, seq, &result);
 		req->outcome = result.outcome;
 		break;
 	case N1X_DLA_CONTROL_RESUME:
@@ -609,7 +609,7 @@ unlock:
 	return err;
 }
 void n1x_dla_accel_set_control(struct n1x_dla_accel *accel,
-								const struct n1x_dla_accel_control_ops *control)
+			       const struct n1x_dla_accel_control_ops *control)
 {
 	if (!accel)
 		return;

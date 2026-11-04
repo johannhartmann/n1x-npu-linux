@@ -66,7 +66,7 @@ def main():
                 node.unlink()
                 return SimpleNamespace(returncode=0)
 
-            with patch.multiple(q, MODULE=module, ENDPOINT=dev, SROOT=sroot, NODE=node,
+            with patch.multiple(q, MODULE=module, ENDPOINT=dev, SROOT=sroot, DEBUGFS=dev, NODE=node,
                                 Device=Device, trigger=trigger), \
                  patch.object(q.os, 'sync'), patch.object(q.subprocess, 'run', side_effect=run):
                 failed = False

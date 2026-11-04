@@ -34,7 +34,7 @@ End-to-end execution of ONNX Model Zoo's `emotion-ferplus-8.onnx` (37 nodes lowe
 
 ## Features & Hardware Support
 
-- **Dynamic ACPI & VBIOS Discovery**: Binds `NVDA200A` (`_HRV=0x34`) and `NVDA8600` (`_HRV=1` `SROOT`) via `<linux/component.h>`, discovers `_CRS` MMIO apertures and IORT SMMUv3 mappings dynamically, and parses the live VBIOS BIT `0x6c` clock/gating policy from the hardware carveout (`0x1182bc80`).
+- **Dynamic ACPI & VBIOS Discovery**: Binds `NVDA200A` (`_HRV=0x34`) and `NVDA8600` (`_HRV=1` `SROOT`) via `<linux/component.h>`, discovers `_CRS` MMIO apertures and IORT SMMUv3 mappings dynamically, and locates the live VBIOS BIT `0x6c` clock/gating policy via the `NVDA3000` (`SVP0`) locator (`0x1182bc80` $\rightarrow$ carveout `0xe5b81800`).
 - **In-Kernel Bring-Up & Power Management**: Executes the 8-stage HFRP/SROOT bring-up in C on probe, configures the VBIOS policy clock via HFRP, and supports `.suspend` / `.resume` power transitions.
 - **`/dev/accel/accel0` DRM Accelerator**: Supports `EXEC`, `REEXEC` (in-place I/O patching with zero DMA allocations), `READ`, `STATS` (v2 hardware layer profiling), `CONTROL` (HAL-1 checkpoint preemption & resume), zero-copy read-only `mmap()`, and automatic per-FD `postclose()` DMA cleanup.
 - **Native `t254` Compiler & ONNX Execution Provider**: [`runtime/libn1x_compiler.so`](runtime/n1x_compile.cpp) and [`runtime/libn1x_ort.so`](runtime/n1x_ort.cpp) ([`N1xInferenceSession`](runtime/n1x_ort.py)) compile and execute `FP16` (`CHW16`) and `INT8` (`CHW32`, per-tensor and per-channel) multi-branch DAGs in-process with SHA-256 `.nvda` caching.

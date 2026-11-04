@@ -5,17 +5,17 @@
 #include "n1x_dla_control.h"
 
 int n1x_dla_control_command(const struct n1x_dla_io *io, __u8 command,
-							__u64 dma_address, __u32 polls, __u32 interval_us,
-							struct n1x_dla_control_result *result)
+			    __u64 dma_address, __u32 polls, __u32 interval_us,
+			    struct n1x_dla_control_result *result)
 {
 	struct n1x_dla_response_fields fields;
 	__u32 pending, attempt, data;
 	int err;
 
 	if (!io || !io->read32 || !io->write32 || !result || !polls || polls > 5001 ||
-		(polls > 1 && (!interval_us || !io->delay_us)) ||
-		(command != 11 && command != 21 && command != 22 && command != 23 && command != 24) ||
-		!dma_address || (dma_address & 255) || dma_address > 0xffffffff00ULL)
+	    (polls > 1 && (!interval_us || !io->delay_us)) ||
+	    (command != 11 && command != 21 && command != 22 && command != 23 && command != 24) ||
+	    !dma_address || (dma_address & 255) || dma_address > 0xffffffff00ULL)
 		return -EINVAL;
 	memset(result, 0, sizeof(*result));
 	err = io->read32(io->context, 8, &pending);

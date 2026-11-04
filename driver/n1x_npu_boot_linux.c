@@ -50,11 +50,11 @@
 
 static unsigned int firmware_variant;
 module_param(firmware_variant, uint, 0400);
-MODULE_PARM_DESC(firmware_variant, "Pinned remapper-1 image: 0=initial, 1=Windows fallback; no automatic retry (default 0)");
+MODULE_PARM_DESC(firmware_variant, "Pinned remapper-1 image: 0=initial, 1=fallback; no automatic retry (default 0)");
 
 static bool opt_enable_irq = true;
 module_param_named(enable_irq, opt_enable_irq, bool, 0400);
-MODULE_PARM_DESC(enable_irq, "Enable Windows KMD (0xd49800) SWGEN0/SWGEN1 interrupt mask state machine and waitqueue wakeup (default true)");
+MODULE_PARM_DESC(enable_irq, "Enable SWGEN0/SWGEN1 interrupt mask state machine and waitqueue wakeup (default true)");
 
 static bool enable_preempt = true;
 module_param(enable_preempt, bool, 0400);
@@ -246,8 +246,8 @@ static int n1x_boot_write_irq_enable(struct n1x_boot_endpoint *endpoint, u32 val
 	return 0;
 }
 
-/* Windows KMD 0xd49800 top-half: mask owned active bits via 0xd24 to silence
- * the level-triggered GIC line (GSI 234) and wake any waiting poller.
+/* Top-half ISR: mask owned active bits via 0xd24 to silence the
+ * level-triggered GIC line (GSI 234) and wake any waiting poller.
  */
 static irqreturn_t n1x_boot_irq_handler(int irq, void *data)
 {
@@ -747,8 +747,8 @@ free:
 	return err;
 }
 
-/* Reuse the already retained config allocation, as the Windows init sequence
- * does. The saved CPU snapshot remains the original pre-import export.
+/* Reuse the retained config allocation so the saved CPU snapshot
+ * remains the original pre-import export.
  */
 static int n1x_boot_apply_config_once(void)
 {
@@ -781,8 +781,8 @@ static int n1x_boot_apply_config_once(void)
 	return err;
 }
 
-/* Windows setup preserves the actual board's provider +0xf4, substituting 4
- * only for zero. Do not infer physical time units here.
+/* Preserve the board's VBIOS gating byte 0, substituting 4 only when zero.
+ * Do not infer physical time units here.
  */
 static int n1x_boot_apply_lpwr_once(void)
 {
@@ -835,11 +835,11 @@ free:
 	return err;
 }
 
-/* N1X hardware sends {word=12,data=0} after idle. The Windows KMD
- * handler ACKs this notification without marking task completion.
- * Keep the device powered under the existing runtime reference;
- * do not infer or execute a power-down policy from this notification.
- * Firmware holds a mailbox until ACK, and boot_lock excludes another reader.
+/* N1X hardware sends {word=12,data=0} after idle. Acknowledge this
+ * notification without marking task completion. Keep the device powered
+ * under the existing runtime reference; do not infer or execute a power-down
+ * policy from this notification. Firmware holds a mailbox until ACK, and
+ * boot_lock excludes another reader.
  */
 static int n1x_boot_drain_task_idle(struct n1x_dla_job *task)
 {
@@ -1046,7 +1046,6 @@ static ssize_t hfrp_status_show(struct device *dev, struct device_attribute *att
 	mutex_unlock(&boot_lock);
 	return size;
 }
-static struct device_attribute dev_attr_hfrp_status = __ATTR(hfrp_status, 0400, hfrp_status_show, NULL);
 
 static ssize_t status_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -1083,7 +1082,6 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	mutex_unlock(&boot_lock);
 	return size;
 }
-static struct device_attribute dev_attr_status = __ATTR(status, 0400, status_show, NULL);
 
 /* accel->lock (if present) -> boot_lock, matching submission. Stop is terminal
  * for this module instance. A fresh load constructs a fresh channel/queue.
@@ -1140,7 +1138,7 @@ static int n1x_boot_stop_hardware(struct device *dev)
 		if (err)
 			goto done;
 	}
-	/* Follow the recovered Windows mask operation and flush the write before
+	/* Clear owned active interrupt mask bits and flush the write before
 	 * power-off. Do NOT require every raw route/mask intersection bit to read
 	 * back zero: N1X hardware retains bit 24 in both registers after this
 	 * operation.
@@ -1281,8 +1279,6 @@ static ssize_t shutdown_status_show(struct device *dev, struct device_attribute 
 	mutex_unlock(&boot_lock);
 	return size;
 }
-static struct device_attribute dev_attr_shutdown_status =
-	__ATTR(shutdown_status, 0400, shutdown_status_show, NULL);
 
 static int n1x_boot_start_once(void)
 {
@@ -1330,10 +1326,7 @@ static int n1x_boot_start_once(void)
 
 static struct attribute *boot_attrs[] = {
 	&dev_attr_shutdown.attr,
-	&dev_attr_shutdown_status.attr,
-	&dev_attr_hfrp_status.attr,
 	&dev_attr_query_power_state.attr,
-	&dev_attr_status.attr,
 	NULL,
 };
 

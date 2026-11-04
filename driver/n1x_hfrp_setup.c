@@ -25,16 +25,16 @@ static __u16 get16(const __u8 *p)
 }
 
 static int command(const struct n1x_dla_io *io,
-					struct n1x_hfrp_channel *channel, __u16 id,
-					const __u8 *payload, __u32 length, int reply_length,
-					__u32 polls, __u32 interval_us,
-					struct n1x_hfrp_setup_result *result)
+		   struct n1x_hfrp_channel *channel, __u16 id,
+		   const __u8 *payload, __u32 length, int reply_length,
+		   __u32 polls, __u32 interval_us,
+		   struct n1x_hfrp_setup_result *result)
 {
 	int err;
 
 	result->command = id;
 	err = n1x_hfrp_exchange(io, channel, id, payload, length, polls,
-							interval_us, &result->exchange);
+				interval_us, &result->exchange);
 	if (err)
 		return err;
 	if (reply_length >= 0 && result->exchange.reply.length != reply_length)
@@ -43,11 +43,11 @@ static int command(const struct n1x_dla_io *io,
 }
 
 int n1x_hfrp_configure_policy(const struct n1x_dla_io *io,
-								struct n1x_hfrp_channel *channel,
-								const struct n1x_hfrp_version *version,
-								const struct n1x_dla_vbios_policy *policy,
-								__u32 polls, __u32 interval_us,
-								struct n1x_hfrp_setup_result *result)
+			      struct n1x_hfrp_channel *channel,
+			      const struct n1x_hfrp_version *version,
+			      const struct n1x_dla_vbios_policy *policy,
+			      __u32 polls, __u32 interval_us,
+			      struct n1x_hfrp_setup_result *result)
 {
 	struct n1x_dla_gating_policy gating;
 	__u8 payload[36] = {2};
@@ -56,15 +56,15 @@ int n1x_hfrp_configure_policy(const struct n1x_dla_io *io,
 	int err;
 
 	if (!io || !io->read32 || !io->write32 || !channel || !version ||
-		!version->valid || !result || !polls || polls > 5001 ||
-		(polls > 1 && interval_us && !io->delay_us))
+	    !version->valid || !result || !polls || polls > 5001 ||
+	    (polls > 1 && interval_us && !io->delay_us))
 		return -EINVAL;
 	if (version->major != 1 || (version->minor != 3 && version->minor < 5))
 		return -EOPNOTSUPP;
 	if (channel->state != N1X_HFRP_READY)
 		return channel->state == N1X_HFRP_FAILED ? -ENOTRECOVERABLE : -EBUSY;
 	if (channel->next_sequence >= N1X_HFRP_ASYNC_SEQ ||
-		channel->pending_sequence != N1X_HFRP_NO_SEQUENCE)
+	    channel->pending_sequence != N1X_HFRP_NO_SEQUENCE)
 		return -EINVAL;
 	err = n1x_dla_prepare_gating(policy, &gating);
 	if (err)
@@ -89,7 +89,7 @@ int n1x_hfrp_configure_policy(const struct n1x_dla_io *io,
 		put16(payload + 24, gating.policy_bytes[8]);
 	}
 	err = command(io, channel, 401, payload, config_length, config_length,
-					polls, interval_us, result);
+		      polls, interval_us, result);
 	if (err)
 		goto failed;
 	result->completed_commands++;
@@ -104,8 +104,8 @@ int n1x_hfrp_configure_policy(const struct n1x_dla_io *io,
 	}
 	count = get16(reply);
 	if (!count || count > 8 ||
-		(result->exchange.reply.length != 2 + 4 * count &&
-		result->exchange.reply.length != 34)) {
+	    (result->exchange.reply.length != 2 + 4 * count &&
+	     result->exchange.reply.length != 34)) {
 		err = -EBADMSG;
 		goto failed;
 	}

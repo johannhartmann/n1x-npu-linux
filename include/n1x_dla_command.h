@@ -11,7 +11,7 @@ int n1x_dla_send_method(const struct n1x_dla_io *io, __u32 method,
 int n1x_dla_build_region(__u8 *out, size_t out_size, __u32 region,
 			 __u64 address, __u32 bytes);
 
-/* Serialize the 40-byte HAL-1 LPWR command-23 payload (Windows KMD RVA 0xd45390). */
+/* Serialize the 40-byte HAL-1 LPWR command-23 payload. */
 int n1x_dla_build_command23(__u8 *out, size_t out_size, __u8 context_47d,
 			    __u32 context_490, __u32 provider_f4);
 

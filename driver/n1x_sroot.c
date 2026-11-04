@@ -4,7 +4,7 @@
 #include "n1x_sroot.h"
 
 static int wait_ready(const struct n1x_dla_io *io, __u32 offset,
-						__u32 polls, __u32 interval_us)
+		      __u32 polls, __u32 interval_us)
 {
 	__u32 i, value;
 	int err;
@@ -22,16 +22,16 @@ static int wait_ready(const struct n1x_dla_io *io, __u32 offset,
 }
 
 int n1x_sroot_send(const struct n1x_dla_io *io, __u32 stride,
-					__u8 command, const __u32 *words, __u8 count,
-					__u32 polls, __u32 interval_us)
+		   __u8 command, const __u32 *words, __u8 count,
+		   __u32 polls, __u32 interval_us)
 {
 	__u32 header, value, i;
 	int err, mismatch = 0;
 
 	if (!io || !io->read32 || !io->write32 || !stride || (stride & 3) ||
-		stride > ~(__u32)0 / 9 || count > N1X_SROOT_MAX_WORDS ||
-		(count && !words) || !polls || polls > 5001 ||
-		(polls > 1 && (!interval_us || !io->delay_us)))
+	    stride > ~(__u32)0 / 9 || count > N1X_SROOT_MAX_WORDS ||
+	    (count && !words) || !polls || polls > 5001 ||
+	    (polls > 1 && (!interval_us || !io->delay_us)))
 		return -EINVAL;
 	header = command | (__u32)count << 8;
 	err = wait_ready(io, stride * 2, polls, interval_us);
@@ -70,17 +70,17 @@ int n1x_sroot_send(const struct n1x_dla_io *io, __u32 stride,
 }
 
 int n1x_sroot_receive(const struct n1x_dla_io *io, __u32 stride,
-						struct n1x_sroot_reply *reply,
-						__u32 polls, __u32 interval_us)
+		      struct n1x_sroot_reply *reply,
+		      __u32 polls, __u32 interval_us)
 {
 	struct n1x_sroot_reply local = {0};
 	__u32 i;
 	int err;
 
 	if (!io || !io->read32 || !io->write32 || !reply || !stride ||
-		(stride & 3) || stride > ~(__u32)0 / 6 ||
-		!polls || polls > 5001 ||
-		(polls > 1 && (!interval_us || !io->delay_us)))
+	    (stride & 3) || stride > ~(__u32)0 / 6 ||
+	    !polls || polls > 5001 ||
+	    (polls > 1 && (!interval_us || !io->delay_us)))
 		return -EINVAL;
 	err = wait_ready(io, stride * 5, polls, interval_us);
 	if (err)
@@ -107,7 +107,7 @@ int n1x_sroot_receive(const struct n1x_dla_io *io, __u32 stride,
 }
 
 static int drain_pending(const struct n1x_dla_io *io, __u32 status_offset,
-						__u32 ack_offset, __u32 polls, __u32 interval_us)
+			 __u32 ack_offset, __u32 polls, __u32 interval_us)
 {
 	__u32 i, value;
 	int err;
@@ -132,14 +132,14 @@ static int drain_pending(const struct n1x_dla_io *io, __u32 status_offset,
 }
 
 int n1x_sroot_prepare(const struct n1x_dla_io *io, __u32 stride,
-						__u32 polls, __u32 interval_us)
+		      __u32 polls, __u32 interval_us)
 {
 	__u32 value;
 	int err;
 
 	if (!io || !io->read32 || !io->write32 || !stride || (stride & 3) ||
-		stride > ~(__u32)0 / 12 || !polls || polls > 5001 ||
-		(polls > 1 && (!interval_us || !io->delay_us)))
+	    stride > ~(__u32)0 / 12 || !polls || polls > 5001 ||
+	    (polls > 1 && (!interval_us || !io->delay_us)))
 		return -EINVAL;
 	err = io->write32(io->context, stride * 12, ~(__u32)0);
 	if (err)
@@ -165,29 +165,29 @@ int n1x_sroot_prepare(const struct n1x_dla_io *io, __u32 stride,
 static int valid_image_tag(__u32 tag)
 {
 	return tag == 0xc0300 || tag == 0x90400 ||
-			(tag >= 0xc0302 && tag <= 0xc0305);
+	       (tag >= 0xc0302 && tag <= 0xc0305);
 }
 
 int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
-							const __u8 *image, size_t size,
-							__u64 dma_address, __u32 dma_minimum,
-							__u32 dma_maximum, __u32 words[3])
+			  const __u8 *image, size_t size,
+			  __u64 dma_address, __u32 dma_minimum,
+			  __u32 dma_maximum, __u32 words[3])
 {
 	__u32 tag;
 
 	if (!buffer || !image || !words || size < 32 || capacity < size ||
-		size > ~(__u32)0 || dma_minimum > dma_maximum ||
-		size > dma_maximum - dma_minimum ||
-		dma_address < dma_minimum || dma_address > dma_maximum ||
-		size - 1 > dma_maximum - dma_address)
+	    size > ~(__u32)0 || dma_minimum > dma_maximum ||
+	    size > dma_maximum - dma_minimum ||
+	    dma_address < dma_minimum || dma_address > dma_maximum ||
+	    size - 1 > dma_maximum - dma_address)
 		return -EINVAL;
 	tag = (__u32)image[0] | (__u32)image[1] << 8 |
-			(__u32)image[2] << 16 | (__u32)image[3] << 24;
+	      (__u32)image[2] << 16 | (__u32)image[3] << 24;
 	if (!valid_image_tag(tag))
 		return -EINVAL;
 	memmove(buffer, image + 4, size - 4);
-	/* Windows leaves these allocator-owned bytes untouched. Do not expose
-	 * unspecified allocation contents; the hardware meaning is still unknown.
+	/* Zero the trailing 4 bytes left after shifting the 4-byte image tag
+	 * out of the DMA staging buffer so no uninitialized bytes are exposed.
 	 */
 	memset(buffer + size - 4, 0, 4);
 	words[0] = tag;
@@ -197,17 +197,17 @@ int n1x_sroot_stage_image(__u8 *buffer, size_t capacity,
 }
 
 int n1x_sroot_exchange(const struct n1x_dla_io *io, __u32 stride,
-						__u8 command, const __u32 *words, __u8 count,
-						struct n1x_sroot_reply *reply,
-						__u32 polls, __u32 interval_us)
+		       __u8 command, const __u32 *words, __u8 count,
+		       struct n1x_sroot_reply *reply,
+		       __u32 polls, __u32 interval_us)
 {
 	int err;
 	/* Validate all phases before preparation can write or discard stale RX. */
 	if (!io || !io->read32 || !io->write32 || !reply || !stride ||
-		(stride & 3) || stride > ~(__u32)0 / 12 ||
-		count > N1X_SROOT_MAX_WORDS || (count && !words) ||
-		!polls || polls > 5001 ||
-		(polls > 1 && (!interval_us || !io->delay_us)))
+	    (stride & 3) || stride > ~(__u32)0 / 12 ||
+	    count > N1X_SROOT_MAX_WORDS || (count && !words) ||
+	    !polls || polls > 5001 ||
+	    (polls > 1 && (!interval_us || !io->delay_us)))
 		return -EINVAL;
 	err = n1x_sroot_prepare(io, stride, polls, interval_us);
 	if (err)

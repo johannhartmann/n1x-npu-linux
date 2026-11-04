@@ -13,9 +13,9 @@ static __u32 get32(const __u8 *p)
 }
 
 int n1x_dla_decode_vbios_policy(const __u8 *frequency, size_t frequency_size,
-								const __u8 *tuning, size_t tuning_size,
-								const __u8 *gating, size_t gating_size,
-								struct n1x_dla_vbios_policy *out)
+				const __u8 *tuning, size_t tuning_size,
+				const __u8 *gating, size_t gating_size,
+				struct n1x_dla_vbios_policy *out)
 {
 	struct n1x_dla_vbios_policy parsed = {0};
 	unsigned int i;
@@ -57,7 +57,7 @@ static int fits(size_t offset, size_t length, size_t size)
 }
 
 int n1x_dla_prepare_gating(const struct n1x_dla_vbios_policy *policy,
-							struct n1x_dla_gating_policy *out)
+			   struct n1x_dla_gating_policy *out)
 {
 	struct n1x_dla_gating_policy result = {
 		.request_mask = 7,
@@ -129,8 +129,8 @@ int n1x_dla_prepare_gating(const struct n1x_dla_vbios_policy *policy,
 }
 
 int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
-								struct n1x_dla_vbios_policy *out,
-								struct n1x_dla_vbios_location *location)
+			       struct n1x_dla_vbios_policy *out,
+			       struct n1x_dla_vbios_location *location)
 {
 	struct n1x_dla_vbios_policy parsed = {0};
 	struct n1x_dla_vbios_location found = {0};
@@ -200,8 +200,8 @@ int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
 			if (data[general] < 0x10 || data[allocation] < 0x10)
 				return -EOPNOTSUPP;
 			err = n1x_dla_decode_vbios_policy(data + frequency, size - frequency,
-												data + tuning, size - tuning,
-												data + gating, size - gating, &parsed);
+							  data + tuning, size - tuning,
+							  data + gating, size - gating, &parsed);
 			if (err)
 				return err;
 			for (unsigned int k = 0; k < 3; k++)
@@ -228,7 +228,7 @@ int n1x_dla_parse_vbios_policy(const __u8 *data, size_t size,
 }
 
 int n1x_dla_verify_vbios_pcir(const __u8 *data, size_t size,
-								const struct n1x_dla_vbios_location *location)
+			      const struct n1x_dla_vbios_location *location)
 {
 	size_t pcir_offset;
 	const __u8 *pcir;

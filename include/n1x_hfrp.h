@@ -99,7 +99,7 @@ int n1x_hfrp_discover_version(const struct n1x_dla_io *io,
 			      __u32 interval_us, struct n1x_hfrp_version *version,
 			      struct n1x_hfrp_exchange_result *result);
 
-/* Request clock, power domain, and rail ON (Windows request mask 0x07). */
+/* Request clock, power domain, and rail ON via HFRP command 400. */
 int n1x_hfrp_power_on(const struct n1x_dla_io *io,
 		      struct n1x_hfrp_channel *channel,
 		      const struct n1x_hfrp_version *version, __u8 pps,

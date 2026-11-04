@@ -16,7 +16,7 @@ def main():
     store = source[source.index('static ssize_t query_power_state_store('):
                    source.index('static DEVICE_ATTR_WO(query_power_state);')]
     show = source[source.index('static ssize_t hfrp_status_show('):
-                  source.index('static struct device_attribute dev_attr_hfrp_status')]
+                  source.index('static ssize_t status_show(')]
     harness = r'''
 #include <assert.h>
 #include <stdbool.h>

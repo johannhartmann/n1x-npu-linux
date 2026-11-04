@@ -7,7 +7,7 @@
 - **Kernel**: ARM64 Linux kernel (`>= 6.12`) with the [`NVDA8600` noncoherent DMA quirk](../patches/arm64-acpi-iort-nvda8600-noncoherent-dma.patch).
 - **Vendor Inputs**: Windows ARM64 driver `617.42` (`nvlddmkm.sys`), TensorRT `11.4` (`libnvdla_compiler.so`, `nvdla_compiler.dll`), and Linux cuDLA `13.4.92` (`libcudla.so.1`).
 
-`n1x_npu_bootstrap.ko` dynamically discovers the ACPI endpoints, `_CRS` MMIO apertures, IORT SMMUv3 mappings, and live VBIOS policy carveout (`0x1182bc80`), brings up firmware in C on probe, and exposes `/dev/accel/accel0`.
+`n1x_npu_bootstrap.ko` dynamically discovers the ACPI endpoints, `_CRS` MMIO apertures, IORT SMMUv3 mappings, and live VBIOS policy (`NVDA3000` locator `0x1182bc80` $\rightarrow$ carveout `0xe5b81800`), brings up firmware in C on probe, and exposes `/dev/accel/accel0`.
 
 ## Hardware Qualification Summary
 
@@ -24,5 +24,5 @@
 ## Current Boundaries
 
 - Non-DLA ONNX operators (`DepthToSpace`, `ReduceMean`, `Resize`, `Softmax`, dynamic `Reshape`/`Transpose`) run on the host CPU via [`N1xInferenceSession`](../runtime/n1x_ort.py)'s graph partitioner.
-- Completed jobs owned by an open `/dev/accel/accel0` file descriptor are freed automatically in `postclose()` (and `vm_close()` when mapped via `mmap()`). Uncertain DMA/firmware errors or a failed hardware stop (`accel->stop_failed`) remain fail-closed and retain DMA allocations until confirmed hardware shutdown or reboot.
+- Completed jobs owned by an open `/dev/accel/accel0` file descriptor are freed automatically in `postclose()` (and `n1x_accel_vm_close()` when mapped via `mmap()`). Uncertain DMA/firmware errors or a failed hardware stop (`accel->stop_failed`) remain fail-closed and retain DMA allocations until confirmed hardware shutdown or reboot.
 - Live hardware reset after a hung firmware channel, multi-queue asynchronous scheduling, CUDA Graphs, and `DMA-BUF` / `NvSci` import are not implemented.

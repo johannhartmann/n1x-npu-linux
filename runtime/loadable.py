@@ -255,8 +255,8 @@ class Model:
                     'local DRAM pool is not covered by an uninitialized task range')
         global_pool = self.memory_pools.get('property_global_dram_pool_size', 0)
         if global_pool:
-            # The original 0x1ec70 -> 0x20d00 path allocates from the memory
-            # descriptor, then copies raw constants at their listed offsets.
+            # The loadable materializer allocates from the memory descriptor,
+            # then copies raw constants at their listed offsets.
             # Qualify the observed single constant-pool layout; never allocate
             # a second backing merely because its high-water property is nonzero.
             require(len(constant_memories) == 1, 'ambiguous global constant pool')

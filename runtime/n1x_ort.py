@@ -279,7 +279,7 @@ class N1xOrtClient:
             in_buf,
             len(raw),
             s_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-            s_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_float)) and s_arr.size,
+            s_arr.size,
             zp_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_int8)),
             zp_arr.size,
             out.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
@@ -310,10 +310,12 @@ class N1xOrtModuleWrapper:
         nvda_bytes: bytes,
         accel_fd: int = -1,
         client: N1xOrtClient | None = None,
+        device_path: Path | str | None = None,
     ) -> None:
         self._client = client or get_ort_client()
         self._lib = self._client._lib
         self._handle = ctypes.c_void_p(0)
+        self._device_path = str(device_path) if device_path is not None else None
         buf = (ctypes.c_uint8 * len(nvda_bytes)).from_buffer_copy(nvda_bytes)
         err_buf = ctypes.create_string_buffer(256)
         rc = self._lib.n1x_ort_module_create(
@@ -408,17 +410,27 @@ class N1xOrtModuleWrapper:
         out_counts = (ctypes.c_size_t * n_out)(*(a.size for a in out_arrays))
         err_buf = ctypes.create_string_buffer(256)
 
-        rc = self._lib.n1x_ort_module_run_fp32(
-            self._handle,
-            in_ptrs,
-            in_counts,
-            n_in,
-            out_ptrs,
-            out_counts,
-            n_out,
-            err_buf,
-            ctypes.sizeof(err_buf),
-        )
+        prev_env = os.environ.get("N1X_DLA_DEVICE")
+        if self._device_path is not None:
+            os.environ["N1X_DLA_DEVICE"] = self._device_path
+        try:
+            rc = self._lib.n1x_ort_module_run_fp32(
+                self._handle,
+                in_ptrs,
+                in_counts,
+                n_in,
+                out_ptrs,
+                out_counts,
+                n_out,
+                err_buf,
+                ctypes.sizeof(err_buf),
+            )
+        finally:
+            if self._device_path is not None:
+                if prev_env is None:
+                    os.environ.pop("N1X_DLA_DEVICE", None)
+                else:
+                    os.environ["N1X_DLA_DEVICE"] = prev_env
         if rc != 0:
             msg = err_buf.value.decode("utf-8", errors="replace")
             raise N1xOrtError(f"n1x_ort_module_run_fp32 failed ({rc}): {msg}")
@@ -1115,7 +1127,7 @@ def calibrate_onnx_model(
     existing_outs = {o.name for o in inst_model.graph.output}
     for n in inst_model.graph.node:
         for out in n.output:
-            if out and not out.endswith("__calib_flat_" + str(out.split("_")[-1])) and out not in existing_outs:
+            if out and "__calib_flat_" not in out and out not in existing_outs:
                 inst_model.graph.output.append(
                     helper.make_tensor_value_info(out, TensorProto.FLOAT, shape_map.get(out))
                 )
@@ -1423,6 +1435,8 @@ class N1xInferenceSession:
         min_dla_ops = int(ep_opts.get("min_dla_ops", 1))
         fallback_ops = ep_opts.get("fallback_ops", ())
         enable_dla_pixel_shuffle = bool(ep_opts.get("enable_dla_pixel_shuffle", False))
+        device_path = ep_opts.get("device_path")
+        accel_fd = int(ep_opts.get("accel_fd", -1))
 
         self._model, self._stages, self._shape_map = partition_onnx_model(
             path_or_bytes,
@@ -1457,7 +1471,11 @@ class N1xInferenceSession:
         for st in self._stages:
             if st.kind == "DLA":
                 assert st.nvda_bytes is not None
-                mod = N1xOrtModuleWrapper(st.nvda_bytes)
+                mod = N1xOrtModuleWrapper(
+                    st.nvda_bytes,
+                    accel_fd=accel_fd,
+                    device_path=device_path,
+                )
                 if st.precision == "int8":
                     for i, in_name in enumerate(st.inputs):
                         max_abs = st.tensor_ranges.get(in_name, 127.0)

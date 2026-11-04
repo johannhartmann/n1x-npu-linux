@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULE = Path('/sys/module/n1x_npu_bootstrap')
 ENDPOINT = Path('/sys/bus/platform/devices/NVDA200A:00')
 SROOT = Path('/sys/bus/platform/devices/NVDA8600:00')
+DEBUGFS = Path('/sys/kernel/debug/n1x-npu-bootstrap')
 NODE = Path('/dev/accel/accel0')
 sys.path.insert(0, str(ROOT/'runtime'))
 from n1x_dla import Device
@@ -37,7 +38,7 @@ def stop_and_unload(record):
     record(action='stop requested', automatic_retry=False)
     os.sync()
     trigger(ENDPOINT/'shutdown', b'stop\n')
-    state = fields((ENDPOINT/'shutdown_status').read_text())
+    state = fields((DEBUGFS/'shutdown_status').read_text())
     if any(state.get(k) != v for k, v in dict(error='0', hardware_off='1', released='1',
                                               hfrp_held='0', upload_held='0').items()):
         raise RuntimeError('shutdown status incomplete; no unload/reload attempted: '+str(state))
@@ -125,7 +126,7 @@ def main():
             subprocess.run(['insmod', str(module)], check=True)
             if (MODULE/'srcversion').read_text().strip() != version:
                 raise RuntimeError('loaded source version differs from qualified build')
-            state = fields((ENDPOINT/'status').read_text())
+            state = fields((DEBUGFS/'status').read_text())
             if state.get('task_verified') != '1' or not NODE.exists():
                 raise RuntimeError('in-kernel autostart failed: ' + str(state))
 
@@ -157,7 +158,7 @@ def main():
                    module_present=MODULE.exists())
             for name in ('shutdown_status', 'hfrp_status', 'status'):
                 try:
-                    record(cached_status=name, value=(ENDPOINT/name).read_text())
+                    record(cached_status=name, value=(DEBUGFS/name).read_text())
                 except OSError as status_error:
                     record(cached_status=name, error=str(status_error))
             try:

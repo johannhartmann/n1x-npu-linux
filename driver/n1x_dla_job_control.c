@@ -4,10 +4,10 @@
 #include "n1x_dla_command.h"
 
 static int validate(struct n1x_dla_job_queue *queue, const struct n1x_dla_io *io,
-					const struct n1x_dla_preempt_ops *ops, struct n1x_dla_job *job)
+		    const struct n1x_dla_preempt_ops *ops, struct n1x_dla_job *job)
 {
 	if (!queue || !job || !io || !io->read32 || !io->write32 || !io->delay_us ||
-		!ops || !ops->snapshot)
+	    !ops || !ops->snapshot)
 		return -EINVAL;
 	if (queue->poisoned)
 		return -ENOTRECOVERABLE;
@@ -54,10 +54,10 @@ static int drain(const struct n1x_dla_io *io, struct n1x_dla_job *job)
 }
 
 int n1x_dla_job_preempt(struct n1x_dla_job_queue *queue,
-						const struct n1x_dla_io *io,
-						const struct n1x_dla_preempt_ops *ops,
-						struct n1x_dla_job *job, __u64 request_dma, __u32 sequence,
-						struct n1x_dla_preempt_result *result)
+			const struct n1x_dla_io *io,
+			const struct n1x_dla_preempt_ops *ops,
+			struct n1x_dla_job *job, __u64 request_dma, __u32 sequence,
+			struct n1x_dla_preempt_result *result)
 {
 	struct n1x_dla_preempt_snapshot snapshot;
 	int err;
@@ -71,8 +71,8 @@ int n1x_dla_job_preempt(struct n1x_dla_job_queue *queue,
 	if (job->suspended)
 		return -EBUSY;
 	if (!request_dma || (request_dma & 255) ||
-		request_dma > ((__u64)1 << 36) - N1X_DLA_PREEMPT_REQUEST_BYTES ||
-		!sequence || sequence <= job->preempt_sequence)
+	    request_dma > ((__u64)1 << 36) - N1X_DLA_PREEMPT_REQUEST_BYTES ||
+	    !sequence || sequence <= job->preempt_sequence)
 		return -EINVAL;
 	if (job->restore_pending) {
 		err = ops->snapshot(ops->context, &snapshot);
@@ -123,8 +123,8 @@ int n1x_dla_job_preempt(struct n1x_dla_job_queue *queue,
 }
 
 int n1x_dla_job_resume(struct n1x_dla_job_queue *queue,
-						const struct n1x_dla_io *io,
-						const struct n1x_dla_preempt_ops *ops, struct n1x_dla_job *job)
+		       const struct n1x_dla_io *io,
+		       const struct n1x_dla_preempt_ops *ops, struct n1x_dla_job *job)
 {
 	struct n1x_dla_preempt_snapshot snapshot;
 	int err = validate(queue, io, ops, job);
@@ -141,8 +141,8 @@ int n1x_dla_job_resume(struct n1x_dla_job_queue *queue,
 	if (!err)
 		err = ops->snapshot(ops->context, &snapshot);
 	if (!err && (snapshot.checkpoint != 1 ||
-				snapshot.task_fence == job->fence_value ||
-				snapshot.preempt_fence != job->preempt_sequence))
+		     snapshot.task_fence == job->fence_value ||
+		     snapshot.preempt_fence != job->preempt_sequence))
 		err = -ESTALE;
 	if (err)
 		return fail(queue, job, err);

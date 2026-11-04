@@ -9,7 +9,7 @@ static __u32 get32(const __u8 *p)
 }
 
 int n1x_dla_parse_statistics(const __u8 *data, size_t size,
-							struct n1x_dla_statistics *out)
+			     struct n1x_dla_statistics *out)
 {
 	struct n1x_dla_statistics parsed;
 	__u64 metadata_end, data_end;
@@ -17,9 +17,8 @@ int n1x_dla_parse_statistics(const __u8 *data, size_t size,
 
 	if (!data || !out || size < 28 || size > (__u32)~0U)
 		return -EINVAL;
-	/* Original Windows compiler 11.4 builder RVA 0xc76488 writes these
-	 * exact eight bytes. This deliberately does not accept the older
-	 * runtime's statistics revision 1 by changing its version byte.
+	/* Require the v2 (0x00000300, revision 2) statistics header magic;
+	 * revision 1 descriptors are intentionally rejected.
 	 */
 	if (get32(data) != 0x300 || get32(data + 4) != 2)
 		return -EINVAL;
@@ -29,13 +28,13 @@ int n1x_dla_parse_statistics(const __u8 *data, size_t size,
 	parsed.data_stride = get32(data + 20);
 	parsed.data_offset = get32(data + 24);
 	if (parsed.metadata_stride != 0x1800 || parsed.metadata_offset != 28 ||
-		parsed.data_stride != 0x400 || (parsed.data_offset & 63))
+	    parsed.data_stride != 0x400 || (parsed.data_offset & 63))
 		return -EINVAL;
 
 	metadata_end = (__u64)parsed.metadata_offset +
-					(__u64)parsed.count * parsed.metadata_stride;
+		       (__u64)parsed.count * parsed.metadata_stride;
 	data_end = (__u64)parsed.data_offset +
-				(__u64)parsed.count * parsed.data_stride;
+		   (__u64)parsed.count * parsed.data_stride;
 	if (metadata_end > parsed.data_offset || data_end > size)
 		return -EINVAL;
 	/* The producer reserves metadata using a separate active-graph count;
@@ -45,9 +44,9 @@ int n1x_dla_parse_statistics(const __u8 *data, size_t size,
 	 */
 	for (i = 0; i < parsed.count; i++) {
 		size_t record = parsed.metadata_offset +
-						(size_t)i * parsed.metadata_stride;
+				(size_t)i * parsed.metadata_stride;
 		__u64 expected = (__u64)parsed.data_offset +
-						(__u64)i * parsed.data_stride;
+				 (__u64)i * parsed.data_stride;
 		if (get32(data + record + 0x1108) != expected)
 			return -EINVAL;
 	}

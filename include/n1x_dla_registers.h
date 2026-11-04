@@ -6,7 +6,7 @@
 #include <stddef.h>
 #endif
 
-/* Register offset translation modes (Windows KMD context +0x478). */
+/* Register offset translation modes for direct vs. aperture-windowed MMIO. */
 enum n1x_dla_register_map {
 	N1X_DLA_MAP_DIRECT = 0,
 	N1X_DLA_MAP_WINDOWS_1 = 1,
