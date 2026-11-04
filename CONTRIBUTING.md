@@ -15,7 +15,7 @@ make check
 | Driver protocol, shutdown, `/dev/accel` lifetime | `make test-portable` |
 | Kernel module compilation & style | `make module` + `/lib/modules/$(uname -r)/build/scripts/checkpatch.pl` |
 | Native `t254` compiler & ONNX EP | `make test-compiler` |
-| cuDLA backend & broker | `make test-cudla` |
+| cuDLA backend | `make test-cudla` |
 
 ## Guidelines
 

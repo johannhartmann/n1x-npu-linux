@@ -2,10 +2,15 @@
 # SPDX-License-Identifier: MIT
 """Acquire hash-pinned DnCNN/ResNet-18 checkpoints and prepare ONNX references and partitions."""
 import argparse
+from collections import OrderedDict
 import hashlib
+import io
 import json
 from pathlib import Path
+import pickle
+import struct
 import sys
+import zipfile
 import numpy as np
 import onnx
 from onnx import helper as h, numpy_helper as nh, TensorProto as T
@@ -27,6 +32,66 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def load_checkpoint(path):
+    """Load float32/int64 tensors from a pinned PyTorch .pth archive without importing torch."""
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path, 'r') as zf:
+            prefix = zf.namelist()[0].split('/')[0]
+            def rebuild_v2(storage, offset, size, stride, requires_grad, hooks, metadata=None):
+                itemsize = storage.dtype.itemsize
+                return np.lib.stride_tricks.as_strided(
+                    storage[offset:], shape=size, strides=[s * itemsize for s in stride]
+                ).copy()
+            class ZipUnpickler(pickle.Unpickler):
+                def find_class(self, module, name):
+                    if (module, name) == ('torch._utils', '_rebuild_tensor_v2'):
+                        return rebuild_v2
+                    if (module, name) == ('torch._utils', '_rebuild_parameter'):
+                        return lambda data, requires_grad, hooks: data
+                    if (module, name) in (('torch', 'FloatStorage'), ('torch', 'LongStorage')):
+                        return '<f4' if name == 'FloatStorage' else '<i8'
+                    if (module, name) == ('collections', 'OrderedDict'):
+                        return OrderedDict
+                    raise pickle.UnpicklingError(f'disallowed {module}.{name}')
+                def persistent_load(self, pid):
+                    assert pid[0] == 'storage'
+                    dtype, key, _, count = pid[1], pid[2], pid[3], pid[4]
+                    return np.frombuffer(zf.read(f'{prefix}/data/{key}'), dtype=dtype, count=count).copy()
+            return ZipUnpickler(io.BytesIO(zf.read(f'{prefix}/data.pkl'))).load()
+    with path.open('rb') as f:
+        for _ in range(3):
+            pickle.load(f)
+        storages = {}
+        def rebuild_v2(key, offset, size, stride, requires_grad, hooks):
+            return (key, offset, size, stride)
+        class LegacyUnpickler(pickle.Unpickler):
+            def find_class(self, module, name):
+                if (module, name) == ('torch._utils', '_rebuild_tensor_v2'):
+                    return rebuild_v2
+                if (module, name) in (('torch', 'FloatStorage'), ('torch', 'LongStorage')):
+                    return '<f4' if name == 'FloatStorage' else '<i8'
+                if (module, name) == ('collections', 'OrderedDict'):
+                    return OrderedDict
+                raise pickle.UnpicklingError(f'disallowed {module}.{name}')
+            def persistent_load(self, pid):
+                assert pid[0] == 'storage'
+                storages[pid[2]] = (pid[1], pid[4])
+                return pid[2]
+        meta = LegacyUnpickler(f).load()
+        raw = {}
+        for k in pickle.load(f):
+            dtype, count = storages[k]
+            nelems = struct.unpack('<q', f.read(8))[0]
+            assert nelems == count
+            raw[k] = np.frombuffer(f.read(count * np.dtype(dtype).itemsize), dtype=dtype).copy()
+        return {
+            name: np.lib.stride_tricks.as_strided(
+                raw[key][offset:], shape=size, strides=[s * raw[key].dtype.itemsize for s in stride]
+            ).copy()
+            for name, (key, offset, size, stride) in meta.items()
+        }
+
+
 def prepare(fetch=False):
     from prepare_inputs import download, verified
     folder = ROOT/'sources/vision'
@@ -35,11 +100,7 @@ def prepare(fetch=False):
         if fetch: download('sources/vision/'+name, url, sha)
         if not verified(folder/name, sha):
             raise ValueError('missing '+name+'; rerun with --fetch')
-    import torch
-    def checkpoint(name):
-        return {k: v.detach().cpu().numpy().copy() for k,v in torch.load(
-            folder/name, map_location='cpu', weights_only=True).items()}
-    dn = checkpoint('dncnn_25.pth'); rn = checkpoint('resnet18-f37072fd.pth')
+    dn = load_checkpoint(folder/'dncnn_25.pth'); rn = load_checkpoint(folder/'resnet18-f37072fd.pth')
     weights = {}; graphs = {}; nodes = []; initializers = []
     def init(name, value):
         initializers.append(nh.from_array(np.asarray(value, dtype=np.float32), name)); return name

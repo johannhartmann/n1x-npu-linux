@@ -14,7 +14,7 @@ from PIL import Image
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'runtime'))
-from cudla_broker import Device,FRONTEND_SHA256,BROKER
+from cudla_python import Device,FRONTEND_SHA256
 from superres_image import CpuReference,MODEL_SHA256,assemble_rgb,fixed_tiles,open_luminance,tiled_planes
 from loadable import Model
 from n1x_compiler import ensure_reference_loadable
@@ -27,7 +27,6 @@ def main():
     parser.add_argument('image',type=Path,help='PNG/JPEG image, at least 64 pixels on both axes')
     parser.add_argument('--output-dir',type=Path,required=True,help='new directory for DLA output and HTML report')
     args=parser.parse_args()
-    if os.geteuid()==0:parser.error('run as an unprivileged desktop user; the installed broker isolates RAWIO')
     profile=Path('/sys/firmware/acpi/platform_profile').read_text().strip()
     path=ensure_reference_loadable('superres',ROOT)
     model=Model.from_file(path)
@@ -54,7 +53,6 @@ def main():
     started=time.monotonic();completed=0
     try:
         with Device({'superres':path}) as device:
-            metadata['broker_sha256']=hashlib.sha256(BROKER.read_bytes()).hexdigest()
             before=device.info()
             if not before['capabilities']&4:parser.error('loaded module lacks completed-task I/O reuse')
             if required>before['retain_limit']-before['retained_bytes']:parser.error('insufficient retained-memory budget; no work submitted')

@@ -14,7 +14,6 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
-import cudla_broker
 import cudla_python
 from loadable import Model
 from n1x_compiler import (
@@ -188,8 +187,7 @@ def test_residual_dag_and_multi_io() -> dict:
     multi_model = Model(multi_nvda)
     assert len(multi_model.inputs) == 2 and len(multi_model.outputs) == 2
     assert _check_cpp_materializer(multi_nvda) == len(multi_model.image)
-    mod = cudla_broker.Module(None, 0, multi_model)
-    desc_info = mod.describe()
+    desc_info = cudla_python.describe_model(multi_model)
     assert len(desc_info["inputs"]) == 2 and len(desc_info["outputs"]) == 2
     return {"residual_bytes": len(res_nvda), "multi_io_bytes": len(multi_nvda)}
 
@@ -265,7 +263,7 @@ def test_int8_compilation_and_packing() -> dict:
     unpacked_desc = unpack_tensor_from_desc(packed_desc, desc_int8)
     assert np.array_equal(arr_int8, unpacked_desc)
 
-    cudla_desc = cudla_broker._descriptor(desc_int8)
+    cudla_desc = cudla_python._descriptor(desc_int8)
     assert np.array_equal(
         arr_int8,
         cudla_python.unpack_tensor(cudla_python.pack_tensor(arr_int8, cudla_desc), cudla_desc),

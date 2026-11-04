@@ -91,12 +91,14 @@ static int info_ioctl(struct drm_device *drm, void *data, struct drm_file *file)
 {
 	struct n1x_dla_accel *accel = to_accel(drm);
 	struct n1x_dla_accel_info *info = data;
-	u32 caps = N1X_DLA_CAP_RAWIO_REQUIRED | N1X_DLA_CAP_RETAIN_UNTIL_REBOOT |
+	u32 caps = N1X_DLA_CAP_RETAIN_UNTIL_REBOOT |
 				N1X_DLA_CAP_REEXEC_IO | N1X_DLA_CAP_CONTROLLED_STOP |
 				N1X_DLA_CAP_STATISTICS;
 
 	if (!n1x_accel_permitted())
 		return -EPERM;
+	if (require_rawio)
+		caps |= N1X_DLA_CAP_RAWIO_REQUIRED;
 	mutex_lock(&accel->lock);
 	if (accel->control)
 		caps |= N1X_DLA_CAP_PREEMPT;

@@ -10,9 +10,6 @@ import platform
 import subprocess
 import sys
 
-from npu_trigger import trigger
-from qualify_npu_start import fields
-
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = Path('/sys/module/n1x_npu_bootstrap')
 ENDPOINT = Path('/sys/bus/platform/devices/NVDA200A:00')
@@ -20,6 +17,20 @@ SROOT = Path('/sys/bus/platform/devices/NVDA8600:00')
 NODE = Path('/dev/accel/accel0')
 sys.path.insert(0, str(ROOT/'runtime'))
 from n1x_dla import Device
+
+
+def trigger(path, payload):
+    fd = os.open(path, os.O_WRONLY | os.O_CLOEXEC)
+    try:
+        written = os.write(fd, payload)
+    finally:
+        os.close(fd)
+    if written != len(payload):
+        raise RuntimeError(f'short write to {path}: {written} != {len(payload)}')
+
+
+def fields(text):
+    return dict(item.split('=', 1) for item in text.split() if '=' in item)
 
 
 def stop_and_unload(record):
@@ -107,11 +118,16 @@ def main():
 
         def start(label):
             record(action='startup requested', label=label)
-            subprocess.run([sys.executable, str(ROOT/'scripts/qualify_npu_start.py'),
-                            '--through', 'bypass_task', '--enable-accel',
-                            '--log', str(out/(label+'-startup.jsonl'))], check=True)
+            for dev in (ENDPOINT, SROOT):
+                group_type = dev/'iommu_group/type'
+                if not (dev/'driver').exists() and group_type.read_text().strip() == 'identity':
+                    trigger(group_type, b'DMA\n')
+            subprocess.run(['insmod', str(module)], check=True)
             if (MODULE/'srcversion').read_text().strip() != version:
                 raise RuntimeError('loaded source version differs from qualified build')
+            state = fields((ENDPOINT/'status').read_text())
+            if state.get('task_verified') != '1' or not NODE.exists():
+                raise RuntimeError('in-kernel autostart failed: ' + str(state))
 
         def inference(label):
             with Device('/dev/accel/accel0') as dev:

@@ -11,10 +11,10 @@ The NVIDIA N1X (`t254`) NPU exposes two ACPI platform devices that are bound as 
 
 When `strict_platform=0` (default), the driver discovers both `_CRS` MMIO apertures, IORT SMMUv3 mappings, and the live VBIOS policy carveout dynamically without hardcoded DMI board/BIOS checks.
 
-## 2. VBIOS Policy, HFRP Bring-Up & Frequency Scaling
+## 2. VBIOS Policy & HFRP Bring-Up
 
 ### Live VBIOS Carveout (`0x1182bc80`)
-[`n1x_boot_live_board_policy()`](../driver/n1x_npu_boot_linux.c) reads the display VBIOS locator register at `0x1182bc80` (`N1X_DISP_VBIOS_LOCATOR_PHYS`), computes the physical carveout base (`((u64)(locator >> 12) << 16) + 0x40000`), and parses the BIT `0x6c` table ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)) to extract the board's clock/power/gating policy (`892.8 MHz` nominal, up to `1500 MHz` boost, gating mask `0x70`).
+[`n1x_boot_live_board_policy()`](../driver/n1x_npu_boot_linux.c) reads the display VBIOS locator register at `0x1182bc80` (`N1X_DISP_VBIOS_LOCATOR_PHYS`), computes the physical carveout base (`((u64)(locator >> 12) << 16) + 0x40000`), and parses the BIT `0x6c` table ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)) to extract the board's clock/power/gating policy (`892.8 MHz` nominal, gating mask `0x70`).
 
 ### 8-Stage In-Kernel Bring-Up (`autostart=1`)
 When both endpoints bind, `n1x_boot_master_bind()` runs the 8-stage initialization sequence in C:
@@ -28,9 +28,6 @@ When both endpoints bind, `n1x_boot_master_bind()` runs the 8-stage initializati
 7. **`bypass_task`**: Submits the initial bypass task to transition the firmware scheduler to ready state.
 8. **`preempt` (`enable_preempt=true`)**: Sends method `0x31c` (`data = 1` $\rightarrow$ `0x1c02`) while idle to enable firmware checkpoint preemption (`0x183728`).
 
-### Dynamic Frequency Scaling (`npu_freq_khz`)
-`/sys/bus/platform/devices/NVDA200A:00/npu_freq_khz` reads or updates the active HFRP clock frequency between `892800` kHz (`892.8 MHz`) and `1500000` kHz (`1500 MHz`).
-
 ### Interrupt Handling (`enable_irq=true`)
 [`n1x_boot_irq_handler()`](../driver/n1x_npu_boot_linux.c) implements the `nvlddmkm.sys` (`0xd49800`) top-half contract: on GSI `234`, it checks pending bits (`0x08`) against `owned` (`0xd2c`) and `saved` (`0xd28`), masks active bits via `0xd24` (`saved & owned`), increments `boot_irq_count`, and wakes `boot_waitq`.
 
@@ -40,7 +37,7 @@ Defined in [`include/uapi/n1x_dla_accel.h`](../include/uapi/n1x_dla_accel.h) and
 
 | Ioctl / Operation | Description |
 | --- | --- |
-| `DRM_IOCTL_N1X_DLA_INFO` | Returns ABI version (`2`), capability bitmask (`REEXEC_IO`, `CONTROLLED_STOP`, `STATISTICS`, `PREEMPT`, `MMAP`), and active job/byte counters |
+| `DRM_IOCTL_N1X_DLA_INFO` | Returns ABI version (`2`), capability bitmask (`REEXEC_IO`, `CONTROLLED_STOP`, `STATISTICS`, `PREEMPT`), and active job/byte counters |
 | `DRM_IOCTL_N1X_DLA_EXEC` | Validates address-list relocations, allocates coherent DMA memory, copies the task image, and executes (or registers as `RESUMABLE`) |
 | `DRM_IOCTL_N1X_DLA_REEXEC` | Patches only caller-declared `writable_ranges` (input/output tensors) in-place and re-executes with zero new DMA allocations |
 | `DRM_IOCTL_N1X_DLA_READ` | Copies output tensor or statistics slices from a caller-owned completed job |
@@ -69,9 +66,9 @@ Implemented in [`runtime/n1x_ort.cpp`](../runtime/n1x_ort.cpp) and [`runtime/n1x
 2. **Partitioning & Caching**: Partitions arbitrary ONNX graphs into cycle-free topological `DLAStage` and `HostStage` segments, compiles each `DLAStage` into an `.nvda` loadable cached by SHA-256 under `~/.cache/n1x_ort/`, and auto-calibrates `INT8` tensor/channel scales when requested.
 3. **Execution**: Packs `NCHW` `float32` tensors into `CHW16` (`FP16`) or `CHW32` (`INT8`) surfaces in C++17 (`n1x_ort_pack_fp32` / `n1x_ort_unpack_fp32`) and executes via `EXEC` on initial run and `REEXEC_IO` on subsequent runs.
 
-## 6. Linux cuDLA Backend (`libnvcudla.so`) & IPC Broker
+## 6. Linux cuDLA Backend (`libnvcudla.so`)
 
-Implemented in [`runtime/cudla_backend.cpp`](../runtime/cudla_backend.cpp), [`runtime/cudla_model.cpp`](../runtime/cudla_model.cpp), and [`runtime/cudla_broker.cpp`](../runtime/cudla_broker.cpp):
+Implemented in [`runtime/cudla_backend.cpp`](../runtime/cudla_backend.cpp) and [`runtime/cudla_model.cpp`](../runtime/cudla_model.cpp):
 
 - Implements the backend driver interface expected by NVIDIA's unmodified Linux `libcudla.so.1` (`13.4.92`), staging registered CUDA device buffers into page-aligned `.nvda` task images and submitting them to `/dev/accel/accel0`.
 - Supports `CUDLA_TASK_STATISTICS` (`DRM_IOCTL_N1X_DLA_STATS`), `CUDLA_DEVICE_VERSION`, `cudlaSetTaskTimeoutInMs`, and `REEXEC_IO` buffer reuse.

@@ -32,10 +32,10 @@ sys.path.insert(0, str(ROOT / "demo"))
 from n1x_dla import Device as Transport
 from n1x_ort import InferenceSession, canonicalize_onnx_model
 from ort_demo import FERPLUS_LABELS, build_ferplus_gallery
-from select_npu_dma_domains import apply as apply_dma, plan as plan_dma
 from test_n1x_ort import _build_three_stage_onnx
 
 ENDPOINT = Path("/sys/bus/platform/devices/NVDA200A:00")
+SROOT = Path("/sys/bus/platform/devices/NVDA8600:00")
 MODULE_SYS = Path("/sys/module/n1x_npu_bootstrap")
 ACCEL_NODE = "/dev/accel/accel0"
 
@@ -54,8 +54,10 @@ def ensure_npu_started() -> bool:
         if st.get("task_verified") == "1" and Path(ACCEL_NODE).exists():
             return False
         subprocess.run(["/usr/bin/rmmod", "n1x_npu_bootstrap"], check=True)
-    rows = plan_dma()
-    apply_dma(rows)
+    for dev in (ENDPOINT, SROOT):
+        group_type = dev / "iommu_group/type"
+        if not (dev / "driver").exists() and group_type.read_text().strip() == "identity":
+            group_type.write_text("DMA\n")
     ko = ROOT / "driver/n1x_npu_bootstrap.ko"
     subprocess.run(["/usr/bin/insmod", str(ko)], check=True)
     st = _fields((ENDPOINT / "status").read_text())
