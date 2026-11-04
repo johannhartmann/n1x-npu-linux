@@ -17,7 +17,7 @@ If any shutdown step fails, `accel->stop_failed` latches fail-closed retention s
 Run the offline shutdown and transport regression suite:
 
 ```sh
-make test-p16-stop
+make test-portable
 ```
 
 Run the physical two-cycle stop/unload/reload qualification on the P16:

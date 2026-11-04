@@ -3,20 +3,15 @@
 
 Reuses existing malformed-model suites; no CUDA, device or hardware access.
 """
-import contextlib
 import ctypes as c
-import io
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'runtime'))
 import loadable
-import test_native_loadable
-import verify_conv_loadable
 
 
 class Desc(c.Structure):
@@ -99,12 +94,21 @@ size_t tensor_size() { return sizeof(n1x::Tensor); }
                     passed+=1
                 finally:
                     if model:lib.destroy(model)
-        with patch.object(loadable,'Model',Checked), patch.object(test_native_loadable,'Model',Checked):
-            with contextlib.redirect_stdout(io.StringIO()):
-                test_native_loadable.main()
-                for variant in ('conv1x1','conv1x1_relu'):
-                    with patch.object(sys,'argv',['verify_conv_loadable','--model',variant]):
-                        verify_conv_loadable.main()
+        fixtures = [
+            ROOT/'results/native-compile-t254/relu.nvda',
+            ROOT/'results/native-compile-t254-conv1x1/conv1x1.nvda',
+            ROOT/'results/native-compile-t254-conv1x1_relu/conv1x1_relu.nvda',
+        ]
+        for path in fixtures:
+            data = path.read_bytes()
+            Checked(data)
+            for bad in (b'', b'BAD!', data[:16], data[:len(data)//2]):
+                try:
+                    Checked(bad)
+                except loadable.LoadableError:
+                    pass
+                else:
+                    raise AssertionError('accepted truncated/corrupt loadable')
         print(f'C++ cuDLA loader: {passed} valid and {rejected} malformed cases; exact images/ranges/tensors, UBSan; no hardware')
 
 

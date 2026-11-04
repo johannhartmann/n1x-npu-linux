@@ -13,7 +13,7 @@ Executes the ONNX Model Zoo 3× sub-pixel CNN across overlapping 64×64 windows 
 
 ### Setup and Run
 
-After completing [setup](../docs/setup.md) and compiling the fixture models (`venv/bin/python scripts/build_models.py --superres`):
+After completing [setup](../docs/setup.md):
 
 ```sh
 uv venv --python 3.12 sources/superres-venv

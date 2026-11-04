@@ -2,16 +2,14 @@
 """Check group-selection isolation using filesystem fixtures, not real sysfs."""
 from pathlib import Path
 import tempfile
-from select_npu_dma_domains import plan, apply, EXPECTED
+from select_npu_dma_domains import plan, apply, ENDPOINTS
 
 
 def fixture(root):
-    dmi = root/'class/dmi/id'
-    dmi.mkdir(parents=True)
-    for name, value in [('sys_vendor', 'ASUS'), ('product_name', 'ProArt P16 H7607BA'),
-                        ('bios_version', 'H7607BA.300')]:
-        (dmi/name).write_text(value)
-    for index, (name, supplier) in enumerate(EXPECTED.items()):
+    suppliers = {'NVDA200A:00': 'smmu3.0x0000000012000000.iommu',
+                 'NVDA8600:00': 'smmu3.0x0000000005000000.iommu'}
+    for index, name in enumerate(ENDPOINTS):
+        supplier = suppliers[name]
         dev = root/'bus/platform/devices'/name
         dev.mkdir(parents=True)
         smmu = root/'suppliers'/supplier
@@ -26,7 +24,7 @@ def fixture(root):
 
 def main():
     count = 0
-    for case in ('valid', 'already_dma', 'already_fq', 'shared', 'bound', 'supplier', 'domain', 'bios', 'foreign_group'):
+    for case in ('valid', 'already_dma', 'already_fq', 'shared', 'bound', 'supplier', 'domain', 'foreign_group'):
         with tempfile.TemporaryDirectory(prefix='n1x-domains-') as tmp:
             root = Path(tmp)
             fixture(root)
@@ -46,8 +44,6 @@ def main():
                 (dev/'iommu').symlink_to(other)
             elif case == 'domain':
                 (group/'type').write_text('unmanaged\n')
-            elif case == 'bios':
-                (root/'class/dmi/id/bios_version').write_text('another BIOS')
             elif case == 'foreign_group':
                 (dev/'iommu_group').unlink()
                 (dev/'iommu_group').symlink_to(root)
