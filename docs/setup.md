@@ -11,8 +11,7 @@
 git clone https://github.com/johannhartmann/n1x-npu-linux.git
 cd n1x-npu-linux
 uv venv --python 3.12 venv
-uv pip install --python venv/bin/python --require-hashes --only-binary :all: \
-  -r requirements.lock -r requirements-probe.lock
+uv pip install --python venv/bin/python --require-hashes --only-binary :all: -r requirements.lock
 mkdir -p sources results
 make check
 ```

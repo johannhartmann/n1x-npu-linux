@@ -6,10 +6,9 @@ CUDLA_PACKAGE ?= $(CURDIR)/sources/cudla-13.4.92/libcudla-linux-sbsa-13.4.92-arc
 CUDA_ROOT ?= /opt/cuda
 
 .DEFAULT_GOAL := help
-.PHONY: help check check-repo test test-portable kernel-check module clean runtime compiler ort test-compiler cudla test-cudla
+.PHONY: help check check-repo test test-portable module clean runtime compiler ort test-compiler cudla test-cudla
 
 help:
-	@echo 'make test            C-only portable firmware/parser checks'
 	@echo 'make check           Repository consistency and portable driver/runtime unit tests'
 	@echo 'make check-repo      Documentation links, Python syntax, JSON and demo provenance'
 	@echo 'make test-portable   Portable driver/protocol/lifetime unit tests'
@@ -20,18 +19,13 @@ help:
 	@echo 'make clean           Remove generated userspace build outputs'
 
 check: check-repo test-portable
+test: test-portable
 
 check-repo:
 	$(PYTHON) scripts/check_repo.py
 	$(PYTHON) scripts/test_check_repo.py
 
-tests/test_firmware: tests/test_firmware.c driver/n1x_dla_firmware.c include/n1x_dla_firmware.h
-	$(CC) $(CFLAGS) -Iinclude tests/test_firmware.c driver/n1x_dla_firmware.c -o $@
-
-test: tests/test_firmware
-	./tests/test_firmware
-
-test-portable: test
+test-portable:
 	$(PYTHON) scripts/test_prepare_inputs.py
 	$(PYTHON) scripts/test_hfrp_channel.py
 	$(PYTHON) scripts/test_linux_bootstrap_guards.py
@@ -49,17 +43,13 @@ test-portable: test
 	$(PYTHON) scripts/test_p16_reload.py
 	$(PYTHON) scripts/test_npu_trigger.py
 	$(PYTHON) scripts/test_qualify_p16_start.py
-	$(PYTHON) scripts/test_npu_autostart.py
 	$(PYTHON) scripts/test_npu_dma_domains.py
-
-kernel-check:
-	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" n1x_dla_vbios.o n1x_dla_ring.o n1x_hfrp.o n1x_hfrp_setup.o n1x_dla_control.o n1x_dla_boot.o n1x_dla_firmware.o n1x_dla_registers.o n1x_dla_transfer.o n1x_dla_core.o n1x_dla_command.o n1x_dla_task.o n1x_dla_job.o n1x_dla_preempt.o n1x_dla_job_control.o n1x_dla_response.o n1x_dla_statistics.o n1x_dla_model.o n1x_sroot.o
 
 module:
 	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" modules
 
 clean:
-	rm -f tests/test_firmware runtime/libn1x_dla.so runtime/libn1x_compiler.so runtime/n1x-compile runtime/libn1x_ort.so runtime/n1x-ort-run runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke runtime/cudla/n1x-dla-broker
+	rm -f runtime/libn1x_dla.so runtime/libn1x_compiler.so runtime/n1x-compile runtime/libn1x_ort.so runtime/n1x-ort-run runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke runtime/cudla/n1x-dla-broker
 
 runtime: runtime/libn1x_dla.so runtime/libn1x_compiler.so runtime/n1x-compile runtime/libn1x_ort.so runtime/n1x-ort-run
 compiler: runtime/libn1x_compiler.so runtime/n1x-compile

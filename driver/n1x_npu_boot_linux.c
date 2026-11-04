@@ -1585,12 +1585,9 @@ static int n1x_boot_stop_hardware(struct device *dev)
 			goto done;
 	}
 	/* Follow the recovered Windows mask operation and flush the write before
-	 * power-off. This polling backend never registers Linux IRQ handlers.
-	 * Do NOT require every raw route/mask intersection bit to read back zero:
-	 * the physical P16 retains bit 24 in both registers after this operation.
-	 * Its meaning is unknown; the original KMD makes no zero-mask assertion.
-	 * A readback is diagnostic, not the DMA-quiescence proof. Only the exact
-	 * HFRP immediate-off reply AND independent state query permit freeing.
+	 * power-off. Do NOT require every raw route/mask intersection bit to read
+	 * back zero: the physical P16 retains bit 24 in both registers after this
+	 * operation.
 	 */
 	boot_shutdown.stage = "irq-mask";
 	err = n1x_boot_read(boot_dla, 0xd2c, &boot_shutdown.irq_owned);

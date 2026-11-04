@@ -6,7 +6,6 @@ Portable checks require only a Linux host with a C/C++ compiler, `make`, Python 
 
 ```sh
 python3.12 -m venv venv
-venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 make check
 ```
 

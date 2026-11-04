@@ -6,8 +6,8 @@ An existing file-level SPDX declaration always takes precedence over this map.
 
 | Component | License |
 | --- | --- |
-| `driver/`, `include/` except `include/uapi/`, `patches/`, `tests/`, `initcpio/` | GPL-2.0-only |
-| `include/uapi/`, `runtime/`, `demo/`, `demo-superres`, `demo-denoise`, `demo-classify` | MIT |
+| `driver/`, `include/` except `include/uapi/`, `patches/` | GPL-2.0-only |
+| `include/uapi/`, `runtime/`, `demo/`, `demo-onnx`, `demo-superres`, `demo-denoise`, `demo-classify` | MIT |
 | `scripts/` | MIT, except files already marked GPL-2.0-only |
 | `docs/`, root Markdown guides, requirements files and `.github/` workflows | MIT |
 | Other original project files | GPL-2.0-only unless a file-level notice specifies otherwise |

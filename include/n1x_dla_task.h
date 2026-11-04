@@ -1,134 +1,89 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef N1X_DLA_TASK_H
 #define N1X_DLA_TASK_H
-#include "n1x_dla_firmware.h"
+#include <linux/types.h>
+#ifndef __KERNEL__
+#include <stddef.h>
+#endif
+
 #define N1X_DLA_TASK_V2_BYTES 60
 #define N1X_DLA_FENCED_TASK_V2_BYTES 256
 #define N1X_DLA_CONTEXT_HEADER_BYTES 64
 #define N1X_DLA_CHECKPOINT_BYTES 32
+
 struct n1x_dla_task_args {
 	__u64 next;
 	__u64 address_list;
 	__u64 timeout;
 	__u16 num_addresses;
 };
-/* Build a queue-0 v2 descriptor with no actions, flags or extensions. Pure
- * serialization; the common header is accepted by both HAL-1 RV32 and T35x
- * RV64 checks. This does not establish DMA ownership, address reachability or
- * full firmware compatibility. Caller must provide a 256-byte-aligned address-list IOVA, mapped valid buffers and
- * keep them alive until completion/quiescence. Output is unchanged on failure.
- */
+
+/* Serialize a queue-0 v2 task descriptor header. */
 int n1x_dla_build_task_v2(__u8 *out, size_t out_size,
-						const struct n1x_dla_task_args *args);
-/* Adds a terminal WRITE_SEM postaction: logical descriptor size 96 bytes,
- * backing allocation 256 bytes for HAL-1 cache-block reads. Caller must place
- * the descriptor at a 256-byte-aligned device address and map all 256 bytes.
- * Caller must initialize a coherent fence word to a different value before
- * submission and inspect task error/status as well as the fence. The value
- * does not prove success, nor provide a CPU memory barrier or DMA ownership.
- * HAL-1 skips postactions when task status is nonzero, so errors may leave the
- * fence unchanged; never wait solely on this word without an error/deadline path.
- * Same lifetime and unchanged-on-failure rules as the basic serializer.
- */
+			  const struct n1x_dla_task_args *args);
+
+/* Serialize a 256-byte v2 task descriptor with a terminal WRITE_SEM fence postaction. */
 int n1x_dla_build_fenced_task_v2(__u8 *out, size_t out_size,
-								const struct n1x_dla_task_args *args,
-								__u64 fence_address, __u32 fence_value);
-/* HAL-1 context transport, qualified against original firmware in RAM only.
- * Header byte 0 is 1, byte 1 copies the caller's vendor context tag (semantics
- * not inferred), and LE u64 at +4 addresses a separate 32-byte checkpoint.
- * Caller initially zeros that checkpoint, retains firmware-written contents
- * for resume, and provides the model's separate engine-context allocation.
- * Linux policy requires a nonzero, 256-aligned checkpoint address in 36 bits,
- * with 256 mapped bytes. Pure serialization; no initialization of device RAM.
- * Output is unchanged on failure, and bytes after the 64-byte header are untouched.
- */
+				 const struct n1x_dla_task_args *args,
+				 __u64 fence_address, __u32 fence_value);
+
+/* Serialize the 64-byte HAL-1 preemption context header pointing to a 32-byte checkpoint. */
 int n1x_dla_build_context_header(__u8 *out, size_t out_size,
-								__u64 checkpoint, __u8 context_tag);
-/* Fenced single-task v2 descriptor with context-header flag bit 2 and optional
- * restore flag bit 1. restore must be 0 or 1. Header address is nonzero,
- * 256-aligned and backed by 256 mapped bytes within 36 bits. Address list and
- * fence must also be within 36 bits; 1..512 addresses and no task chain.
- * Does not enable preemption, submit, wait, reclaim DMA or implement cancel.
- * No physical context-switch qualification is implied. A preemption message
- * can follow an execution error; callers must not treat it as successful save.
- * Output is unchanged on failure; args may overlap output.
- */
+				 __u64 checkpoint, __u8 context_tag);
+
+/* Serialize a fenced v2 task descriptor with preemption context-header and restore flags. */
 int n1x_dla_build_context_fenced_task_v2(__u8 *out, size_t out_size,
-										const struct n1x_dla_task_args *args,
-										__u64 fence_address, __u32 fence_value,
-										__u64 context_header, __u8 restore);
-/* Single-task transport qualification descriptor: same fenced v2 layout,
- * with flags bit 0 at byte 41 set (BYPASS_EXEC). The raw HAL-1 executor skips
- * network/instruction execution, but still runs scheduler/postactions and can
- * touch control registers. This does not calculate an inference result.
- * No chains are accepted; all basic address/alignment rules still apply even
- * though the recovered bypass path does not fetch the network/address list.
- * Fence change alone is insufficient: malformed postactions can write it and
- * then fail. Capture execution errors and SWGEN0/deadline as well. This neither
- * submits a task nor authorizes freeing buffers; caller owns visibility,
- * complete DMA lifetime and physical completion/quiescence qualification.
- * Output unchanged on invalid input, including overlapping args/output.
- */
+					 const struct n1x_dla_task_args *args,
+					 __u64 fence_address, __u32 fence_value,
+					 __u64 context_header, __u8 restore);
+
+/* Serialize a fenced v2 task descriptor with BYPASS_EXEC (flags bit 0 at byte 41). */
 int n1x_dla_build_bypass_fenced_task_v2(__u8 *out, size_t out_size,
-										const struct n1x_dla_task_args *args,
-										__u64 fence_address, __u32 fence_value);
-/* Cached-path address list (1..512 entries), padded for T35x DMA reads;
- * the same layout also passes HAL-1, which requests exactly count*8 bytes.
- * Source and output must not overlap. DMA mapping/alignment, model index bounds
- * and buffer lifetimes remain caller responsibilities. Addresses are serialized
- * verbatim, including zero; this does not validate model memory references.
- * The firmware permits index == count, so host validation must require < count.
- * Size helper returns zero for unsupported counts. Output unchanged on error.
- */
+					const struct n1x_dla_task_args *args,
+					__u64 fence_address, __u32 fence_value);
+
 size_t n1x_dla_address_list_bytes(__u16 count);
 int n1x_dla_build_address_list(__u8 *out, size_t out_size,
-								const __u64 *addresses, __u16 count);
+			       const __u64 *addresses, __u16 count);
+
 struct n1x_dla_buffer_range {
 	__u64 address;
 	__u64 bytes;
 };
+
 struct n1x_dla_memory_view {
 	struct n1x_dla_buffer_range mapping;
 	__u64 logical_bytes;
 };
+
 struct n1x_dla_model_address {
 	__u64 offset, bytes;
 	__u16 memory_index;
 };
+
 struct n1x_dla_task_buffer {
 	__u64 address, logical_bytes, mapped_bytes;
 };
-/* Resolve dense model-address indices into task-local order. The memory and
- * address arrays must already be indexed by their validated model IDs.
- * Mapping extents are supplied by the trusted allocator, not by the model.
- * Preserve logical subrange lengths separately from available mapping bytes:
- * cache reads may need padding, which does not extend logical model content.
- * Inputs must be immutable for the call and must not overlap output.
- * Validates selected references/arithmetic only, not all other model records,
- * DMA ownership, hardware address width, alignment or instruction semantics.
- * Output is unchanged on failure; no allocation, DMA or device operations.
- */
+
+/* Resolve model address-list entries into task-local buffer mappings. */
 int n1x_dla_resolve_task_buffers(struct n1x_dla_task_buffer *out,
-								size_t out_count,
-								const struct n1x_dla_memory_view *memories,
-								__u16 num_memories,
-								const struct n1x_dla_model_address *addresses,
-								__u16 num_addresses,
-								const __u16 *task_indices,
-								__u16 num_task_addresses);
+				 size_t out_count,
+				 const struct n1x_dla_memory_view *memories,
+				 __u16 num_memories,
+				 const struct n1x_dla_model_address *addresses,
+				 __u16 num_addresses,
+				 const __u16 *task_indices,
+				 __u16 num_task_addresses);
+
 struct n1x_dla_il_range {
 	__u64 address;
 	__u32 dma_bytes;
 	__u16 instructions;
 };
-/* Validate one recovered 12-byte IL slice (index/offset/count), including all
- * firmware cache reads. Does not validate instruction opcodes, their embedded
- * memory/register references, or the complete model. Buffers must describe
- * real mapped allocations, including accessible padding. Output unchanged on
- * error. Reserved slice bytes are not interpreted.
- */
+
+/* Validate a 12-byte instruction-list (IL) slice against mapped task buffers. */
 int n1x_dla_validate_il_slice(struct n1x_dla_il_range *out,
-								const __u8 *slice, size_t slice_size,
-								const struct n1x_dla_buffer_range *buffers,
-								__u16 num_buffers);
+			      const __u8 *slice, size_t slice_size,
+			      const struct n1x_dla_buffer_range *buffers,
+			      __u16 num_buffers);
 #endif

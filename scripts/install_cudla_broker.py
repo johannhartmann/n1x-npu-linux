@@ -17,7 +17,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = Path('/usr/lib/n1x-npu-linux')
 BROKER = Path('/usr/libexec/n1x-dla-broker')
-RULE = Path('/etc/udev/rules.d/99-n1x-dla.rules')
+RULE = Path('/usr/lib/udev/rules.d/99-n1x-npu.rules')
 SYSUSERS = Path('/usr/lib/sysusers.d/n1x-npu-linux.conf')
 FRONTEND_SHA256 = '89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9'
 SUPERRES_SHA256 = 'c1ffde5d1eb9c7486a08ecc1470a1b633a11c7a71411f8fb36064d16dbcfc1c0'
@@ -91,7 +91,7 @@ def main():
         PREFIX/'cudla/libnvcudla.so': checked(ROOT/'runtime/cudla/libnvcudla.so'),
         PREFIX/'cudla/libcudla.so.1.0.0': checked(frontend, FRONTEND_SHA256),
         BROKER: checked(ROOT/'runtime/cudla/n1x-dla-broker'),
-        RULE: checked(ROOT/'config/99-n1x-dla.rules'),
+        RULE: checked(ROOT/'packaging/udev/99-n1x-npu.rules'),
         SYSUSERS: checked(ROOT/'config/n1x-npu-linux.sysusers'),
     }
     model_payloads = [(name, checked(path, expected)) for name, path, expected in models(args.models)]
@@ -105,7 +105,7 @@ def main():
     receipt = dict(protocol=1, abi=2, frontend_sha256=FRONTEND_SHA256,
                    broker_sha256=digest(payloads[BROKER]), backend_sha256=digest(payloads[PREFIX/'cudla/libnvcudla.so']),
                    models={name:digest(data) for name,data in model_payloads},
-                   device_policy='root:root 0600 on next accel-node creation',
+                   device_policy='root:render 0660 uaccess on accel-node creation',
                    broker_identity=dict(name='n1x-dla',uid=account.pw_uid,gid=account.pw_gid))
     atomic_install(PREFIX/'install-receipt.json', (json.dumps(receipt,indent=2,sort_keys=True)+'\n').encode(), 0o644)
     print('Installed root-owned N1X broker and pinned models; no device, firmware, boot or power action performed')

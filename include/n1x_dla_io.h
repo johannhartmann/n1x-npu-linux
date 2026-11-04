@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef N1X_DLA_IO_H
 #define N1X_DLA_IO_H
-#include "n1x_dla_firmware.h"
-/* All offsets are logical. A physical backend must translate and bounds-check
- * them, and establish device power/reset state before invoking these helpers.
- * Read/write callbacks return zero or a negative errno. The observation module
- * supplies guarded status reads; writable bring-up callbacks are not connected.
- */
+#include <linux/types.h>
+#ifndef __KERNEL__
+#include <stddef.h>
+#endif
+
+/* Register I/O callbacks for DLA, HFRP, and SROOT MMIO apertures. */
 struct n1x_dla_io {
 	void *context;
 	int (*write32)(void *context, __u32 offset, __u32 value);

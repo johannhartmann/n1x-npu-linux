@@ -16,9 +16,8 @@
 
 | Target | Scope | Prerequisites |
 | --- | --- | --- |
-| `make check` | `check-repo` + `test-portable` (CI default) | Python venv + C compiler |
-| `make test` | Native C firmware bounds/header tests (`tests/test_firmware`) | C compiler |
-| `make test-portable` | 18 C/Python unit tests covering HFRP setup/shutdown, VBIOS policy, `/dev/accel` ioctls, `mmap`, statistics, preemption, and reload | Python venv + C compiler |
+| `make check` | `check-repo` + `test-portable` (CI default) | Python 3.12 + C compiler |
+| `make test-portable` | 17 C/Python unit tests covering HFRP setup/shutdown, VBIOS policy, `/dev/accel` ioctls, `mmap`, statistics, preemption, and reload | Python 3.12 + C compiler |
 | `make test-compiler` | Native `t254` compiler (`test_n1x_compiler.py`) and ONNX EP (`test_n1x_ort.py`) suites | `make runtime` |
 | `make test-cudla` | `libnvcudla.so` model, API, CUDA staging, and broker security tests | CUDA driver + cuDLA archive |
 | `make module` | Build `n1x_npu_bootstrap.ko` against `KERNEL_RELEASE` | Matching kernel headers |
