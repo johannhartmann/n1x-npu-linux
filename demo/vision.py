@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'runtime'))
 from cudla_broker import Device, FRONTEND_SHA256, BROKER
 from loadable import Model
+from n1x_compiler import ensure_reference_loadable
 from vision_image import classify_input, denoise, psnr, reference, resnet18, ssim
 
 
@@ -148,7 +149,7 @@ def main():
     if set(names)!=expected_names: parser.error('incomplete or unexpected model manifest; no inference attempted')
     models = {}; required = 0
     for name in names:
-        path = ROOT/'results'/('native-compile-t254-'+name)/(name+'.nvda')
+        path = ensure_reference_loadable(name, ROOT)
         if sha(path)!=manifest['models'][name]['sha256']: parser.error('loadable mismatch: '+name)
         model = Model.from_file(path); models[name] = path
         required += (len(model.image)+8192+4095)&~4095

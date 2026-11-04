@@ -44,6 +44,7 @@ test-portable:
 	$(PYTHON) scripts/test_npu_trigger.py
 	$(PYTHON) scripts/test_qualify_p16_start.py
 	$(PYTHON) scripts/test_npu_dma_domains.py
+	$(PYTHON) scripts/test_sroot_cca_quirk.py
 
 module:
 	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" modules
@@ -73,6 +74,7 @@ runtime/n1x-ort-run: runtime/n1x_ort.cpp runtime/cudla_model.hpp include/n1x_ort
 test-compiler: compiler ort
 	$(PYTHON) scripts/test_n1x_compiler.py
 	$(PYTHON) scripts/test_n1x_ort.py
+	$(PYTHON) scripts/test_superres_image.py
 
 cudla: runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke runtime/cudla/n1x-dla-broker
 
@@ -82,8 +84,10 @@ test-cudla: cudla compiler ort
 	$(PYTHON) scripts/test_cudla_broker_security.py
 	$(PYTHON) scripts/test_qualify_cudla.py
 	$(PYTHON) scripts/test_cudla_cuda_transport.py
+	$(PYTHON) scripts/test_vision_examples.py
 	$(PYTHON) scripts/test_n1x_compiler.py
 	$(PYTHON) scripts/test_n1x_ort.py
+	$(PYTHON) scripts/test_superres_image.py
 
 runtime/cudla/libnvcudla.so: runtime/cudla_backend.cpp runtime/cudla_model.cpp runtime/cudla_model.hpp runtime/n1x_dla.h runtime/n1x_cudla_private.h include/uapi/n1x_dla_accel.h runtime/libn1x_dla.so $(CUDLA_PACKAGE)/include/cudla.h $(CUDA_ROOT)/include/cuda.h
 	mkdir -p runtime/cudla

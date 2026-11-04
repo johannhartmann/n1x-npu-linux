@@ -16,6 +16,7 @@ import sys
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'runtime'))
 from loadable import Model, require
+from n1x_compiler import ensure_reference_loadable
 from n1x_dla import Device
 from qualify_p16_start import KERNEL, fields
 RELU_LOADABLE_SHA256='561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942'
@@ -105,8 +106,7 @@ def main():
     import struct
     jobs=[]
     for variant in ('relu','conv1x1','conv1x1_relu'):
-        directory='native-compile-t254'+('' if variant=='relu' else '-'+variant)
-        path=ROOT/'results'/directory/(variant+'.nvda')
+        path=ensure_reference_loadable(variant,ROOT)
         model=Model.from_file(path) if variant=='relu' else load_model(path)
         if variant=='relu':
             if model.sha256!=RELU_LOADABLE_SHA256:raise RuntimeError('ReLU loadable hash mismatch')

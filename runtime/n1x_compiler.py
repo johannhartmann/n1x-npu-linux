@@ -60,7 +60,11 @@ class CompilerClient:
         self._lib.n1x_compiler_free_buffer.argtypes = [ctypes.c_void_p]
         self._lib.n1x_compiler_free_buffer.restype = None
 
-        rc = self._lib.n1x_compiler_init(None, None)
+        so_path = ROOT / "sources/tensorrt-11.4/native/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so"
+        dll_path = ROOT / "sources/tensorrt-11.4/nvdla_compiler.dll"
+        so_arg = str(so_path).encode("utf-8") if so_path.is_file() else None
+        dll_arg = str(dll_path).encode("utf-8") if dll_path.is_file() else None
+        rc = self._lib.n1x_compiler_init(so_arg, dll_arg)
         if rc != 0:
             raise CompilerError(f"n1x_compiler_init failed with status {rc}")
 
@@ -117,8 +121,16 @@ def compile_dag(
     return get_compiler().compile_dag(graph_spec, output_path=output_path)
 
 
+REFERENCE_LOADABLE_SHA256: dict[str, str] = {
+    "relu": "561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942",
+    "conv1x1": "717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b",
+    "conv1x1_relu": "fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536",
+    "superres": "c1ffde5d1eb9c7486a08ecc1470a1b633a11c7a71411f8fb36064d16dbcfc1c0",
+}
+
+
 def build_reference_dag(model_name: str, root: Path = ROOT) -> dict[str, Any]:
-    """Construct the exact DAG specification for the 4 pinned reference models."""
+    """Construct the exact DAG specification for reference and vision models."""
     if model_name == "relu":
         return {
             "target": "t254",
@@ -216,7 +228,81 @@ def build_reference_dag(model_name: str, root: Path = ROOT) -> dict[str, Any]:
             "layers": layers,
             "outputs": [{"name": "output", "tensor_name": "output"}],
         }
+    graphs_path = root / "sources" / "vision" / "graphs.json"
+    weights_path = root / "sources" / "vision" / "weights.npz"
+    if graphs_path.is_file() and weights_path.is_file():
+        graphs = json.loads(graphs_path.read_text())
+        if model_name in graphs:
+            desc = graphs[model_name]
+            layers = []
+            prev = "input"
+            items = desc["layers"]
+            with np.load(weights_path, allow_pickle=False) as weights:
+                for idx, item in enumerate(items):
+                    w_arr = np.ascontiguousarray(weights[item["name"] + ".weight"], dtype="<f4")
+                    b_arr = np.ascontiguousarray(weights[item["name"] + ".bias"], dtype="<f4")
+                    kh, kw = int(w_arr.shape[2]), int(w_arr.shape[3])
+                    pad = int(item["padding"])
+                    stride = int(item["stride"])
+                    is_last = idx == len(items) - 1
+                    c_out = "output" if (is_last and not item["relu"]) else f"conv{idx}_out"
+                    layers.append(
+                        {
+                            "op": "Convolution",
+                            "input": prev,
+                            "output": c_out,
+                            "out_channels": int(w_arr.shape[0]),
+                            "kernel": [kh, kw],
+                            "stride": [stride, stride],
+                            "padding": [pad, pad, pad, pad],
+                            "dilation": [1, 1],
+                            "groups": 1,
+                            "bias_mode": "channel",
+                            "weights_b64": base64.b64encode(w_arr.tobytes()).decode("ascii"),
+                            "weights_dtype": "fp32",
+                            "bias_b64": base64.b64encode(b_arr.tobytes()).decode("ascii"),
+                            "bias_dtype": "fp32",
+                        }
+                    )
+                    prev = c_out
+                    if item["relu"]:
+                        r_out = "output" if is_last else f"relu{idx}_out"
+                        layers.append(
+                            {"op": "Activation", "mode": "relu", "input": prev, "output": r_out}
+                        )
+                        prev = r_out
+            return {
+                "target": "t254",
+                "profile_name": "probe",
+                "compute_precision": "fp16",
+                "inputs": [{"name": "input", "shape": list(desc["input"])}],
+                "layers": layers,
+                "outputs": [{"name": "output", "tensor_name": "output"}],
+            }
     raise ValueError(f"unknown reference model: {model_name}")
+
+
+def ensure_reference_loadable(model_name: str, root: Path = ROOT) -> Path:
+    """Return the path to a pinned .nvda loadable, compiling it in-process if absent."""
+    subdir = "native-compile-t254" if model_name == "relu" else f"native-compile-t254-{model_name}"
+    expected = REFERENCE_LOADABLE_SHA256.get(model_name)
+    if expected is None:
+        manifest_path = root / "config" / "vision-models.json"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text()).get("models", {})
+            if model_name in manifest:
+                expected = manifest[model_name]["sha256"]
+                subdir = "native-compile-t254-vision"
+    path = root / "results" / subdir / f"{model_name}.nvda"
+    if path.is_file():
+        if expected is not None and hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise CompilerError(f"existing loadable hash mismatch: {path}")
+        return path
+    dag = build_reference_dag(model_name, root=root)
+    blob = compile_dag(dag, output_path=path)
+    if expected is not None and hashlib.sha256(blob).hexdigest() != expected:
+        raise CompilerError(f"compiled loadable hash mismatch for {model_name}")
+    return path
 
 
 def onnx_to_dag(

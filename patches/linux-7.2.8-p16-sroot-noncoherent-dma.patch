@@ -15,7 +15,7 @@ IOMMU route.
 diff --git a/drivers/acpi/scan.c b/drivers/acpi/scan.c
 --- a/drivers/acpi/scan.c
 +++ b/drivers/acpi/scan.c
-@@ -1707,7 +1707,26 @@
+@@ -1707,7 +1707,25 @@
  					       NULL, &cca);
  		if (ACPI_SUCCESS(status))
  			adev->flags.cca_seen = 1;

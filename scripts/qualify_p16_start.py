@@ -21,13 +21,11 @@ from select_npu_dma_domains import plan, apply
 ROOT = Path(__file__).resolve().parents[1]
 KERNEL = '7.2.8-23-rtx-spark-npu'
 ROM_SHA256 = 'a82af14d15effa98a75b19d9135421c7c27f20cca7398d0b0a7ba87547b8b64c'
-RELU_SHA256 = 'b5792ecfbdc5d190fec9cdf7ecc17c7ba6919a42d5c1528e2acbcc2fc47f997c'
 PHASES = (
     ('prepare_hfrp', 'power_accepted'), ('upload', 'idle_observed'),
     ('ping', 'ping_verified'), ('init_region5', 'region5_registered'),
     ('read_config', 'config_valid'), ('apply_config', 'config_apply_accepted'),
     ('apply_lpwr', 'lpwr_accepted'), ('bypass_task', 'task_verified'),
-    ('relu_probe', 'numeric_verified'),
 )
 
 
@@ -36,7 +34,7 @@ def fields(status):
 
 
 def phase_status_file(phase):
-    return {'prepare_hfrp': 'hfrp_status', 'relu_probe': 'relu_status'}.get(phase, 'status')
+    return 'hfrp_status' if phase == 'prepare_hfrp' else 'status'
 
 
 def preflight_accel(dev, record, accel_class=Path('/sys/class/accel')):
@@ -87,7 +85,7 @@ def main():
     parser.add_argument('--after-hfrp', action='store_true',
                         help='continue this boot after verified HFRP; never repeat handshake/upload')
     parser.add_argument('--enable-accel', action='store_true',
-                        help='register experimental RAWIO-only accel API during fresh module load')
+                        help='register /dev/accel/accel* device node during fresh module load')
     parser.add_argument('--strict-platform', action='store_true',
                         help='enforce exact P16 BIOS-300 ROM/kernel/DMI pins')
     args = parser.parse_args()
@@ -129,29 +127,13 @@ def main():
                kernel=running_kernel, platform_profile=profile, module_sha256=hashlib.sha256(module.read_bytes()).hexdigest(),
                rom_sha256=hashlib.sha256(image).hexdigest() if image else 'live_vbios_carveout',
                through=args.through, after_hfrp=args.after_hfrp, groups=rows, enable_accel=args.enable_accel)
-        if args.through == 'relu_probe':
-            template = (ROOT/'results/p16-relu-template.bin').read_bytes()
-            if len(template) != 2834432 or hashlib.sha256(template).hexdigest() != RELU_SHA256:
-                raise RuntimeError('ReLU template differs from reviewed compiler/input artifact')
-            target = Path('/usr/lib/firmware/nvidia/n1x/p16-relu-template.bin')
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists():
-                if target.read_bytes() != template:
-                    raise RuntimeError('installed ReLU template differs; not overwritten')
-            else:
-                with target.open('xb') as out:
-                    os.fchmod(out.fileno(), 0o600)
-                    out.write(template)
-                    out.flush()
-                    os.fsync(out.fileno())
-            record(relu_template_sha256=RELU_SHA256)
         dev = Path('/sys/bus/platform/devices/NVDA200A:00')
         if args.after_hfrp:
             if (dev/'driver').resolve().name != 'n1x-npu-bootstrap':
                 raise RuntimeError('DLA is not bound to the bootstrap')
             run_phases(dev, args.through, record, after_hfrp=True)
             record(completed_through=args.through, retained_until_checked_shutdown=True,
-                   relu_numerical_verified=args.through == 'relu_probe', general_inference_verified=False)
+                   general_inference_verified=False)
             return
         if image is not None and len(image) == 0x110000 and hashlib.sha256(image).hexdigest() == ROM_SHA256:
             destination = Path('/usr/lib/firmware/nvidia/n1x/p16-bios300-physical.rom')
@@ -171,7 +153,7 @@ def main():
         subprocess.run(['/usr/bin/insmod', str(module), 'autostart=0', 'debug_sysfs=1', 'enable_hfrp=1', 'enable_upload=1',
                         'enable_ping=1', 'enable_region5=1', 'enable_config_snapshot=1',
                         'enable_config_apply=1', 'enable_lpwr_config=1', 'enable_bypass_task=1',
-                        'enable_relu_probe=1', 'enable_accel='+str(int(args.enable_accel)),
+                        'enable_accel='+str(int(args.enable_accel)),
                         'strict_platform='+str(int(args.strict_platform))], check=True)
         dev = Path('/sys/bus/platform/devices/NVDA200A:00')
         if (dev/'driver').resolve().name != 'n1x-npu-bootstrap':
@@ -180,7 +162,7 @@ def main():
             preflight_accel(dev, record)
         run_phases(dev, args.through, record)
         record(completed_through=args.through, retained_until_checked_shutdown=True,
-               relu_numerical_verified=args.through == 'relu_probe', general_inference_verified=False,
+               general_inference_verified=False,
                automatic_start_installed=False)
 
 

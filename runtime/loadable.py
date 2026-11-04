@@ -1,10 +1,9 @@
-"""Bounded userspace NVDA 0.9.0 materializer for the recovered N1X profile.
+"""Bounded userspace NVDA 0.9.0 materializer for the N1X t254 profile.
 
 No compiler, device access or instruction-stream validation. Supported subset:
 one DLA task, DRAM, no relocations/pre-waits, one terminal completion event.
-Metadata layouts come from the original 617.42 Windows runtime; the additional
-version fields are checked explicitly. Bytes within model instructions remain
-trusted, just as required by the experimental RAWIO-only kernel interface.
+Metadata layouts match the 617.42 Windows runtime; version fields and extent
+bounds are checked explicitly before materializing the task image.
 """
 import argparse
 from dataclasses import asdict, dataclass

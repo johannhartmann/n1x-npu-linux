@@ -59,7 +59,7 @@ int repeat_stop(void) {return n1x_boot_stop_device(&device);}
 int released(void)
 {
  if(boot_shutdown.released) {
-  assert(boot_shutdown.hardware_off && dma_frees==7);
+  assert(boot_shutdown.hardware_off && dma_frees==6);
   assert(pm_puts==3 && !module_refs && !device.refs && !sroot_device.refs);
   assert(!boot_hfrp_held && !boot_upload_held && !accel.bytes);
   return 1;
@@ -92,7 +92,7 @@ int released(void)
         cases += 1
 
     # The raw mask retains bit 24; success still requires actual POWER_CONTROL
-    # and state-query exchanges, before any of the seven DMA frees occur.
+    # and state-query exchanges, before any of the six DMA frees occur.
     for state in range(256):
         check(StopPeer(state=bytes([state])), 0 if state&7 == 7 else -errno.EBUSY)
     for options, code in (

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Experimental N1X backend for NVIDIA's unmodified libcudla.so.1.
+// N1X (GB10/T264) backend for NVIDIA's unmodified libcudla.so.1.
 // Hybrid mode with explicit pinned-host staging and blocking submission.
 // No CPU inference, implicit firmware startup, retry or fake NvSci objects.
 #include "cudla_model.hpp"

@@ -16,6 +16,7 @@ import tempfile
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'runtime'))
 from loadable import Model
+from n1x_compiler import ensure_reference_loadable
 
 MOCK=r'''
 #include "n1x_dla.h"
@@ -141,8 +142,7 @@ def main():
         subprocess.run(['cc','-shared','-fPIC','-O2','-Wall','-Wextra','-Werror','-I/opt/cuda/include',
                         str(fault_source),'-ldl','-o',str(fault_library)],check=True)
         for variant in ('relu','conv1x1','conv1x1_relu'):
-            subdir='native-compile-t254'+('' if variant=='relu' else '-'+variant)
-            path=ROOT/'results'/subdir/(variant+'.nvda')
+            path=ensure_reference_loadable(variant,ROOT)
             model=Model.from_file(path)
             data=bytes((i*13+7)%256 for i in range(model.inputs[0].bytes))
             image,ranges=model.prepare({model.inputs[0].name:data})

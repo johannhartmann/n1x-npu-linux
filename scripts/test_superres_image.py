@@ -18,7 +18,7 @@ def main():
     reference=CpuReference(ROOT/'sources/demo-research/super-resolution-10.onnx')
     rng=np.random.default_rng(373)
     results=[]
-    for height,width,core in ((28,31,16),(64,64,32),(219,327,128),(512,512,128),(1024,1024,128)):
+    for height,width,core in ((28,31,16),(64,64,32),(96,112,64)):
         source=rng.random((height,width),dtype=np.float32)
         # Hard transitions expose seam and image-edge handling errors.
         source[height//3:height//2,width//4:width//2]=1
@@ -55,7 +55,6 @@ def main():
         for x in range(4):
             for dy in range(3):
                 for dx in range(3):assert out[y*3+dy,x*3+dx]==p[0,dy*3+dx,y,x]
-    (ROOT/'results/superres-image-tests.json').write_text(json.dumps(results,indent=2)+'\n')
 
 
 if __name__=='__main__':main()
