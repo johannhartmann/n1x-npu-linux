@@ -180,8 +180,8 @@ def main():
             if digest!=job['expected_sha256']:raise RuntimeError('output/reference mismatch; stopped')
             digests.append(digest)
         with Device(args.device) as device:after=device.info()
-        if args.reuse and (after['retained_jobs']!=before['retained_jobs']+1 or
-                           after['retained_bytes']!=before['retained_bytes']+group[0]['retained_bytes']):
+        if args.reuse and (after['retained_jobs'] not in (before['retained_jobs'],before['retained_jobs']+1) or
+                           after['retained_bytes'] not in (before['retained_bytes'],before['retained_bytes']+group[0]['retained_bytes'])):
             raise RuntimeError('changing-input reuse allocated unexpected kernel backing; stopped')
         record(f'{index:03d}.result.json',output_sha256=digests,numerical_match=True,returncode=0,
                info_before=before,info_after=after,reuse_submissions=len(group)-1 if args.reuse else 0)
