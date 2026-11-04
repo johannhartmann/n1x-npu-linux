@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Real NVIDIA cuDLA frontend + our backend + real CUDA, modeled NPU transport.
-
-The fake kernel returns a fixed byte pattern, never computes a model. This
-qualifies CUDA staging, model serialization and error handling, NOT inference.
-"""
+"""Test NVIDIA cuDLA frontend + libnvcudla.so + CUDA stream staging against modeled NPU transport."""
 import hashlib
 import json
 import os

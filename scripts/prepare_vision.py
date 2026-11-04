@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Acquire hash-pinned trained models and prepare bounded CNN partitions, offline.
-
-torch.load uses weights_only=True. No vendor code, CUDA or NPU execution.
-The independent ONNX references retain the source ResNet BatchNormalization.
-"""
+"""Acquire hash-pinned DnCNN/ResNet-18 checkpoints and prepare ONNX references and partitions."""
 import argparse
 import hashlib
 import json
@@ -87,13 +83,8 @@ def prepare(fetch=False):
         if relu: out = node('Relu', [out], name+'.relu')
         return out, dict(name=name, padding=padding, stride=stride, relu=relu)
     current, stem = conv_bn('input', 'conv1', 'bn1', 2, True)
-    # Explicit host im2col avoids the recovered frontend's implicit stride-2
-    # lowering (which introduces extra backend operations and constants).
-    # This is an exact permutation/gather, not host learned computation.
     weights['conv1.weight'] = weights['conv1.weight'].reshape(64,147,1,1)
     stem.update(padding=0, stride=1)
-    # The pointwise equivalent is independent at every spatial location.
-    # Reuse one 28x28 NPU allocation over the full 112x112 feature map.
     graphs['resnet18-stem'] = dict(input=[1,147,28,28], output=[1,64,28,28], layers=[stem], operation_count=3,
                                  im2col=dict(kernel=7, padding=3, stride=2))
     current = node('MaxPool', [current], 'stem.pool', kernel_shape=[3,3], strides=[2,2], pads=[1]*4)

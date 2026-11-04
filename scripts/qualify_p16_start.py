@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Run a bounded P16 startup prefix, with durable logs and no retries.
-
-Explicit manual experiment on the qualified NPU kernel, not an autostart service. Starts only
-with unbound endpoints and no bootstrap loaded. Leaves attempted hardware
-state/module/DMA retained until checked explicit shutdown. Uncertain failures
-remain retained until reboot.
-"""
+"""Step-by-step N1X NPU startup qualifier for manual sysfs bring-up stages."""
 import argparse
 import hashlib
 import json

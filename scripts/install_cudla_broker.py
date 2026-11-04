@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Install the minimal broker, pinned models and libraries as root-owned files.
-
-This does not load/reload a module, start firmware, trigger udev or alter boot.
-The new device policy takes effect the next time the accel node is created.
-"""
+"""Install the n1x-dla-broker service, libraries, and compiled .nvda models."""
 import argparse
 import hashlib
 import json

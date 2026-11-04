@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Check repository links, source syntax, JSON and published demo provenance.
-
-Standard-library only. Does not import project modules, write bytecode, access
-devices, acquire inputs or execute examples. Includes untracked source files so
-new contributions can be checked before staging.
-"""
+"""Check repository Markdown links, Python syntax, JSON files, and demo asset hashes."""
 import hashlib
 import json
 import os

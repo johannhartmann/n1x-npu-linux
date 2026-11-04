@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Physical N1X DnCNN denoising and ResNet-18 classification with CPU validation.
-
-Several images share loaded NPU models and bounded retained backing. There is
-no learned CPU fallback, automatic retry, reset, unload or power-profile change.
-"""
+"""DnCNN image denoising and ResNet-18 classification on the N1X DLA via NVIDIA cuDLA."""
 import argparse
 import hashlib
 import html
@@ -77,7 +73,7 @@ def run_image(args,path,prepared,device,networks,destination,metadata,growth):
                 result = resnet18(data,infer,weights)
     except Exception as exc:
         record('error.json',dict(error=str(exc),attempted_submissions=attempted,completed_submissions=completed,
-                                 submission_state_uncertain=attempted!=completed,automatic_retry=False))
+                                 submission_state_uncertain=attempted!=completed))
         raise
     elapsed = time.monotonic()-started
     after = device.info()
@@ -125,7 +121,7 @@ def run_image(args,path,prepared,device,networks,destination,metadata,growth):
         '<style>body{background:#111;color:#eee;font:16px system-ui;margin:32px}main{display:flex;gap:20px}section{flex:1}img{max-width:100%}pre{white-space:pre-wrap}</style>'
         f'<h1>{title}</h1><p>Physical NPU convolutions. CPU reference: {"PASS" if passed else "FAIL"}.</p>'
         f'<main>{panels}</main><pre>{html.escape(json.dumps(metadata,indent=2))}</pre>')
-    if not passed: raise RuntimeError('independent CPU reference/quality check failed; evidence retained')
+    if not passed: raise RuntimeError('CPU reference/quality check failed')
     print(f'PASS: {destination/"report.html"}; {completed} NPU submissions, max error {maximum:.6g}, RMSE {rmse:.6g}',flush=True)
     return metadata
 
@@ -170,8 +166,8 @@ def main():
         platform_profile=Path('/sys/firmware/acpi/platform_profile').read_text().strip(),
         frontend_sha256=FRONTEND_SHA256,
         models={name:manifest['models'][name] for name in names},prepared=manifest['prepared'],
-        total_required_retained_bytes=required,automatic_retry=False,
-        learned_convolutions='physical N1X DLA via original NVIDIA cuDLA')
+        total_required_retained_bytes=required,
+        learned_convolutions='N1X DLA via NVIDIA cuDLA')
     with Device(models) as device:
         metadata['broker_sha256']=sha(BROKER)
         before=device.info()

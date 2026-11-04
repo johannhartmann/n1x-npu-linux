@@ -22,15 +22,6 @@ Enable automatic startup at boot:
 sudo systemctl enable --now n1x-npu.service
 ```
 
-## Post-Update Readiness Check
-
-Install the optional Omarchy post-update hook (`config/omarchy-npu-post-update`) to check kernel/module/DKMS alignment after system updates:
-
-```sh
-omarchy hook install post-update config/omarchy-npu-post-update
-python3 scripts/check_update_readiness.py
-```
-
 ## Updating to a New Kernel Release
 
 1. Apply [`patches/linux-7.2.8-p16-sroot-noncoherent-dma.patch`](../patches/linux-7.2.8-p16-sroot-noncoherent-dma.patch) (`NVDA8600` `_HRV=1` noncoherent DMA quirk) to the target kernel tree and build the kernel and headers packages.

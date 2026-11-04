@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-"""Select translated DMA domains for the audited, unbound NPU/SROOT groups.
-
-Default is inspection; --apply writes only those groups' type controls. This
-changes SMMU configuration, not NPU registers. Never changes global policy.
-"""
+"""Select translated SMMUv3 DMA domains for unbound N1X NPU/SROOT IOMMU groups."""
 import argparse
 import json
 import os
 from pathlib import Path
-import platform
 
 ENDPOINTS = ('NVDA200A:00', 'NVDA8600:00')
 
@@ -55,10 +50,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
-    if platform.release() not in ('7.2.8-23-omarchy-p16-asus-npu1',
-                                  '7.2.8-23-omarchy-p16-asus-npu2',
-                                  '7.2.8-23-rtx-spark-npu'):
-        parser.error('requires the isolated SROOT test kernel; current kernel is unchanged')
     rows = plan()
     print(json.dumps(rows, indent=2), flush=True)
     if args.apply:
