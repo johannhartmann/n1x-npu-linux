@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Verify phase prefixes, evidence gates and no retry after failed writes."""
+"""Verify phase prefixes, status gates, and error handling during manual bring-up."""
 import errno
 from pathlib import Path
 import tempfile
 from unittest.mock import patch
 
-from qualify_p16_start import PHASES, TRIGGERS, ROOT, run_phases, phase_status_file, preflight_accel
+from qualify_npu_start import PHASES, TRIGGERS, ROOT, run_phases, phase_status_file, preflight_accel
 import sys
 sys.path.insert(0, str(ROOT/'runtime'))
 import n1x_dla
@@ -17,7 +17,7 @@ def main():
         dev = Path(tmp)
         for after in (False, True):
             for end in range(int(after), len(PHASES)):
-                for failure in (None, 'write', 'evidence'):
+                for failure in (None, 'write', 'status'):
                     calls, records = [], []
                     (dev/'hfrp_status').write_text('power_accepted=1 configured=1 phase=5 error=0\n' if after else 'power_accepted=0\n')
                     (dev/'status').write_text('attempted=0\n')
@@ -38,7 +38,7 @@ def main():
                         file.write_text(PHASES[index][1]+'='+('0' if index == end and failure else '1')+'\n')
 
                     caught = None
-                    with patch('qualify_p16_start.trigger', trigger), patch('qualify_p16_start.os.sync') as sync:
+                    with patch('qualify_npu_start.trigger', trigger), patch('qualify_npu_start.os.sync') as sync:
                         try:
                             run_phases(dev, PHASES[end][0] if failure is None else PHASES[-1][0], record, after_hfrp=after)
                         except (OSError, RuntimeError) as exc:
@@ -48,7 +48,7 @@ def main():
                     if failure == 'write':
                         assert isinstance(caught, OSError) and caught.errno == errno.EREMOTEIO
                         assert records[-1]['errno'] == errno.EREMOTEIO
-                    elif failure == 'evidence':
+                    elif failure == 'status':
                         assert isinstance(caught, RuntimeError)
                     else:
                         assert caught is None
@@ -64,7 +64,7 @@ def main():
                 (valid, 'attempted=0', 'prepare_hfrp')):
             (dev/'hfrp_status').write_text(hfrp)
             (dev/'status').write_text(status)
-            with patch('qualify_p16_start.trigger') as send, patch('qualify_p16_start.os.sync') as sync:
+            with patch('qualify_npu_start.trigger') as send, patch('qualify_npu_start.os.sync') as sync:
                 try:
                     run_phases(dev, end, lambda **row: None, after_hfrp=True)
                 except ValueError:

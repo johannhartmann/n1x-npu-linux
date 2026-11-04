@@ -33,5 +33,5 @@ body:
     id: logs
     attributes:
       label: Error and relevant logs
-      description: Include the complete error and relevant evidence. Redact private data before posting.
+      description: Include the complete error message and relevant dmesg/console output. Redact private data before posting.
       render: text

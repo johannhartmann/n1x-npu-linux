@@ -119,16 +119,16 @@ def prepare(fetch=False):
     sha = digest(folder/'weights.npz')
     for desc in graphs.values(): desc['weights_sha256'] = sha
     (folder/'graphs.json').write_text(json.dumps(graphs, indent=2)+'\n')
-    receipt = dict(sources={name:sha for name,_,sha in ASSETS},
+    summary = dict(sources={name:sha for name,_,sha in ASSETS},
                    outputs={name:digest(folder/name) for name in ('weights.npz','graphs.json','dncnn-noise.onnx','resnet18.onnx')},
                    hardware_access=False)
-    (folder/'prepared.json').write_text(json.dumps(receipt, indent=2)+'\n')
+    (folder/'prepared.json').write_text(json.dumps(summary, indent=2)+'\n')
     manifest = ROOT/'config/vision-models.json'
     if manifest.is_file():
         expected = json.loads(manifest.read_text())['prepared']
         for name,sha in expected.items():
             if digest(folder/name)!=sha: raise ValueError('prepared artifact differs from pinned manifest: '+name)
-    print(json.dumps(receipt, indent=2))
+    print(json.dumps(summary, indent=2))
 
 
 if __name__ == '__main__':

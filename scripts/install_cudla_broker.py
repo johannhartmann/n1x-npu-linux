@@ -101,12 +101,12 @@ def main():
         raise RuntimeError('dedicated n1x-dla account is unsafe')
     atomic_symlink(PREFIX/'cudla/libcudla.so.1', 'libcudla.so.1.0.0')
     for name, data in model_payloads: atomic_install(PREFIX/'models'/(name+'.nvda'), data, 0o644)
-    receipt = dict(protocol=1, abi=2, frontend_sha256=FRONTEND_SHA256,
-                   broker_sha256=digest(payloads[BROKER]), backend_sha256=digest(payloads[PREFIX/'cudla/libnvcudla.so']),
-                   models={name:digest(data) for name,data in model_payloads},
-                   device_policy='root:render 0660 uaccess on accel-node creation',
-                   broker_identity=dict(name='n1x-dla',uid=account.pw_uid,gid=account.pw_gid))
-    atomic_install(PREFIX/'install-receipt.json', (json.dumps(receipt,indent=2,sort_keys=True)+'\n').encode(), 0o644)
+    manifest = dict(protocol=1, abi=2, frontend_sha256=FRONTEND_SHA256,
+                    broker_sha256=digest(payloads[BROKER]), backend_sha256=digest(payloads[PREFIX/'cudla/libnvcudla.so']),
+                    models={name:digest(data) for name,data in model_payloads},
+                    device_policy='root:render 0660 uaccess on accel-node creation',
+                    broker_identity=dict(name='n1x-dla',uid=account.pw_uid,gid=account.pw_gid))
+    atomic_install(PREFIX/'install-manifest.json', (json.dumps(manifest,indent=2,sort_keys=True)+'\n').encode(), 0o644)
     print('Installed root-owned N1X broker and pinned models; no device, firmware, boot or power action performed')
 
 

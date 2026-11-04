@@ -39,12 +39,12 @@ End-to-end execution of ONNX Model Zoo's `emotion-ferplus-8.onnx` (37 nodes lowe
 - **`/dev/accel/accel0` DRM Accelerator**: Supports `EXEC`, `REEXEC` (in-place I/O patching with zero DMA allocations), `READ`, `STATS` (v2 hardware layer profiling), `CONTROL` (HAL-1 checkpoint preemption & resume), zero-copy read-only `mmap()` (`N1X_DLA_CAP_MMAP`), and automatic per-FD `postclose()` DMA cleanup.
 - **Native `t254` Compiler & ONNX Execution Provider**: [`runtime/libn1x_compiler.so`](runtime/n1x_compile.cpp) and [`runtime/libn1x_ort.so`](runtime/n1x_ort.cpp) ([`N1xInferenceSession`](runtime/n1x_ort.py)) compile and execute `FP16` (`CHW16`) and `INT8` (`CHW32`, per-tensor and per-channel) multi-branch DAGs in-process with SHA-256 `.nvda` caching.
 
-| Capability | Measured Result on ASUS ProArt P16 (`7.2.8-23-rtx-spark-npu`) |
+| Capability | Measured Result on NVIDIA N1X (`t254`) |
 | --- | --- |
-| cuDLA ReLU / Conv / Conv → ReLU & reload | 48 jobs, 15 `REEXEC`s, 2 full stop/unload/reload cycles ([receipt](docs/evidence/npu-hardware-2026-10-28.json)) |
+| cuDLA ReLU / Conv / Conv → ReLU & reload | 48 jobs, 15 `REEXEC`s, 2 full stop/unload/reload cycles |
 | 3× super-resolution (`./demo-superres`) | 512×512 → 1536×1536 (`0.856 s`) and 1024×1024 → 3072×3072 (`2.181 s`), `RMSE <= 0.000162` |
-| DnCNN denoising & ResNet-18 (`./demo-denoise`, `./demo-classify`) | 657 NPU submissions; DnCNN PSNR `20.73 -> 31.83 dB`, ResNet-18 top-1 exact match ([receipt](docs/evidence/vision-hardware-2026-10-29.json)) |
-| ONNX Execution Provider (`./demo-onnx`) | `emotion-ferplus-8` (`1.37 ms` `FP16` / `0.98 ms` `INT8`), `mnist-12` (`0.33 ms`), `super-resolution-10` (`1.04 ms`) ([receipt](docs/evidence/n1x-ort-hardware-2026-11-01.json)) |
+| DnCNN denoising & ResNet-18 (`./demo-denoise`, `./demo-classify`) | 657 NPU submissions; DnCNN PSNR `20.73 -> 31.83 dB`, ResNet-18 top-1 exact match |
+| ONNX Execution Provider (`./demo-onnx`) | `emotion-ferplus-8` (`1.37 ms` `FP16` / `0.98 ms` `INT8`), `mnist-12` (`0.33 ms`), `super-resolution-10` (`1.04 ms`) |
 | Dynamic frequency scaling (`npu_freq_khz`) | `892.8 MHz` → `1500 MHz` (`224.2 ms` → `97.1 ms` on 64-tile super-resolution, `2.31x` speedup) |
 
 ## Quick Start
@@ -58,9 +58,9 @@ python3.12 -m venv venv
 make check
 ```
 
-**Build kernel module, compiler, and ONNX runtime on the P16:**
+**Build kernel module, compiler, and ONNX runtime:**
 
-See [docs/setup.md](docs/setup.md) for vendor firmware/compiler acquisition and [docs/updates.md](docs/updates.md) for building and installing the `n1x-npu-bootstrap-rtx-spark` Arch package (`scripts/build_arch_module_package.py`).
+See [docs/setup.md](docs/setup.md) for vendor firmware/compiler acquisition and [docs/updates.md](docs/updates.md) for building and installing the `n1x-npu-driver` Arch package (`scripts/build_arch_module_package.py`).
 
 ## Repository Layout
 
@@ -71,8 +71,8 @@ See [docs/setup.md](docs/setup.md) for vendor firmware/compiler acquisition and 
 | `demo/` | `./demo-onnx`, `./demo-superres`, `./demo-denoise`, and `./demo-classify` |
 | `packaging/`, `config/` | Arch `PKGBUILD`, `systemd` service (`n1x-npu.service`), and `udev` rules (`99-n1x-npu.rules`) |
 | `scripts/` | Qualification tools, packaging helpers, and unit/fault-injection test suites |
-| `docs/` | [Architecture](docs/architecture.md), [setup](docs/setup.md), [status](docs/status.md), [shutdown/reload](docs/shutdown-reload.md), [cuDLA backend](docs/cudla-backend.md), and [hardware receipts](docs/evidence/README.md) |
+| `docs/` | [Architecture](docs/architecture.md), [setup](docs/setup.md), [status](docs/status.md), [shutdown/reload](docs/shutdown-reload.md), [cuDLA backend](docs/cudla-backend.md), and [packaging/updates](docs/updates.md) |
 
 ## License
 
-Kernel components are licensed under **GPL-2.0-only**; userspace and test components are licensed under **MIT** ([LICENSING.md](LICENSING.md), [NOTICE](NOTICE)). Related repositories: [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux) and [spark_hwmon](https://github.com/johannhartmann/spark_hwmon).
+Kernel components are licensed under **GPL-2.0-only**; userspace and test components are licensed under **MIT** ([LICENSING.md](LICENSING.md), [NOTICE](NOTICE)).

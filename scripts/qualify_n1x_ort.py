@@ -282,7 +282,7 @@ def qualify_emotion_ferplus8(tmpdir: str) -> dict | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-json", type=Path, help="Optional JSON receipt output path")
+    parser.add_argument("--output-json", type=Path, help="Optional JSON summary output path")
     parser.add_argument(
         "--keep-running",
         action="store_true",
@@ -309,7 +309,7 @@ def main() -> None:
         if started and not args.keep_running:
             shutdown_info = stop_and_unload_npu()
 
-    receipt = {
+    summary = {
         "schema": "n1x-ort-hardware-qualification-v1",
         "date": "2026-11-01",
         "kernel": platform.release(),
@@ -329,24 +329,24 @@ def main() -> None:
         "shutdown": shutdown_info,
     }
 
-    assert receipt["mnist12"]["fp16_max_abs_err"] < 0.05, receipt["mnist12"]
-    assert receipt["mnist12"]["top1_match"], receipt["mnist12"]
-    assert receipt["mnist12"]["used_resubmit"], receipt["mnist12"]
-    assert receipt["superres10"]["fp16_max_abs_err"] < 0.005, receipt["superres10"]
-    assert receipt["superres10"]["used_resubmit"], receipt["superres10"]
-    assert receipt["three_stage_dla_host_dla"]["fp16_max_abs_err"] < 0.005, receipt[
+    assert summary["mnist12"]["fp16_max_abs_err"] < 0.05, summary["mnist12"]
+    assert summary["mnist12"]["top1_match"], summary["mnist12"]
+    assert summary["mnist12"]["used_resubmit"], summary["mnist12"]
+    assert summary["superres10"]["fp16_max_abs_err"] < 0.005, summary["superres10"]
+    assert summary["superres10"]["used_resubmit"], summary["superres10"]
+    assert summary["three_stage_dla_host_dla"]["fp16_max_abs_err"] < 0.005, summary[
         "three_stage_dla_host_dla"
     ]
 
     if args.output_json:
         out_path = args.output_json.resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(receipt, indent=2) + "\n")
+        out_path.write_text(json.dumps(summary, indent=2) + "\n")
         owner = os.environ.get("PKEXEC_UID") or os.environ.get("SUDO_UID")
         if owner is not None:
             os.chown(out_path, int(owner), -1)
 
-    print(json.dumps(receipt, indent=2), flush=True)
+    print(json.dumps(summary, indent=2), flush=True)
 
 
 if __name__ == "__main__":

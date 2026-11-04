@@ -1,14 +1,14 @@
 # Maintained template. scripts/build_arch_module_package.py pins the source archive.
-pkgname=n1x-npu-bootstrap-rtx-spark
+pkgname=n1x-npu-driver
 pkgver=0.1.0.rSOURCE_REV
 pkgrel=1
 pkgdesc='NVIDIA N1X NPU kernel driver, compiler, and ONNX runtime for Linux'
 arch=('aarch64')
 license=('GPL-2.0-only')
-depends=('linux-rtx-spark-npu' 'kmod')
-makedepends=('linux-rtx-spark-npu-headers' 'make' 'gcc')
+depends=('kmod')
+makedepends=('make' 'gcc')
 install=n1x-npu-bootstrap.install
-_kernel_release=7.2.8-23-rtx-spark-npu
+_kernel_release="${KERNEL_RELEASE:-$(uname -r)}"
 source=('npu-source.tar.gz')
 sha256sums=('SOURCE_SHA256')
 

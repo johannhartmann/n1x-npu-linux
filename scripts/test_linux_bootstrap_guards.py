@@ -22,8 +22,6 @@ def main():
 #include <errno.h>
 #include "n1x_dla_registers.h"
 typedef uint32_t u32;
-#define N1X_BOOT_KERNEL "7.2.8-23-rtx-spark-npu"
-struct {struct {char release[80];} name;} init_uts_ns;
 enum {DMI_SYS_VENDOR,DMI_PRODUCT_NAME,DMI_BIOS_VERSION};
 static bool strict_platform = true;
 static const char *dmi_values[3];

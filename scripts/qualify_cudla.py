@@ -14,7 +14,7 @@ sys.path.insert(0,str(ROOT/'runtime'))
 from loadable import Model, require
 from n1x_compiler import ensure_reference_loadable
 from n1x_dla import Device
-from qualify_p16_start import KERNEL, fields
+from qualify_npu_start import fields
 RELU_LOADABLE_SHA256='561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942'
 LOADABLE_HASH='717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b'
 CONV_RELU_HASH='fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536'

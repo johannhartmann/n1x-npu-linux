@@ -40,9 +40,9 @@ test-portable:
 	$(PYTHON) scripts/test_linux_shutdown.py
 	$(PYTHON) scripts/test_shutdown_transport.py
 	$(PYTHON) scripts/test_dla_runtime.py
-	$(PYTHON) scripts/test_p16_reload.py
+	$(PYTHON) scripts/test_npu_reload.py
 	$(PYTHON) scripts/test_npu_trigger.py
-	$(PYTHON) scripts/test_qualify_p16_start.py
+	$(PYTHON) scripts/test_qualify_npu_start.py
 	$(PYTHON) scripts/test_npu_dma_domains.py
 	$(PYTHON) scripts/test_sroot_cca_quirk.py
 

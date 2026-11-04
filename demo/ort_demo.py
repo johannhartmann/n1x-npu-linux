@@ -3,7 +3,7 @@
 
 Compiles, partitions, caches, and executes ONNX models (emotion-ferplus-8.onnx,
 mnist-12.onnx, or super-resolution-10.onnx) across the N1X DLA NPU and Host CPU
-reference fallback, producing a JSON receipt and visual HTML report.
+reference fallback, producing a JSON summary and visual HTML report.
 """
 from __future__ import annotations
 
@@ -197,7 +197,7 @@ def main() -> None:
         "--output-dir",
         type=Path,
         required=True,
-        help="New directory for execution report and JSON evidence",
+        help="New directory for execution report and JSON output",
     )
     parser.add_argument(
         "--device",
@@ -379,7 +379,7 @@ pre{{white-space:pre-wrap;background:#161b22;border:1px solid #30363d;padding:16
   <div class="stat"><b>Cosine Similarity</b><span>{cos_sim:.6f}</span></div>
 </div>
 {gallery_html}
-<h2>Execution Receipt (JSON)</h2>
+<h2>Execution Summary (JSON)</h2>
 <pre>{html.escape(json.dumps(result, indent=2))}</pre>
 """
     (dest / "report.html").write_text(page)

@@ -1,7 +1,9 @@
 post_install() {
-  depmod -a 7.2.8-23-rtx-spark-npu
+  for kdir in /usr/lib/modules/*; do
+    [[ -d "$kdir" ]] && depmod -a "${kdir##*/}"
+  done
   systemctl daemon-reload >/dev/null 2>&1 || true
-  printf '%s\n' 'Enable n1x-npu.service only after physical qualification.'
+  printf '%s\n' 'Enable n1x-npu.service after installing firmware in /usr/lib/firmware/nvidia/n1x/.'
 }
 
 post_upgrade() {
@@ -9,8 +11,8 @@ post_upgrade() {
 }
 
 post_remove() {
-  if [[ -d /usr/lib/modules/7.2.8-23-rtx-spark-npu ]]; then
-    depmod -a 7.2.8-23-rtx-spark-npu
-  fi
+  for kdir in /usr/lib/modules/*; do
+    [[ -d "$kdir" ]] && depmod -a "${kdir##*/}"
+  done
   systemctl daemon-reload >/dev/null 2>&1 || true
 }

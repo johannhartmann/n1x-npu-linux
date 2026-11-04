@@ -2,7 +2,7 @@
 
 ## 1. Prerequisites
 
-- **Kernel**: `7.2.8-23-rtx-spark-npu` with matching headers (see [P16 Linux setup](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux) and [`patches/linux-7.2.8-p16-sroot-noncoherent-dma.patch`](../patches/linux-7.2.8-p16-sroot-noncoherent-dma.patch)).
+- **Kernel**: ARM64 Linux kernel (`>= 6.12`) with matching headers and the [`NVDA8600` `_HRV=1` noncoherent DMA quirk](../patches/arm64-acpi-iort-nvda8600-noncoherent-dma.patch) applied.
 - **Host Packages (Arch/ARM64)**: `base-devel`, `python`, `uv`, `bubblewrap`, `gdb`, `openssl`, `libdrm`, `acpica`, `7zip`, and CUDA (`/opt/cuda`) for the optional cuDLA backend.
 
 ## 2. Checkout and Python Environments
@@ -65,8 +65,8 @@ make test-cudla
 Install the extracted SROOT firmware images and compile `n1x_npu_bootstrap.ko`:
 
 ```sh
-sudo install -Dm600 sources/dla-p16-sroot-v0.bin /usr/lib/firmware/nvidia/n1x/p16-sroot-v0.bin
-sudo install -Dm600 sources/dla-p16-sroot-v1.bin /usr/lib/firmware/nvidia/n1x/p16-sroot-v1.bin
+sudo install -Dm600 sources/sroot-v0.bin /usr/lib/firmware/nvidia/n1x/sroot-v0.bin
+sudo install -Dm600 sources/sroot-v1.bin /usr/lib/firmware/nvidia/n1x/sroot-v1.bin
 make module
 ```
 
@@ -80,16 +80,16 @@ pkexec /usr/bin/python3 "$PWD/scripts/install_cudla_broker.py" --models superres
 
 ## 6. Hardware Qualification
 
-To run the full startup, inference, shutdown, and reload qualification sequence on the P16:
+To run the full startup, inference, shutdown, and reload qualification sequence:
 
 ```sh
-pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_p16_reload.py" \
+pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_npu_reload.py" \
   --cycles 2 --output-dir "$PWD/results/NEW-reload"
 ```
 
 ## 7. Enable Automatic Startup at Boot
 
-Build and install the `n1x-npu-bootstrap-rtx-spark` Arch package (see [updates](updates.md)), then enable the systemd service:
+Build and install the `n1x-npu-driver` Arch package (see [updates](updates.md)), then enable the systemd service:
 
 ```sh
 sudo systemctl enable --now n1x-npu.service

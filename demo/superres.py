@@ -25,7 +25,7 @@ LOADABLE_SHA256='c1ffde5d1eb9c7486a08ecc1470a1b633a11c7a71411f8fb36064d16dbcfc1c
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('image',type=Path,help='PNG/JPEG image, at least 64 pixels on both axes')
-    parser.add_argument('--output-dir',type=Path,required=True,help='new directory for DLA output, comparison and evidence')
+    parser.add_argument('--output-dir',type=Path,required=True,help='new directory for DLA output and HTML report')
     args=parser.parse_args()
     if os.geteuid()==0:parser.error('run as an unprivileged desktop user; the installed broker isolates RAWIO')
     profile=Path('/sys/firmware/acpi/platform_profile').read_text().strip()

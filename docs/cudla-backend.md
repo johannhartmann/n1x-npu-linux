@@ -23,7 +23,7 @@ Produces:
 
 ## Hardware Qualification
 
-Run the 8-job baseline or `--reuse` (`REEXEC_IO`) physical qualification suite ([receipt](evidence/npu-hardware-2026-10-28.json)):
+Run the 8-job baseline or `--reuse` (`REEXEC_IO`) physical qualification suite:
 
 ```sh
 pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_cudla.py" \

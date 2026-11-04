@@ -20,10 +20,10 @@ Run the offline shutdown and transport regression suite:
 make test-portable
 ```
 
-Run the physical two-cycle stop/unload/reload qualification on the P16:
+Run the physical two-cycle stop/unload/reload qualification:
 
 ```sh
-pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_p16_reload.py" \
+pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_npu_reload.py" \
   --cycles 2 --output-dir "$PWD/results/NEW-reload"
 ```
 

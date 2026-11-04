@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import tempfile
 from unittest.mock import patch
 
-import qualify_p16_reload as q
+import qualify_npu_reload as q
 
 
 def main():
