@@ -11,7 +11,7 @@ Executes KAIR's 17-convolution `DnCNN-25` denoiser and torchvision's 20-convolut
 
 ## Build and Run
 
-After completing [setup](../docs/setup.md) and building the baseline fixtures (`venv/bin/python scripts/build_models.py`):
+After completing [setup](../docs/setup.md):
 
 ```sh
 uv venv --python 3.12 sources/vision-venv
@@ -19,7 +19,6 @@ uv pip install --python sources/vision-venv/bin/python --require-hashes \
   --only-binary :all: -r requirements-vision.lock
 sources/vision-venv/bin/python scripts/prepare_vision.py --fetch
 sources/vision-venv/bin/python scripts/test_vision_examples.py
-venv/bin/python scripts/build_vision_models.py
 make runtime cudla
 pkexec /usr/bin/python3 "$PWD/scripts/install_cudla_broker.py" --models all
 ```

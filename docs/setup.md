@@ -51,7 +51,7 @@ venv/bin/python scripts/prepare_inputs.py --extract-firmware
 venv/bin/python scripts/prepare_inputs.py
 ```
 
-## 4. Build Userspace Runtime, Compiler, and Models
+## 4. Build Userspace Runtime and Compiler
 
 Build the native `t254` compiler (`runtime/libn1x_compiler.so`, `runtime/n1x-compile`), heterogeneous ONNX runtime (`runtime/libn1x_ort.so`, `runtime/n1x-ort-run`), and cuDLA backend (`runtime/cudla/libnvcudla.so`):
 
@@ -59,12 +59,6 @@ Build the native `t254` compiler (`runtime/libn1x_compiler.so`, `runtime/n1x-com
 make runtime cudla
 make test-compiler
 make test-cudla
-```
-
-To reproduce the four hash-pinned cuDLA fixture loadables (`relu`, `conv1x1`, `conv1x1_relu`, `superres`):
-
-```sh
-venv/bin/python scripts/build_models.py --superres
 ```
 
 ## 5. Install Firmware and Build Kernel Module

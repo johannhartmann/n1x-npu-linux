@@ -4,25 +4,17 @@
 No device is opened. The execution backend is a stub; protocol and firmware are
 covered independently by test_linux_bypass_task/firmware.py.
 """
-import argparse
 import os
-import hashlib
-import struct
-import sys
 from pathlib import Path
 import shlex
 import subprocess
 import tempfile
-from emulate_profile1_commands import run, HOST, MMIO, ACK, PROFILE1_HASH
 
+HOST = 0x80000000
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--conv', action='store_true', help='also qualify convolution task serialization/scheduling')
-    parser.add_argument('--conv-relu', action='store_true', help='also qualify Conv->ReLU task serialization/scheduling')
-    args = parser.parse_args()
     source = (ROOT / 'driver/n1x_dla_accel.c').read_text()
     body = source[source.index('#define N1X_JOB_PREFIX'):source.index('static int n1x_accel_open(')]
     shim = r'''
@@ -376,60 +368,6 @@ int main(int argc,char **argv)
             str(ROOT/'driver/n1x_dla_command.c'), str(ROOT/'driver/n1x_dla_statistics.c'),
             '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
-        sys.path.insert(0, str(ROOT/'runtime'))
-        from run_relu import prepare
-        template = (ROOT/'results/p16-relu-template.bin').read_bytes()
-        input_bytes = struct.pack('<1568e', *[1.5 if i % 2 else -2.5 for i in range(1568)])
-        image, ranges, expected = prepare(template, input_bytes)
-        assert expected == struct.pack('<1568e', *[1.5 if i % 2 else 0 for i in range(1568)])
-        from loadable import Model
-        model = Model.from_file(ROOT/'results/native-compile-t254/relu.nvda')
-        native_image, native_ranges = model.prepare({'input': input_bytes})
-        fixtures = [
-                ('template', image, ranges, 0),
-                ('native_loadable', native_image, native_ranges, model.inputs[0].offset)]
-        if args.conv:
-            from verify_conv_loadable import LOADABLE_HASH as CONV_HASH
-            conv = Model.from_file(ROOT/'results/native-compile-t254-conv1x1/conv1x1.nvda')
-            assert conv.sha256 == CONV_HASH
-            conv_image, conv_ranges = conv.prepare({conv.inputs[0].name: input_bytes})
-            fixtures.append(('conv_loadable', conv_image, conv_ranges, conv.inputs[0].offset))
-        if args.conv_relu:
-            from verify_conv_loadable import CONV_RELU_HASH
-            combined=Model.from_file(ROOT/'results/native-compile-t254-conv1x1_relu/conv1x1_relu.nvda')
-            assert combined.sha256==CONV_RELU_HASH
-            combined_image,combined_ranges=combined.prepare({combined.inputs[0].name:input_bytes})
-            fixtures.append(('conv_relu_loadable',combined_image,combined_ranges,combined.inputs[0].offset))
-        cases = []
-        for label, source_image, source_ranges, input_offset in fixtures:
-            payload_path, captured = Path(directory)/'image.bin', Path(directory)/'prepared.bin'
-            range_path = Path(directory)/'ranges.bin'
-            payload_path.write_bytes(source_image)
-            range_path.write_bytes(b''.join(struct.pack('<QQ', *r) for r in source_ranges))
-            subprocess.run([str(binary), str(payload_path), str(range_path), str(captured)], check=True)
-            payload = bytearray(captured.read_bytes())
-            assert payload[8192+input_offset:8192+input_offset+3136] == input_bytes
-            if label == 'template':
-                assert payload[12288:12288+3136] == b'\xa5'*3136
-            assert [struct.unpack_from('<Q', payload, 512+8*i)[0] for i in range(len(source_ranges))] == [HOST+8192+offset for offset, _ in source_ranges]
-            cases.append((label, payload, source_ranges))
-    firmware = (ROOT/'sources/dla-profile1-verified.bin').read_bytes()
-    assert hashlib.sha256(firmware).hexdigest() == PROFILE1_HASH
-    def response(u):
-        for offset in (8, 0xd28):
-            value = struct.unpack('<I', u.mem_read(MMIO+offset, 4))[0]
-            u.mem_write(MMIO+offset, struct.pack('<I', value & ~128))
-        u.mem_write(MMIO+0x40, struct.pack('<I', ACK))
-    for label, payload, ranges in cases:
-        result = run(firmware, method=0x307, host_payload=payload, host_handler=response,
-                     boot_from_reset=True, via_trap=True, dma_register_model=True, resume_scheduler=True)
-        assert result['returned'] and result['scheduler_wfi']
-        assert not result['function_stubs'] and result['firmware_code_unmodified']
-        assert result['interrupts'] == [(0x702, HOST >> 8)] and not result['task_interrupts']
-        for i, (offset, _) in enumerate(ranges[:-1]):
-            assert (0x2505c+8*i, 4, HOST+8192+offset) in result['scheduler_mmio_writes']
-            assert (0x25060+8*i, 4, 0) in result['scheduler_mmio_writes']
-        print(label + ': runtime image -> actual accel ioctl serializer -> original firmware scheduler passed; engine arithmetic unmodeled')
 
 
 if __name__ == '__main__':

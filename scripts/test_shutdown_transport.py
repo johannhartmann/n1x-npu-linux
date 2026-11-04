@@ -11,8 +11,19 @@ import subprocess
 import tempfile
 
 from test_linux_shutdown import ROOT, shutdown_harness
-from test_hfrp_channel import IO
-from test_hfrp_stop import StopPeer
+from test_hfrp_channel import IO, Peer
+
+
+class StopPeer(Peer):
+    def __init__(self, *, off=b'\x43\0', state=b'\x07', query_status=0, **kw):
+        super().__init__(**kw)
+        self.off, self.state_reply, self.query_status = off, state, query_status
+
+    def enqueue(self, sequence, status=0, payload=None):
+        command = (int.from_bytes(self.packets[-1][:4], 'little') >> 18) & 1023
+        assert command in (400, 431)
+        super().enqueue(sequence, self.query_status if command == 431 else status,
+                        self.state_reply if command == 431 else self.off)
 
 
 def main():

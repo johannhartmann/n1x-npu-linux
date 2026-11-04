@@ -15,11 +15,74 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'runtime'))
-from loadable import Model
+from loadable import Model, require
 from n1x_dla import Device
-from run_conv import inputs, expected_output, load_model
 from qualify_p16_start import KERNEL, fields
 RELU_LOADABLE_SHA256='561fe58bafa90f845580492044d7ca9dae0c250878a38751ef34feb8f857a942'
+LOADABLE_HASH='717de7a60381d210d0fbf5df72b66cbc8650dca536b801ef9719de8ed3c4487b'
+CONV_RELU_HASH='fe57704f93edbafe9e374e14675cfc34cc5a44858497c6126dec56a60a837536'
+SHAPE=(1,32,7,7)
+BYTES=3136
+
+
+def _index(c,h,w):
+    return ((c//16*7+h)*7+w)*16+c%16
+
+
+def inputs():
+    import struct
+    cases={}
+    for name,coefficients in (('channels',(13,7,3)),('spatial',(17,5,11))):
+        values=[0]*1568
+        a,b,d=coefficients
+        for c in range(32):
+            for h in range(7):
+                for w in range(7):
+                    values[_index(c,h,w)]=(2*((a*c+b*h+d*w)%32)-31)/16
+        cases[name]=struct.pack('<1568e',*values)
+    cases['negative_channels']=struct.pack('<1568e',*(
+        -v for v in struct.unpack('<1568e',cases['channels'])))
+    return cases
+
+
+def expected_output(data,relu=False):
+    import struct
+    require(len(data)==BYTES,'input must contain 1568 packed FP16 values')
+    values=struct.unpack('<1568e',data)
+    allowed={n/16 for n in range(-31,32,2)}
+    require(all(v in allowed for v in values),'input must use odd multiples of 1/16 in [-31/16,31/16]')
+    numerators=[int(v*16) for v in values]
+    result=[0]*1568
+    for c in range(32):
+        for h in range(7):
+            for w in range(7):
+                at=_index(c,h,w)
+                n=2*(c%3+1)*numerators[at]-numerators[_index((c+1)%32,h,w)]+4*c-64
+                assert n!=0
+                result[at]=max(0,n)/128 if relu else n/128
+    encoded=struct.pack('<1568e',*result)
+    assert tuple(result)==struct.unpack('<1568e',encoded)
+    return encoded
+
+
+def load_model(path):
+    import struct
+    model=Model.from_file(path)
+    require(model.sha256 in (LOADABLE_HASH,CONV_RELU_HASH),'model differs from checked convolution artifacts')
+    require(len(model.inputs)==len(model.outputs)==1,'unexpected I/O count')
+    for tensor in (*model.inputs,*model.outputs):
+        require(tensor.shape==SHAPE and tensor.bytes==BYTES and
+                tensor.format_codes==(3,2,2,36,0) and
+                tensor.strides==(2,224,1568,0,3136,0,0,0),'unexpected tensor layout')
+    start,size=model.ranges[2]
+    require(size==8192,'unexpected constant allocation')
+    kernel=struct.unpack('<1024e',model.image[start:start+2048])
+    require(kernel==tuple((c%3+1)/4 if j==c else -0.125 if j==(c+1)%32 else 0
+                          for c in range(32) for j in range(32)),'kernel differs from graph')
+    bias_words=struct.unpack('<32I',model.image[start+4096:start+4224])
+    expected_bias=tuple(struct.unpack('<I',struct.pack('<f',c/32-0.5))[0]>>13 for c in range(32))
+    require(bias_words==expected_bias,'FP19 bias differs from graph')
+    return model
 
 
 def main():

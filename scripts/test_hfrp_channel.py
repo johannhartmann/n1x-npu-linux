@@ -10,11 +10,34 @@ import struct
 import subprocess
 import tempfile
 
-from test_hfrp_ring import ROOT, IO, READ, WRITE, DELAY, Tx, Reply
-
-ASYNC = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.POINTER(Reply))
+ROOT = Path(__file__).resolve().parents[1]
+READ = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32))
+WRITE = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32)
+DELAY = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint32)
+ASYNC = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
 NEW, READY, ACTIVE, FAILED = range(4)
 NO_SEQUENCE = 0xffff
+
+
+class IO(ctypes.Structure):
+    _fields_ = [('context', ctypes.c_void_p), ('write32', WRITE), ('read32', READ), ('delay_us', DELAY)]
+
+
+class Tx(ctypes.Structure):
+    _fields_ = [('header', ctypes.c_uint32), ('head_publish_attempted', ctypes.c_uint8),
+                ('head_published', ctypes.c_uint8), ('doorbell_attempted', ctypes.c_uint8),
+                ('doorbell_written', ctypes.c_uint8), ('space_unavailable', ctypes.c_uint8)]
+
+
+class Reply(ctypes.Structure):
+    _fields_ = [('header', ctypes.c_uint32), ('sequence', ctypes.c_uint16),
+                ('status', ctypes.c_uint16), ('length', ctypes.c_uint8),
+                ('payload', ctypes.c_uint8 * 50), ('tail_publish_attempted', ctypes.c_uint8),
+                ('tail_published', ctypes.c_uint8), ('irq_clear_attempted', ctypes.c_uint8),
+                ('irq_cleared', ctypes.c_uint8)]
+
+
+ASYNC = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.POINTER(Reply))
 
 
 class Channel(ctypes.Structure):
