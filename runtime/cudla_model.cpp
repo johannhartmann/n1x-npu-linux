@@ -221,7 +221,7 @@ Model::Model(const uint8_t *data,size_t bytes) {
         need(constants.size()==1 && constants[0].flags==3 && constants[0].valid &&
              constants[0].end==global,"global constant pool");
         auto start=layout[constants[0].memory].offset;
-        need(std::any_of(ranges.begin(),ranges.end(),[&](const auto& a){
+        need(std::any_of(resolved.begin(),resolved.end(),[&](const auto& a){
             return a.offset<=start && start+global<=a.offset+a.bytes;
         }),"constant pool coverage");
     }

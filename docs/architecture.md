@@ -55,21 +55,21 @@ Defined in [`include/uapi/n1x_dla_accel.h`](../include/uapi/n1x_dla_accel.h) and
 
 Implemented in [`runtime/n1x_compiler_shim.cpp`](../runtime/n1x_compiler_shim.cpp), [`runtime/n1x_compile.cpp`](../runtime/n1x_compile.cpp), and [`runtime/n1x_compiler.py`](../runtime/n1x_compiler.py):
 
-- **ARM64 `Mtl3` Bridge (`-ffixed-x18`)**: Maps the `t254` backend (`Mtl3`) from `nvdla_compiler.dll` into Linux `libnvdla_compiler.so` in-process while preserving the Windows ARM64 TEB register (`x18`).
-- **Precision & Quantization**: Supports `FP16` (`CHW16`) and `INT8` (`CHW32`, per-tensor and per-channel quantization scales) with free-list heap reuse across multi-branch DAGs.
-- **Operator Lowering**: Lowers `Conv`, `Gemm`/`FullyConnected`, `Relu`, `Clip`, `MaxPool`, `AveragePool`, `GlobalAveragePool`, `Add`, `Sub`, `Mul`, `Div` (constant divisor $\rightarrow$ reciprocal `Scale`), `Concat`, `BatchNormalization`, `Scale`, `Sigmoid`, and `Tanh` directly into `.nvda` FlatBuffers loadables.
+- **ARM64 `Mtl3` Bridge (`-ffixed-x18`)**: Maps the `t254` backend (`Mtl3`) from `nvdla_compiler.dll` into Linux `libnvdla_compiler.so` in-process while preserving the Windows ARM64 TEB register (`x18`) and serializing concurrent compiler invocations (`g_compile_mutex`).
+- **Precision, Profile & Quantization**: Supports `FP16` (`CHW16`) and `INT8` (`CHW32`, per-tensor and per-channel quantization scales, explicit `QuantizeLinear`/`DequantizeLinear`), configurable `IProfile` flags (`generate_stats` / `task-0-stats`, Winograd, weight compression, `sdp_pdp_on_fly`, `use_softmax_optz`, memory pool sizes), and free-list heap reuse across multi-branch DAGs.
+- **Operator Lowering**: Lowers `Conv`, `ConvTranspose` (`Deconvolution`), `Gemm`/`FullyConnected`/`MatMul`, `Relu`/`Sigmoid`/`Tanh`/`Clip`/`LeakyRelu`/`Elu`/`Selu`/`Softsign`/`Softplus`/`Abs`, `MaxPool`/`AveragePool`/`GlobalAveragePool`, `Add`/`Sub`/`Mul`/`Div`/`Max`/`Min`, `Concat`, `BatchNormalization`, `LayerNormalization`/`InstanceNormalization`/`RMSNormalization`, `LRN`, `Scale`, `Slice`, `Resize`/`Upsample` (nearest & 2x2 bilinear), `DepthToSpace` (`PixelShuffle`), `Softmax`, `ReduceMean`/`ReduceSum`/`ReduceMax`/`ReduceMin`/`ReduceL1`/`ReduceL2`/`ReduceSumSquare`, `Unary` math ops (`Sin`, `Cos`, `Atan`, `Exp`, `Log`, `Reciprocal`, `Ceil`, `Floor`, `Round`, `Pow`, `Sqrt`, `Rsqrt`, `Erf`, `Neg`, `Sign`, `Tan`, `Sinh`, `Cosh`, `Asin`, `Acos`), `Pad`, `Tile`, `Gather`/`GatherElements`, `Select`/`Where`, `Reverse`, `LSTM`, and `ArgMax`/`ArgMin` into `.nvda` FlatBuffers loadables.
 
 ## 5. Heterogeneous ONNX Execution Provider (`libn1x_ort.so`, `N1xInferenceSession`)
 
 Implemented in [`runtime/n1x_ort.cpp`](../runtime/n1x_ort.cpp) and [`runtime/n1x_ort.py`](../runtime/n1x_ort.py):
 
 1. **Canonicalization**: Resolves `auto_pad` (`SAME_UPPER`/`SAME_LOWER`), folds constant subgraphs, fuses `Conv+Add` and `Flatten/Reshape+MatMul+Add` $\rightarrow$ `Gemm`, and rewrites opset-10 `Reshape->Transpose->Reshape` sub-pixel tails into `DepthToSpace`.
-2. **Partitioning & Caching**: Partitions arbitrary ONNX graphs into cycle-free topological `DLA` and `Host` stages, compiles each `DLA` stage into an `.nvda` loadable cached by SHA-256 under `~/.cache/n1x/ort/`, and auto-calibrates `INT8` tensor/channel scales when requested.
-3. **Execution**: Packs `NCHW` `float32` tensors into `CHW16` (`FP16`) or `CHW32` (`INT8`) surfaces in C++17 (`n1x_ort_pack_fp32` / `n1x_ort_unpack_fp32`) and executes via `EXEC` on initial run and `REEXEC_IO` on subsequent runs.
+2. **Partitioning, Caching & Calibration**: Partitions arbitrary ONNX graphs into cycle-free topological `DLA` and `Host` stages, compiles each `DLA` stage into an `.nvda` loadable cached by SHA-256 under `~/.cache/n1x/ort/`, and calibrates both per-tensor (`tensor_ranges`) and per-channel (`channel_ranges` / `channel_dynamic_ranges`) `INT8` scales via `calibrate_onnx_model()`.
+3. **Execution, `mmap` Readback & Profiling**: Packs and unpacks `NCHW` `float32` tensors into `CHW16` (`FP16`) or `CHW32` (`INT8`) surfaces with ARM64 NEON vectorization (`n1x_ort_pack_fp32` / `n1x_ort_unpack_fp32`), checks retained-job kernel budgets via `n1x_dla_info()`, executes via `EXEC` on initial run and `REEXEC_IO` on subsequent runs, reads outputs via zero-copy read-only `mmap()` (`n1x_dla_mmap()`) when available, and exposes `task-0-stats` profiling blobs (`n1x_ort_module_read_stats()`).
 
 ## 6. Linux cuDLA Backend (`libnvcudla.so`)
 
 Implemented in [`runtime/cudla_backend.cpp`](../runtime/cudla_backend.cpp) and [`runtime/cudla_model.cpp`](../runtime/cudla_model.cpp):
 
 - Implements the backend driver interface expected by NVIDIA's unmodified Linux `libcudla.so.1` (`13.4.92`), staging registered CUDA device buffers into page-aligned `.nvda` task images and submitting them to `/dev/accel/accel0`.
-- Supports `CUDLA_TASK_STATISTICS` (`DRM_IOCTL_N1X_DLA_STATS`), `CUDLA_DEVICE_VERSION`, `cudlaSetTaskTimeoutInMs`, and `REEXEC_IO` buffer reuse.
+- Supports `CUDLA_TASK_STATISTICS` (`DRM_IOCTL_N1X_DLA_STATS`), `CUDLA_DEVICE_VERSION`, `cudlaSetTaskTimeoutInMs`, and compact `REEXEC_IO` staging on repeat submissions (allocating and staging only the dynamic input/output/statistics slices instead of the full `.nvda` weight image).

@@ -38,6 +38,11 @@ enum N1xDlaDataType {
 	N1X_DLA_DATA_TYPE_INT8 = 4,
 	N1X_DLA_DATA_TYPE_UINT8 = 5,
 	N1X_DLA_DATA_TYPE_UINT16 = 6,
+	N1X_DLA_DATA_TYPE_FP19 = 7,
+	N1X_DLA_DATA_TYPE_INT32 = 8,
+	N1X_DLA_DATA_TYPE_UINT32 = 9,
+	N1X_DLA_DATA_TYPE_INT64 = 10,
+	N1X_DLA_DATA_TYPE_INT4 = 11,
 };
 
 enum N1xDlaDataFormat {
@@ -59,6 +64,57 @@ enum N1xDlaPoolingType {
 	N1X_DLA_POOLING_MIN = 0,
 	N1X_DLA_POOLING_MAX = 1,
 	N1X_DLA_POOLING_AVERAGE = 2,
+	N1X_DLA_POOLING_SUM = 3,
+	N1X_DLA_POOLING_SUM_SQUARE = 4,
+	N1X_DLA_POOLING_L1_NORM = 5,
+	N1X_DLA_POOLING_L2_NORM = 6,
+};
+
+enum N1xDlaUnaryType {
+	N1X_DLA_UNARY_UNKNOWN = 0,
+	N1X_DLA_UNARY_SIN = 1,
+	N1X_DLA_UNARY_COS = 2,
+	N1X_DLA_UNARY_ATAN = 3,
+	N1X_DLA_UNARY_EXP = 4,
+	N1X_DLA_UNARY_LOG = 5,
+	N1X_DLA_UNARY_RECIPROCAL = 6,
+	N1X_DLA_UNARY_CEIL = 7,
+	N1X_DLA_UNARY_FLOOR = 8,
+	N1X_DLA_UNARY_ROUND = 9,
+	N1X_DLA_UNARY_POWER = 10,
+	N1X_DLA_UNARY_EQUAL = 11,
+	N1X_DLA_UNARY_GREATER = 12,
+	N1X_DLA_UNARY_LESS = 13,
+	N1X_DLA_UNARY_GREATER_OR_EQUAL = 14,
+	N1X_DLA_UNARY_LESS_OR_EQUAL = 15,
+	N1X_DLA_UNARY_DIV = 16,
+	N1X_DLA_UNARY_ACOS = 17,
+	N1X_DLA_UNARY_ACOSH = 18,
+	N1X_DLA_UNARY_ASIN = 19,
+	N1X_DLA_UNARY_ASINH = 20,
+	N1X_DLA_UNARY_ATANH = 21,
+	N1X_DLA_UNARY_COSH = 22,
+	N1X_DLA_UNARY_SINH = 23,
+	N1X_DLA_UNARY_TAN = 24,
+	N1X_DLA_UNARY_SIGN = 25,
+	N1X_DLA_UNARY_SQRT = 26,
+	N1X_DLA_UNARY_ERF = 27,
+	N1X_DLA_UNARY_FLOAT_MOD = 28,
+	N1X_DLA_UNARY_NEG = 29,
+	N1X_DLA_UNARY_RSQRT = 30,
+};
+
+enum N1xDlaPaddingValueMode {
+	N1X_DLA_PAD_UNKNOWN = 0,
+	N1X_DLA_PAD_CONSTANT = 1,
+	N1X_DLA_PAD_REFLECT = 2,
+	N1X_DLA_PAD_EDGE = 3,
+};
+
+enum N1xDlaGatherMode {
+	N1X_DLA_GATHER_UNKNOWN = 0,
+	N1X_DLA_GATHER_DEFAULT = 1,
+	N1X_DLA_GATHER_ELEMENTS = 2,
 };
 
 enum N1xDlaElementWiseOperation {
@@ -99,8 +155,9 @@ enum N1xDlaTensorScalingMode {
 };
 
 enum N1xDlaResizeMode {
-	N1X_DLA_RESIZE_NEAREST = 0,
-	N1X_DLA_RESIZE_LINEAR = 1,
+	N1X_DLA_RESIZE_UNKNOWN = 0,
+	N1X_DLA_RESIZE_NEAREST = 1,
+	N1X_DLA_RESIZE_LINEAR = 2,
 };
 
 /* Initialize the native N1X t254 compiler shim (loads libnvdla_compiler.so and
@@ -148,6 +205,17 @@ uint32_t NvDlaProfileSetNetworkOutputSurfaceFormat(N1xDlaHandle profile, uint8_t
 uint32_t NvDlaProfileSetTensorScalingMode(N1xDlaHandle profile, uint8_t mode);
 uint32_t NvDlaProfileSetQuantizationMode(N1xDlaHandle profile, uint8_t mode);
 uint32_t NvDlaProfileSetIsExplicitQuantization(N1xDlaHandle profile, uint8_t is_explicit);
+uint32_t NvDlaProfileSetCanGenerateLayerwiseStats(N1xDlaHandle profile, uint8_t enable);
+uint32_t NvDlaProfileSetCanGenerateDetailedLayerwiseStats(N1xDlaHandle profile, uint8_t enable);
+uint32_t NvDlaProfileSetCanWinograd(N1xDlaHandle profile, uint8_t enable);
+uint32_t NvDlaProfileSetCanCompressWeights(N1xDlaHandle profile, uint8_t enable);
+uint32_t NvDlaProfileSetCanCompressStructuredSparseWeights(N1xDlaHandle profile, uint8_t enable);
+uint32_t NvDlaProfileSetCanSDPFuseVerticalOps(N1xDlaHandle profile, uint8_t enable);
+uint32_t NvDlaProfileSetCanSDPFuseSubEngineOps(N1xDlaHandle profile, uint8_t enable);
+uint32_t NvDlaProfileSetCanSDPMergeMathOps(N1xDlaHandle profile, uint8_t enable);
+uint32_t NvDlaProfileSetCanSDPPDPOnFly(N1xDlaHandle profile, uint8_t enable);
+uint32_t NvDlaProfileSetUseSoftMaxOptz(N1xDlaHandle profile, uint8_t enable);
+uint32_t NvDlaProfileSetMultiBatchSize(N1xDlaHandle profile, uint32_t batch_size);
 
 uint32_t NvDlaCompilerCompile(N1xDlaHandle compiler, const char *profile_name, const char *target_name, N1xDlaHandle *out_loadable);
 uint32_t NvDlaCompilerGetLoadableImageSize(N1xDlaHandle compiler, const char *profile_name, uint64_t *out_size);
@@ -199,8 +267,8 @@ uint32_t NvDlaConcatenationLayerSetAxis(N1xDlaHandle layer, int32_t axis);
 
 uint32_t NvDlaNetworkAddSlice(
 	N1xDlaHandle net, N1xDlaHandle input,
-	N1xDlaWeights start, N1xDlaWeights size, N1xDlaWeights stride,
-	N1xDlaWeights fill_val, uint8_t mode, N1xDlaHandle *out_layer);
+	N1xDlaWeights starts, N1xDlaWeights ends, N1xDlaWeights axes,
+	N1xDlaWeights steps, uint8_t mode, N1xDlaHandle *out_layer);
 
 uint32_t NvDlaNetworkAddPixelShuffle(
 	N1xDlaHandle net, N1xDlaHandle input, uint8_t type, int32_t upscale_factor, N1xDlaHandle *out_layer);
@@ -214,6 +282,55 @@ uint32_t NvDlaNetworkAddQuantize(
 	N1xDlaHandle net, N1xDlaHandle input, N1xDlaWeights scales, N1xDlaWeights zero_points, int32_t axis, N1xDlaHandle *out_layer);
 uint32_t NvDlaNetworkAddDequantize(
 	N1xDlaHandle net, N1xDlaHandle input, N1xDlaWeights scales, N1xDlaWeights zero_points, int32_t axis, N1xDlaHandle *out_layer);
+
+uint32_t NvDlaNetworkAddSoftMax(N1xDlaHandle net, N1xDlaHandle input, N1xDlaHandle *out_layer);
+uint32_t NvDlaNetworkAddSoftMaxAxis(N1xDlaHandle net, N1xDlaHandle input, int32_t axis, N1xDlaHandle *out_layer);
+
+uint32_t NvDlaNetworkAddUnary(N1xDlaHandle net, N1xDlaHandle input, uint8_t unary_type, N1xDlaHandle *out_layer);
+uint32_t NvDlaNetworkAddUnaryWeights(
+	N1xDlaHandle net, N1xDlaHandle input, uint8_t unary_type,
+	N1xDlaWeights alpha, N1xDlaWeights beta, N1xDlaHandle *out_layer);
+
+uint32_t NvDlaNetworkAddReduce(
+	N1xDlaHandle net, N1xDlaHandle input, uint8_t reduce_op, N1xDlaWeights axes, N1xDlaHandle *out_layer);
+
+uint32_t NvDlaNetworkAddNormalization(
+	N1xDlaHandle net, N1xDlaHandle input, N1xDlaWeights axes, float epsilon, N1xDlaHandle *out_layer);
+uint32_t NvDlaNetworkAddNormalizationExt(
+	N1xDlaHandle net, N1xDlaHandle input, N1xDlaWeights axes, float epsilon,
+	N1xDlaDims4 param_dims, N1xDlaWeights scale, N1xDlaWeights bias, N1xDlaHandle *out_layer);
+uint32_t NvDlaNormalizationLayerSetNormalizeMean(N1xDlaHandle layer, uint8_t enable);
+uint32_t NvDlaNormalizationLayerSetNormalizeVariance(N1xDlaHandle layer, uint8_t enable);
+
+uint32_t NvDlaNetworkAddMatMul(
+	N1xDlaHandle net, N1xDlaHandle input0, N1xDlaHandle input1, N1xDlaHandle *out_layer);
+uint32_t NvDlaNetworkAddReshape(
+	N1xDlaHandle net, N1xDlaHandle input, N1xDlaDims4 dims, N1xDlaHandle *out_layer);
+uint32_t NvDlaNetworkAddTranspose(
+	N1xDlaHandle net, N1xDlaHandle input, N1xDlaDims4 perm, N1xDlaHandle *out_layer);
+
+uint32_t NvDlaNetworkAddPad(
+	N1xDlaHandle net, N1xDlaHandle input, N1xDlaDims4 pre_pad, N1xDlaDims4 post_pad,
+	uint8_t pad_mode, N1xDlaHandle *out_layer);
+uint32_t NvDlaPadLayerSetConstantValue(N1xDlaHandle layer, float val);
+
+uint32_t NvDlaNetworkAddTile(
+	N1xDlaHandle net, N1xDlaHandle input, N1xDlaDims4 repeats, N1xDlaHandle *out_layer);
+
+uint32_t NvDlaNetworkAddGather(
+	N1xDlaHandle net, N1xDlaHandle input, N1xDlaHandle indices,
+	uint8_t mode, int32_t axis, N1xDlaHandle *out_layer);
+
+uint32_t NvDlaNetworkAddSelect(
+	N1xDlaHandle net, N1xDlaHandle input0, N1xDlaHandle input1,
+	N1xDlaWeights cond, N1xDlaDims4 cond_dims, N1xDlaHandle *out_layer);
+
+uint32_t NvDlaNetworkAddTopK(
+	N1xDlaHandle net, N1xDlaHandle input, uint32_t k, uint32_t reduce_axes, N1xDlaHandle *out_layer);
+
+uint32_t NvDlaNetworkAddLRN(
+	N1xDlaHandle net, N1xDlaHandle input, int32_t window,
+	float alpha, float beta, float k, N1xDlaHandle *out_layer);
 
 uint32_t NvDlaLayerGetOutput(N1xDlaHandle layer, int32_t index, N1xDlaHandle *out_tensor);
 uint32_t NvDlaLayerGetInput(N1xDlaHandle layer, int32_t index, N1xDlaHandle *out_tensor);

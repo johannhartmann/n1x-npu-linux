@@ -295,6 +295,62 @@ class TestN1xOrt(unittest.TestCase):
                 self.assertEqual(st.dla_module.inputs[0].data_type, 4)
                 self.assertEqual(st.dla_module.outputs[0].data_type, 4)
 
+    def test_extended_onnx_operators_and_per_channel_calibration(self) -> None:
+        scale = np.ones((16,), dtype=np.float32)
+        bias = np.zeros((16,), dtype=np.float32)
+        pads = np.array([0, 0, 1, 1, 0, 0, 1, 1], dtype=np.int64)
+        starts = np.array([1, 1], dtype=np.int64)
+        ends = np.array([9, 9], dtype=np.int64)
+        axes = np.array([2, 3], dtype=np.int64)
+        steps = np.array([1, 1], dtype=np.int64)
+        scales_up = np.array([1.0, 1.0, 2.0, 2.0], dtype=np.float32)
+
+        nodes = [
+            helper.make_node("Pad", inputs=["input", "pads"], outputs=["padded"], name="pad1", mode="constant"),
+            helper.make_node("Slice", inputs=["padded", "starts", "ends", "axes", "steps"], outputs=["sliced"], name="slice1"),
+            helper.make_node("InstanceNormalization", inputs=["sliced", "scale", "bias"], outputs=["normed"], name="in1", epsilon=1e-5),
+            helper.make_node("Abs", inputs=["normed"], outputs=["u_abs"], name="abs1"),
+            helper.make_node("Resize", inputs=["u_abs", "", "scales_up"], outputs=["up"], name="resize1", mode="nearest"),
+            helper.make_node("ReduceMean", inputs=["up"], outputs=["pooled"], name="red1", axes=[2, 3], keepdims=1),
+            helper.make_node("Softmax", inputs=["pooled"], outputs=["output"], name="sm1", axis=1),
+        ]
+        graph = helper.make_graph(
+            nodes,
+            "extended_dla_net",
+            inputs=[helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 16, 8, 8])],
+            outputs=[helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 16, 1, 1])],
+            initializer=[
+                numpy_helper.from_array(scale, name="scale"),
+                numpy_helper.from_array(bias, name="bias"),
+                numpy_helper.from_array(pads, name="pads"),
+                numpy_helper.from_array(starts, name="starts"),
+                numpy_helper.from_array(ends, name="ends"),
+                numpy_helper.from_array(axes, name="axes"),
+                numpy_helper.from_array(steps, name="steps"),
+                numpy_helper.from_array(scales_up, name="scales_up"),
+            ],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+        model.ir_version = 8
+
+        rng = np.random.default_rng(19)
+        calib_feeds = [{"input": rng.normal(0.0, 0.5, size=(1, 16, 8, 8)).astype(np.float32)} for _ in range(2)]
+        calib = calibrate_onnx_model(model, calib_feeds, per_channel=True)
+        self.assertIn("input", calib["tensor_ranges"])
+        self.assertIn("input", calib["channel_ranges"])
+        self.assertEqual(len(calib["channel_ranges"]["input"]), 16)
+        self.assertIn("channel_dynamic_ranges", calib["input"])
+
+        with tempfile.TemporaryDirectory(prefix="n1x-ort-ext-") as tmp:
+            sess = N1xInferenceSession(
+                model,
+                providers=[("N1xExecutionProvider", {"cache_dir": tmp})],
+            )
+            summary = sess.get_partition_summary()
+            self.assertEqual(summary["num_stages"], 1)
+            self.assertEqual(summary["dla_stages"], 1)
+            self.assertEqual(summary["host_stages"], 0)
+
     def test_end_to_end_session_run_and_resubmit_transport(self) -> None:
         mock_dla_c = r"""
 #include "n1x_dla.h"
@@ -318,6 +374,9 @@ static void log_event(const char *ev) {
 int n1x_dla_open(const char *p) {
     (void)p;
     log_event("OPEN");
+    if (const char *mfile = getenv("TEST_ORT_MMAP_FILE")) {
+        return open(mfile, O_RDWR);
+    }
     return open("/dev/null", O_RDWR);
 }
 int n1x_dla_info(int fd, struct n1x_dla_accel_info *i) {
@@ -362,6 +421,17 @@ int n1x_dla_read(int fd, unsigned long long job, unsigned long long offset,
     for (unsigned long long i = 0; i < bytes; ++i) {
         dst[i] = (i & 1) ? 0x3c : 0x00;
     }
+    return 0;
+}
+int n1x_dla_stats(int fd, unsigned long long job, unsigned long long offset,
+                  unsigned long long bytes, struct n1x_dla_accel_stats *s) {
+    assert(fd >= 0 && job > 0 && bytes > 0 && s);
+    log_event("STATS");
+    memset(s, 0, sizeof(*s));
+    s->job_id = job;
+    s->offset = offset;
+    s->bytes = bytes;
+    s->count = 2;
     return 0;
 }
 """
@@ -410,6 +480,30 @@ assert y_3_first.shape == (1, 16, 8, 8)
 summary_3 = sess_3.get_partition_summary()
 assert summary_3["stages"][0]["used_resubmit"] and summary_3["stages"][2]["used_resubmit"]
 np.testing.assert_array_equal(y_3_first, y_3_second)
+
+# 4. Verify task-0-stats profiling and zero-copy mmap readback on N1xOrtModuleWrapper
+from n1x_compiler import build_reference_dag, compile_dag
+from n1x_ort import N1xOrtModuleWrapper
+dag_st = build_reference_dag("relu")
+dag_st["profile"] = {{"generate_stats": True}}
+nvda_st = compile_dag(dag_st)
+mod_st = N1xOrtModuleWrapper(nvda_st)
+assert mod_st.has_stats and mod_st.stats_bytes > 0
+in_sh_st = mod_st.inputs[0].shape
+y_st = mod_st.run([np.ones(in_sh_st, dtype=np.float32)])[0]
+assert y_st.shape == in_sh_st
+raw_stats = mod_st.read_stats()
+assert len(raw_stats) == mod_st.stats_bytes
+
+mmap_path = Path(cache_dir) / "mmap_backing.bin"
+pattern = (b"\\x00\\x3c" * ((4 * 1024 * 1024) // 2))
+mmap_path.write_bytes(pattern)
+os.environ["TEST_ORT_MMAP_FILE"] = str(mmap_path)
+mod_mm = N1xOrtModuleWrapper(nvda_st)
+y_mm = mod_mm.run([np.ones(in_sh_st, dtype=np.float32)])[0]
+assert mod_mm.used_mmap
+np.testing.assert_allclose(y_mm, 1.0, rtol=1e-5)
+os.environ.pop("TEST_ORT_MMAP_FILE", None)
 print("SUBPROCESS_OK")
 """
         with tempfile.TemporaryDirectory(prefix="n1x-ort-e2e-") as tmp:
@@ -456,11 +550,12 @@ print("SUBPROCESS_OK")
             )
             self.assertIn("SUBPROCESS_OK", proc.stdout)
             events = events_file.read_text().splitlines()
-            # 4 DLA modules total (1 in MNIST, 1 in SuperRes, 2 in 3-stage):
-            # 4 EXECs on first runs, 3 REEXECs on second runs (1 MNIST + 2 in 3-stage)
-            self.assertEqual(events.count("EXEC"), 4)
+            # 4 session DLA modules + 2 wrapper modules = 6 EXECs, 3 REEXECs,
+            # 7 session READs + 1 mod_st output READ + 1 mod_st stats READ = 9 READs, 1 STATS
+            self.assertEqual(events.count("EXEC"), 6)
             self.assertEqual(events.count("REEXEC"), 3)
-            self.assertEqual(events.count("READ"), 7)
+            self.assertEqual(events.count("READ"), 9)
+            self.assertEqual(events.count("STATS"), 1)
 
             # Also verify C++ CLI `--run` mode against the mocked libn1x_dla.so
             nvda_file = next(cache_dir.glob("*.nvda"))

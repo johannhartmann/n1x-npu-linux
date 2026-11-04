@@ -1015,6 +1015,17 @@ FORWARD_DLA(uint32_t, NvDlaProfileSetNetworkOutputSurfaceFormat, (N1xDlaHandle p
 FORWARD_DLA(uint32_t, NvDlaProfileSetTensorScalingMode, (N1xDlaHandle profile, uint8_t mode), (profile, mode))
 FORWARD_DLA(uint32_t, NvDlaProfileSetQuantizationMode, (N1xDlaHandle profile, uint8_t mode), (profile, mode))
 FORWARD_DLA(uint32_t, NvDlaProfileSetIsExplicitQuantization, (N1xDlaHandle profile, uint8_t is_explicit), (profile, is_explicit))
+FORWARD_DLA(uint32_t, NvDlaProfileSetCanGenerateLayerwiseStats, (N1xDlaHandle profile, uint8_t enable), (profile, enable))
+FORWARD_DLA(uint32_t, NvDlaProfileSetCanGenerateDetailedLayerwiseStats, (N1xDlaHandle profile, uint8_t enable), (profile, enable))
+FORWARD_DLA(uint32_t, NvDlaProfileSetCanWinograd, (N1xDlaHandle profile, uint8_t enable), (profile, enable))
+FORWARD_DLA(uint32_t, NvDlaProfileSetCanCompressWeights, (N1xDlaHandle profile, uint8_t enable), (profile, enable))
+FORWARD_DLA(uint32_t, NvDlaProfileSetCanCompressStructuredSparseWeights, (N1xDlaHandle profile, uint8_t enable), (profile, enable))
+FORWARD_DLA(uint32_t, NvDlaProfileSetCanSDPFuseVerticalOps, (N1xDlaHandle profile, uint8_t enable), (profile, enable))
+FORWARD_DLA(uint32_t, NvDlaProfileSetCanSDPFuseSubEngineOps, (N1xDlaHandle profile, uint8_t enable), (profile, enable))
+FORWARD_DLA(uint32_t, NvDlaProfileSetCanSDPMergeMathOps, (N1xDlaHandle profile, uint8_t enable), (profile, enable))
+FORWARD_DLA(uint32_t, NvDlaProfileSetCanSDPPDPOnFly, (N1xDlaHandle profile, uint8_t enable), (profile, enable))
+FORWARD_DLA(uint32_t, NvDlaProfileSetUseSoftMaxOptz, (N1xDlaHandle profile, uint8_t enable), (profile, enable))
+FORWARD_DLA(uint32_t, NvDlaProfileSetMultiBatchSize, (N1xDlaHandle profile, uint32_t batch_size), (profile, batch_size))
 
 FORWARD_DLA(uint32_t, NvDlaCompilerCompile, (N1xDlaHandle compiler, const char *profile_name, const char *target_name, N1xDlaHandle *out_loadable), (compiler, profile_name, target_name, out_loadable))
 FORWARD_DLA(uint32_t, NvDlaCompilerGetLoadableImageSize, (N1xDlaHandle compiler, const char *profile_name, uint64_t *out_size), (compiler, profile_name, out_size))
@@ -1081,9 +1092,9 @@ FORWARD_DLA(uint32_t, NvDlaConcatenationLayerSetAxis,
 
 FORWARD_DLA(uint32_t, NvDlaNetworkAddSlice,
             (N1xDlaHandle net, N1xDlaHandle input,
-             N1xDlaWeights start, N1xDlaWeights size, N1xDlaWeights stride,
-             N1xDlaWeights fill_val, uint8_t mode, N1xDlaHandle *out_layer),
-            (net, input, start, size, stride, fill_val, mode, out_layer))
+             N1xDlaWeights starts, N1xDlaWeights ends, N1xDlaWeights axes,
+             N1xDlaWeights steps, uint8_t mode, N1xDlaHandle *out_layer),
+            (net, input, starts, ends, axes, steps, mode, out_layer))
 
 FORWARD_DLA(uint32_t, NvDlaNetworkAddPixelShuffle,
             (N1xDlaHandle net, N1xDlaHandle input, uint8_t type, int32_t upscale_factor, N1xDlaHandle *out_layer),
@@ -1104,6 +1115,88 @@ FORWARD_DLA(uint32_t, NvDlaNetworkAddQuantize,
 FORWARD_DLA(uint32_t, NvDlaNetworkAddDequantize,
             (N1xDlaHandle net, N1xDlaHandle input, N1xDlaWeights scales, N1xDlaWeights zero_points, int32_t axis, N1xDlaHandle *out_layer),
             (net, input, scales, zero_points, axis, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddSoftMax,
+            (N1xDlaHandle net, N1xDlaHandle input, N1xDlaHandle *out_layer),
+            (net, input, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddSoftMaxAxis,
+            (N1xDlaHandle net, N1xDlaHandle input, int32_t axis, N1xDlaHandle *out_layer),
+            (net, input, axis, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddUnary,
+            (N1xDlaHandle net, N1xDlaHandle input, uint8_t unary_type, N1xDlaHandle *out_layer),
+            (net, input, unary_type, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddUnaryWeights,
+            (N1xDlaHandle net, N1xDlaHandle input, uint8_t unary_type,
+             N1xDlaWeights alpha, N1xDlaWeights beta, N1xDlaHandle *out_layer),
+            (net, input, unary_type, alpha, beta, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddReduce,
+            (N1xDlaHandle net, N1xDlaHandle input, uint8_t reduce_op, N1xDlaWeights axes, N1xDlaHandle *out_layer),
+            (net, input, reduce_op, axes, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddNormalization,
+            (N1xDlaHandle net, N1xDlaHandle input, N1xDlaWeights axes, float epsilon, N1xDlaHandle *out_layer),
+            (net, input, axes, epsilon, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddNormalizationExt,
+            (N1xDlaHandle net, N1xDlaHandle input, N1xDlaWeights axes, float epsilon,
+             N1xDlaDims4 param_dims, N1xDlaWeights scale, N1xDlaWeights bias, N1xDlaHandle *out_layer),
+            (net, input, axes, epsilon, param_dims, scale, bias, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNormalizationLayerSetNormalizeMean,
+            (N1xDlaHandle layer, uint8_t enable),
+            (layer, enable))
+
+FORWARD_DLA(uint32_t, NvDlaNormalizationLayerSetNormalizeVariance,
+            (N1xDlaHandle layer, uint8_t enable),
+            (layer, enable))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddMatMul,
+            (N1xDlaHandle net, N1xDlaHandle input0, N1xDlaHandle input1, N1xDlaHandle *out_layer),
+            (net, input0, input1, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddReshape,
+            (N1xDlaHandle net, N1xDlaHandle input, N1xDlaDims4 dims, N1xDlaHandle *out_layer),
+            (net, input, dims, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddTranspose,
+            (N1xDlaHandle net, N1xDlaHandle input, N1xDlaDims4 perm, N1xDlaHandle *out_layer),
+            (net, input, perm, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddPad,
+            (N1xDlaHandle net, N1xDlaHandle input, N1xDlaDims4 pre_pad, N1xDlaDims4 post_pad,
+             uint8_t pad_mode, N1xDlaHandle *out_layer),
+            (net, input, pre_pad, post_pad, pad_mode, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaPadLayerSetConstantValue,
+            (N1xDlaHandle layer, float val),
+            (layer, val))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddTile,
+            (N1xDlaHandle net, N1xDlaHandle input, N1xDlaDims4 repeats, N1xDlaHandle *out_layer),
+            (net, input, repeats, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddGather,
+            (N1xDlaHandle net, N1xDlaHandle input, N1xDlaHandle indices,
+             uint8_t mode, int32_t axis, N1xDlaHandle *out_layer),
+            (net, input, indices, mode, axis, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddSelect,
+            (N1xDlaHandle net, N1xDlaHandle input0, N1xDlaHandle input1,
+             N1xDlaWeights cond, N1xDlaDims4 cond_dims, N1xDlaHandle *out_layer),
+            (net, input0, input1, cond, cond_dims, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddTopK,
+            (N1xDlaHandle net, N1xDlaHandle input, uint32_t k, uint32_t reduce_axes, N1xDlaHandle *out_layer),
+            (net, input, k, reduce_axes, out_layer))
+
+FORWARD_DLA(uint32_t, NvDlaNetworkAddLRN,
+            (N1xDlaHandle net, N1xDlaHandle input, int32_t window,
+             float alpha, float beta, float k, N1xDlaHandle *out_layer),
+            (net, input, window, alpha, beta, k, out_layer))
 
 FORWARD_DLA(uint32_t, NvDlaLayerGetOutput, (N1xDlaHandle layer, int32_t index, N1xDlaHandle *out_tensor), (layer, index, out_tensor))
 FORWARD_DLA(uint32_t, NvDlaLayerGetInput, (N1xDlaHandle layer, int32_t index, N1xDlaHandle *out_tensor), (layer, index, out_tensor))
