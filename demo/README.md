@@ -1,6 +1,6 @@
 # N1X NPU Demos
 
-## 1. Super-Resolution (`./demo-superres`)
+## Super-Resolution (`./demo-superres`)
 
 Executes the ONNX Model Zoo 3× sub-pixel CNN across overlapping 64×64 windows on the physical N1X DLA via `libcudla.so.1` and `libnvcudla.so`:
 

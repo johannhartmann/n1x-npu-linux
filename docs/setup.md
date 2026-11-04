@@ -3,7 +3,7 @@
 ## 1. Prerequisites
 
 - **Kernel**: ARM64 Linux kernel (`>= 6.12`) with matching headers and the [`NVDA8600` `_HRV=1` noncoherent DMA quirk](../patches/arm64-acpi-iort-nvda8600-noncoherent-dma.patch) applied.
-- **Host Packages (Arch/ARM64)**: `base-devel`, `python`, `uv`, `bubblewrap`, `gdb`, `openssl`, `libdrm`, `acpica`, `7zip`, and CUDA (`/opt/cuda`) for the optional cuDLA backend.
+- **Host Packages (Arch/ARM64)**: `base-devel`, `python`, `uv`, `openssl`, `7zip`, and CUDA (`/opt/cuda`) for the optional cuDLA backend.
 
 ## 2. Checkout and Python Environment
 
