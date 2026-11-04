@@ -2,7 +2,7 @@
 
 ## 1. Super-Resolution (`./demo-superres`)
 
-Executes the ONNX Model Zoo 3× sub-pixel CNN across overlapping 64×64 windows on the physical N1X DLA via `libcudla.so.1` and `libnvcudla.so` ([receipt](../docs/evidence/npu-hardware-2026-10-28.json)):
+Executes the ONNX Model Zoo 3× sub-pixel CNN across overlapping 64×64 windows on the physical N1X DLA via `libcudla.so.1` and `libnvcudla.so`:
 
 | Input → Output | DLA Windows | Time | Max Abs Error | RMSE |
 | --- | --- | --- | --- | --- |
@@ -30,7 +30,7 @@ pkexec /usr/bin/python3 "$PWD/scripts/install_cudla_broker.py" --models superres
 
 <p><a href="assets/emotion-ferplus-gallery-dla.png"><img src="assets/emotion-ferplus-gallery-dla.png" width="760" alt="FER+ 6-expression gallery evaluated on the physical N1X DLA in FP16 and INT8"></a></p>
 
-[FER+ gallery artifact](assets/emotion-ferplus-gallery-dla.png) · [Asset provenance](assets/README.md#fer-facial-emotion-recognition-example-demo-onnx---model-emotion) · [Hardware receipt](../docs/evidence/n1x-ort-hardware-2026-11-01.json)
+[FER+ gallery artifact](assets/emotion-ferplus-gallery-dla.png) · [Asset provenance](assets/README.md#fer-facial-emotion-recognition-example-demo-onnx---model-emotion)
 
 | Model (`--model`) | Stages (`DLA` / `Host`) | Precision | `.nvda` Size | Initial `EXEC` | Retained `REEXEC_IO` | Accuracy vs. FP32 Reference |
 | --- | --- | --- | --- | --- | --- | --- |

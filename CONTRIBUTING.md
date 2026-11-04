@@ -11,7 +11,7 @@ make check
 
 | Change Area | Verification Command |
 | --- | --- |
-| Documentation, links, JSON receipts | `make check-repo` |
+| Documentation, links, JSON files, demo hashes | `make check-repo` |
 | Driver protocol, shutdown, `/dev/accel` lifetime | `make test-portable` |
 | Kernel module compilation & style | `make module` + `/lib/modules/$(uname -r)/build/scripts/checkpatch.pl` |
 | Native `t254` compiler & ONNX EP | `make test-compiler` |

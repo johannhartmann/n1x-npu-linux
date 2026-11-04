@@ -9,9 +9,9 @@ body:
     validations:
       required: true
   - type: textarea
-    id: evidence
+    id: hardware
     attributes:
-      label: Hardware, references and available evidence
+      label: Hardware and software references
       description: Include exact device IDs and software versions for a new hardware target. Links and hashes are useful; do not upload vendor binaries.
   - type: textarea
     id: proposal

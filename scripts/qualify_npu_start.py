@@ -13,7 +13,6 @@ from npu_trigger import trigger, TRIGGERS
 from select_npu_dma_domains import plan, apply
 
 ROOT = Path(__file__).resolve().parents[1]
-KERNEL = '7.2.8-23-rtx-spark-npu'
 ROM_SHA256 = 'a82af14d15effa98a75b19d9135421c7c27f20cca7398d0b0a7ba87547b8b64c'
 PHASES = (
     ('prepare_hfrp', 'power_accepted'), ('upload', 'idle_observed'),
@@ -67,7 +66,7 @@ def run_phases(dev, through, record, after_hfrp=False):
         current = (dev/phase_status_file(phase)).read_text()
         record(phase=phase, hfrp=hfrp, status=status, phase_status=current)
         if fields(current).get(success) != '1':
-            raise RuntimeError(phase+' returned without the required success evidence')
+            raise RuntimeError(phase+' returned without expected status flag')
         if phase == through:
             break
 
@@ -81,20 +80,20 @@ def main():
     parser.add_argument('--enable-accel', action='store_true',
                         help='register /dev/accel/accel* device node during fresh module load')
     parser.add_argument('--strict-platform', action='store_true',
-                        help='enforce exact P16 BIOS-300 ROM/kernel/DMI pins')
+                        help='enforce exact DMI/ROM-hash pins')
     args = parser.parse_args()
     if args.enable_accel and args.after_hfrp:
         parser.error('--enable-accel must be selected at fresh module load')
     running_kernel = platform.release()
-    if os.geteuid() or (args.strict_platform and running_kernel != KERNEL):
-        parser.error('requires root on the NPU kernel')
+    if os.geteuid():
+        parser.error('requires root')
     loaded = Path('/sys/module/n1x_npu_bootstrap')
     if loaded.exists() != args.after_hfrp:
         parser.error('fresh start requires no module; --after-hfrp requires the existing module')
     profile = Path('/sys/firmware/acpi/platform_profile').read_text().strip()
     rows = [] if args.after_hfrp else plan()
     module = ROOT/'driver/n1x_npu_bootstrap.ko'
-    rom = ROOT/'results/p16-bios300-physical.rom'
+    rom = ROOT/'results/vbios.rom'
     image = rom.read_bytes() if rom.is_file() else None
     if args.strict_platform and (image is None or len(image) != 0x110000 or
                                  hashlib.sha256(image).hexdigest() != ROM_SHA256):
@@ -126,11 +125,10 @@ def main():
             if (dev/'driver').resolve().name != 'n1x-npu-bootstrap':
                 raise RuntimeError('DLA is not bound to the bootstrap')
             run_phases(dev, args.through, record, after_hfrp=True)
-            record(completed_through=args.through, retained_until_checked_shutdown=True,
-                   general_inference_verified=False)
+            record(completed_through=args.through)
             return
         if image is not None and len(image) == 0x110000 and hashlib.sha256(image).hexdigest() == ROM_SHA256:
-            destination = Path('/usr/lib/firmware/nvidia/n1x/p16-bios300-physical.rom')
+            destination = Path('/usr/lib/firmware/nvidia/n1x/vbios.rom')
             if destination.exists():
                 if destination.read_bytes() != image:
                     raise RuntimeError('installed board ROM differs; not overwritten')

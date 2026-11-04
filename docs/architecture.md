@@ -20,7 +20,7 @@ When `strict_platform=0` (default), the driver discovers both `_CRS` MMIO apertu
 When both endpoints bind, `n1x_boot_master_bind()` runs the 8-stage initialization sequence in C:
 
 1. **`prepare_hfrp`**: Resumes runtime PM, performs HFRP handshake and version discovery (`v1.5`), sends the VBIOS policy table, and powers on the DLA rails/clocks (`POWER_CONTROL` `0x400`).
-2. **`upload`**: Streams `nvidia/n1x/p16-sroot-v0.bin` over the noncoherent `NVDA8600` `SROOT` DMA channel and verifies the firmware boot response.
+2. **`upload`**: Streams `nvidia/n1x/sroot-v0.bin` over the noncoherent `NVDA8600` `SROOT` DMA channel and verifies the firmware boot response.
 3. **`ping`**: Executes a mailbox ping (`0x101`) to verify RISC-V firmware readiness and captures the owned interrupt route mask (`0xd2c`).
 4. **`init_region5`**: Allocates and registers the 1 MiB Region 5 telemetry/trace ring buffer.
 5. **`read_config` & `apply_config`**: Queries and applies the HAL-1 engine configuration snapshot.

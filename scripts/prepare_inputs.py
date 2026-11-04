@@ -48,9 +48,9 @@ MANUAL = (
      'c58e3425eeee93f89b1ae68f814552aa1cacaaf85d913ca12a9b14f83902d49b'),
 )
 FIRMWARE = (
-    ('sources/dla-p16-sroot-v0.bin', 0x1405800, 67508,
+    ('sources/sroot-v0.bin', 0x1405800, 67508,
      '0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4'),
-    ('sources/dla-p16-sroot-v1.bin', 0x13f5040, 67508,
+    ('sources/sroot-v1.bin', 0x13f5040, 67508,
      '6b1e8192fc1e61944e9b2a84251b7d18f305025ffb2cfa1de8677f8f98b59ad4'),
 )
 

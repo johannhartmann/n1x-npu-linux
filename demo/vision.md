@@ -1,6 +1,6 @@
 # Denoising and Image Classification (`./demo-denoise`, `./demo-classify`)
 
-Executes KAIR's 17-convolution `DnCNN-25` denoiser and torchvision's 20-convolution `ResNet-18` classifier on the N1X NPU via `libcudla.so.1` and `libnvcudla.so` ([receipt](../docs/evidence/vision-hardware-2026-10-29.json)):
+Executes KAIR's 17-convolution `DnCNN-25` denoiser and torchvision's 20-convolution `ResNet-18` classifier on the N1X NPU via `libcudla.so.1` and `libnvcudla.so`:
 
 | Noisy Grayscale Input (`PSNR 20.73 dB`) | N1X DLA Denoised Output (`PSNR 31.83 dB`) |
 | --- | --- |

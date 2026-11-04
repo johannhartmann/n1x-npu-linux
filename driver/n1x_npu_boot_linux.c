@@ -32,9 +32,9 @@
 #include "n1x_dla_accel.h"
 #include "n1x_hfrp_setup.h"
 
-#define N1X_BOARD_FIRMWARE "nvidia/n1x/p16-bios300-physical.rom"
-#define N1X_BOOT_FIRMWARE "nvidia/n1x/p16-sroot-v0.bin"
-#define N1X_BOOT_FALLBACK_FIRMWARE "nvidia/n1x/p16-sroot-v1.bin"
+#define N1X_BOARD_FIRMWARE "nvidia/n1x/vbios.rom"
+#define N1X_BOOT_FIRMWARE "nvidia/n1x/sroot-v0.bin"
+#define N1X_BOOT_FALLBACK_FIRMWARE "nvidia/n1x/sroot-v1.bin"
 #define N1X_BOOT_BYTES 67508
 #define N1X_REGION5_ALLOC (1U << 20)
 #define N1X_REGION5_OFFSET 16U
@@ -92,7 +92,7 @@ MODULE_PARM_DESC(enable_accel, "Register /dev/accel/accel* DRM accelerator devic
 
 static bool strict_platform;
 module_param(strict_platform, bool, 0400);
-MODULE_PARM_DESC(strict_platform, "Require exact P16 BIOS-300 DMI/kernel/ROM-hash pins (default false; dynamically discovers VBIOS policy, ACPI _CRS, and IORT SMMU)");
+MODULE_PARM_DESC(strict_platform, "Require exact DMI/ROM-hash pins instead of live VBIOS carveout and dynamic ACPI/IORT discovery (default false)");
 
 static bool opt_enable_irq = true;
 module_param_named(enable_irq, opt_enable_irq, bool, 0400);
@@ -1004,7 +1004,7 @@ static ssize_t apply_lpwr_store(struct device *dev, struct device_attribute *att
 }
 static DEVICE_ATTR_WO(apply_lpwr);
 
-/* The physical P16 sends exactly {word=12,data=0} after idle. The original
+/* N1X hardware sends {word=12,data=0} after idle. The Windows KMD
  * Windows handler ACKs this notification without marking task completion.
  * Keep the qualification device powered under the existing runtime reference;
  * do not infer or execute a power-down policy from this notification.
@@ -1421,7 +1421,7 @@ static int n1x_boot_stop_hardware(struct device *dev)
 	}
 	/* Follow the recovered Windows mask operation and flush the write before
 	 * power-off. Do NOT require every raw route/mask intersection bit to read
-	 * back zero: the physical P16 retains bit 24 in both registers after this
+	 * back zero: N1X hardware retains bit 24 in both registers after this
 	 * operation.
 	 */
 	boot_shutdown.stage = "irq-mask";

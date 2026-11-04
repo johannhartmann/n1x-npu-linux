@@ -3,7 +3,10 @@ set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 demo_python="$repo_dir/sources/superres-venv/bin/python"
 if [[ ! -x "$demo_python" ]]; then
-  echo "Missing demo environment; see demo/README.md." >&2
+  demo_python="$repo_dir/venv/bin/python"
+fi
+if [[ ! -x "$demo_python" ]]; then
+  echo "Missing Python environment; see demo/README.md." >&2
   exit 1
 fi
 exec "$demo_python" "$repo_dir/demo/superres.py" "$@"

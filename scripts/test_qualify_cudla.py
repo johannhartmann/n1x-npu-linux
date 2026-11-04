@@ -18,7 +18,7 @@ def main():
     read_text = Path.read_text
     for mode in ('single', 'reuse', 'no-capability', 'growth', 'mismatch', 'process-error'):
         with tempfile.TemporaryDirectory(prefix='n1x-qualifier-') as tmp:
-            out = Path(tmp)/'evidence'
+            out = Path(tmp)/'out'
             calls = []
             retained = dict(retained_bytes=0, retained_jobs=0)
 
@@ -61,7 +61,6 @@ def main():
             if mode != 'single':
                 argv.append('--reuse')
             with patch.object(q.sys, 'argv', argv), patch.object(q.os, 'geteuid', return_value=0), \
-                 patch.object(q.platform, 'release', return_value=q.KERNEL), \
                  patch.object(q.subprocess, 'check_output', return_value='reviewed'), \
                  patch.object(q.subprocess, 'run', side_effect=run), \
                  patch.object(Path, 'read_text', cached), patch.object(q, 'Device', Device), \

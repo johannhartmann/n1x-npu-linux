@@ -11,6 +11,13 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 LINK = re.compile(r'!?\[[^\]]*\]\(([^\s)]+)\)|(?:src|href)="([^"\s]+)"')
+DEMO_ASSETS = {
+    'astronaut-input.png': '88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5',
+    'astronaut-dla-3x.png': '7613dd25e1f01e1d495f256f32a48537465471c3a7a3fe5d38bb69843ab44ab5',
+    'astronaut-noisy-gray.png': '7c5e85d4a542c74d6227a15972e58796e53b6f476c11e69bd46544588e93d4f3',
+    'astronaut-denoised-dla.png': '0806ffc3bd55925c0456b22e5884c8626eb2a2c2ec19b9813d444b57d1e7b280',
+    'emotion-ferplus-gallery-dla.png': '933733179625438bcec69679960cbf8309ae223007540af39d84c19831740dc0',
+}
 
 
 def prose(text):
@@ -91,28 +98,15 @@ def main():
         except (SyntaxError, ValueError, UnicodeError) as exc:
             errors.append(f'{relative}: {exc}')
 
-    receipt = json.loads((ROOT/'docs/evidence/npu-hardware-2026-10-28.json').read_text())
-    sample = receipt['full_image_runs'][0]
-    for name, expected in (('astronaut-input.png', sample['input_sha256']),
-                           ('astronaut-dla-3x.png', sample['output_sha256'])):
+    for name, expected in DEMO_ASSETS.items():
         path = ROOT/'demo/assets'/name
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
-            errors.append(f'{path.relative_to(ROOT)}: differs from the physical qualification receipt')
-    vision = json.loads((ROOT/'docs/evidence/vision-hardware-2026-10-29.json').read_text())
-    for name, expected in vision['published_assets'].items():
-        path = ROOT/'demo/assets'/name
-        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
-            errors.append(f'{path.relative_to(ROOT)}: differs from the physical vision receipt')
-    ort = json.loads((ROOT/'docs/evidence/n1x-ort-hardware-2026-11-01.json').read_text())
-    for name, expected in ort.get('published_assets', {}).items():
-        path = ROOT/'demo/assets'/name
-        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
-            errors.append(f'{path.relative_to(ROOT)}: differs from the physical ORT receipt')
+            errors.append(f'{path.relative_to(ROOT)}: SHA-256 mismatch (expected {expected})')
     if errors:
         raise SystemExit('\n'.join(errors))
     print(f'Repository checks passed: {counts["python"]} Python files, '
-          f'{counts["markdown"]} Markdown files, {counts["json"]} JSON records; '
-          'published sample/result hashes match physical evidence; no hardware access')
+          f'{counts["markdown"]} Markdown files, {counts["json"]} JSON files; '
+          'demo asset hashes verified; no hardware access')
 
 
 if __name__ == '__main__':

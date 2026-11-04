@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 from npu_trigger import trigger
-from qualify_p16_start import KERNEL, fields
+from qualify_npu_start import fields
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = Path('/sys/module/n1x_npu_bootstrap')
@@ -29,7 +29,7 @@ def stop_and_unload(record):
     state = fields((ENDPOINT/'shutdown_status').read_text())
     if any(state.get(k) != v for k, v in dict(error='0', hardware_off='1', released='1',
                                               hfrp_held='0', upload_held='0').items()):
-        raise RuntimeError('shutdown evidence incomplete; no unload/reload attempted: '+str(state))
+        raise RuntimeError('shutdown status incomplete; no unload/reload attempted: '+str(state))
     with Device(str(NODE)) as dev:
         info = dev.info()
         if info['retained_jobs'] or info['retained_bytes']:
@@ -61,7 +61,7 @@ def stop_and_unload(record):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output-dir', type=Path, required=True, help='new evidence directory')
+    parser.add_argument('--output-dir', type=Path, required=True, help='new output directory')
     parser.add_argument('--cycles', type=int, choices=range(1, 4), default=2)
     args = parser.parse_args()
     running_kernel = platform.release()
@@ -101,13 +101,13 @@ def main():
                     os.fchown(file.fileno(), owner, -1)
 
         record(boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
-               kernel=KERNEL, platform_profile=profile, module_srcversion=version,
+               kernel=running_kernel, platform_profile=profile, module_srcversion=version,
                module_sha256=hashlib.sha256(module.read_bytes()).hexdigest(), cycles=args.cycles)
         kernel_log('before')
 
         def start(label):
             record(action='startup requested', label=label)
-            subprocess.run([sys.executable, str(ROOT/'scripts/qualify_p16_start.py'),
+            subprocess.run([sys.executable, str(ROOT/'scripts/qualify_npu_start.py'),
                             '--through', 'bypass_task', '--enable-accel',
                             '--log', str(out/(label+'-startup.jsonl'))], check=True)
             if (MODULE/'srcversion').read_text().strip() != version:

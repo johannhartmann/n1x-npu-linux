@@ -61,7 +61,7 @@ def main():
         else:
             target.write_text(UPSTREAM_SCAN_C)
         subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i',
-                        str(ROOT/'patches/linux-7.2.8-p16-sroot-noncoherent-dma.patch')],
+                        str(ROOT/'patches/arm64-acpi-iort-nvda8600-noncoherent-dma.patch')],
                        cwd=root, check=True)
         source = target.read_text()
         start = source.index('static void acpi_init_coherency(')
