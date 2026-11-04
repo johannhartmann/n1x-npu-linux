@@ -1,227 +1,31 @@
-# Experimental N1X backend for NVIDIA cuDLA
+# N1X Backend for NVIDIA cuDLA (`libnvcudla.so`)
 
-The application links NVIDIA's original Linux `libcudla.so.1`. That frontend
-loads this repository's `libnvcudla.so`, which parses supported N1X loadables,
-stages CUDA tensors and submits them through the Linux N1X driver. The backend
-does not calculate tensor outputs on the CPU.
+[`runtime/cudla_backend.cpp`](../runtime/cudla_backend.cpp) and [`runtime/cudla_model.cpp`](../runtime/cudla_model.cpp) implement the backend driver interface loaded by NVIDIA's Linux `libcudla.so.1` (`13.4.92`), translating cuDLA module loads, CUDA memory registrations, and task submissions into `/dev/accel/accel0` ioctls.
 
-This is an implementation of the [researched backend boundary](research/cudla-call-path.md),
-not an official NVIDIA driver or complete cuDLA/TensorRT replacement. Physical
-cuDLA execution passed on 2026-10-28: eight jobs through the full path matched
-independent numerical references. See the result below.
-
-## Build and local use
-
-Acquire the hash-pinned cuDLA 13.4.92 package using the
-[setup guide](setup.md#3-acquire-the-pinned-inputs). The
-installed CUDA toolkit supplies `cuda.h` and its link-time driver stub; the
-running system must supply the actual `libcuda.so.1`.
+## Build and Test
 
 ```sh
 make cudla
-```
-
-This produces `runtime/cudla/libnvcudla.so` and `runtime/cudla/cudla-smoke`.
-The latter links the original NVIDIA library, not the backend directly.
-Nothing is installed globally or substituted for NVIDIA's public library.
-
-The repository-local smoke application is an administrative qualification
-tool. It directly opens the accel node and therefore runs only in the explicit
-root hardware workflow:
-
-```sh
-LD_LIBRARY_PATH="$PWD/runtime/cudla" \
-  runtime/cudla/cudla-smoke MODEL.nvda INPUT.fp16 EXPECTED.fp16 NEW-OUTPUT.fp16
-```
-
-The public image demos do not elevate their Python environments. Their
-unprivileged clients authenticate `/usr/libexec/n1x-dla-broker`, compare each
-installed model with the reviewed local artifact, and exchange only packed
-tensor bytes over a bounded binary protocol. The root-owned broker opens fixed
-root-owned models, libraries and `/dev/accel/accel0`, then drops to the
-dedicated `n1x-dla` system UID/GID with only `CAP_SYS_RAWIO`, `NO_NEW_PRIVS`
-and core dumps disabled. The
-device node is `0600 root:root`, and the driver also rejects an unprivileged
-open. See [setup](setup.md#5-board-input-and-module-build).
-
-`setuid`/`setgid` clear Linux's parent-death signal, so the broker explicitly
-re-arms and verifies `PDEATHSIG` after the credential change and checks that the
-original parent still exists. Protocol reads and writes have a 60-second
-inactivity deadline. Model IDs must be unique; aggregate raw model and CUDA
-tensor storage are bounded. The broker queries the backend's exact materialized
-image sizes and the kernel's live counters before dropping privilege, and
-refuses the entire session before its first submit unless all selected models
-fit the remaining 64-MiB/128-job retention budget.
-
-Firmware startup remains a separate, explicit administrative operation. The
-backend never loads a module, starts firmware or retries a failed submission
-automatically. `N1X_DLA_DEVICE` is retained for the direct qualification tool;
-normal demos use the installed broker's fixed device path.
-
-## Implemented contract and limits
-
-- Hybrid device creation with the current CUDA context; standalone and shared
-  static scratch flags are declined. Up to 16 device handles are supported.
-- Native C++ NVDA loading for the same bounded single-task DRAM subset as the
-  checked Python materializer. Input/output descriptions are sorted by dense
-  bind IDs. Supported fixtures include ReLU, convolution and Conv -> ReLU.
-- CUDA device-memory registration with context, bounds, alignment, managed
-  memory and allocation-ID checks. Tokens are opaque, owner-specific and never
-  reused during process lifetime. Freed/reallocated CUDA memory is rechecked
-  before each task. UVA is reported unsupported.
-- One task per submission, explicit CUDA stream, zero submission flags. Capture,
-  external events and unsupported operations return an error before NPU work.
-- **Submission blocks.** Input copies are enqueued on the given stream into a
-  pinned host image, then synchronized before kernel EXEC. Results are read
-  from the kernel, copied back on that CUDA stream and synchronized before
-  returning success. This supplies ordered staging, not asynchronous overlap
-  or zero-copy. Calls from CUDA host callbacks are not supported.
-- Execution failures are sticky per device; a later submit returns the error
-  without retry. Cleanup can release host-side registrations/modules while
-  the kernel retains attempted DMA backing until checked explicit device stop.
-  Uncertain execution/stop failures remain pinned until reboot.
-- If CUDA synchronization fails, potentially referenced pinned host storage is
-  retained until process exit. Such quarantine is capped at 64 MiB/128 entries
-  globally. Completed transfers release their staging normally.
-- The kernel’s 64-MiB/128-job retention limit remains. ABI 2 registers only the
-  model input/output regions as writable; REEXEC cannot patch constants,
-  instructions or unrelated image bytes. The backend reuses a
-  successful model’s allocation for subsequent I/O when the kernel advertises
-  that capability. Reuse and checked shutdown/reclamation are implemented and
-  offline-tested and physically qualified in two healthy P16 reload cycles
-  plus changing-input and complete-image runs. Reset/recovery, asynchronous
-  scheduling, CUDA Graphs, NvSci and private export-table interoperability are
-  not implemented. The backend exports all required names and declines
-  unsupported features; it does not create fake NvSci objects.
-
-The backend module registry is capped at 64 models and 256 MiB of materialized
-images. The broker accepts at most 64 distinct installed model IDs, verifies root
-ownership and write protection, and caps each model, tensor and their aggregate
-storage. Descriptors and
-embedded instruction streams still require trusted input and the kernel's
-RAWIO privilege; bounds-checked metadata is not an instruction sandbox. General
-model compilation and TensorRT engine compatibility remain separate from
-standalone N1X loadable execution through cuDLA.
-
-Completed allocations are reused for changing inputs while a broker is alive,
-but remain kernel-owned after that broker exits. The observed completion fence
-and firmware idle message do not establish whole-device DMA quiescence, so the
-backend deliberately has no per-job release operation. A later independent
-session must fit beside those retained allocations; otherwise its broker fails
-the startup preflight without submitting anything. Reclamation remains the
-checked administrative shutdown/reload sequence, not an automatic demo action.
-
-## Evidence
-
-`scripts/test_cudla_model.py` compiles the actual C++ materializer with UBSan
-and compares its images, address ranges and public tensor descriptors against
-the existing vendor-derived references. Nine valid and 65 malformed cases pass,
-covering all three graph fixtures and their constant/intermediate storage.
-
-`scripts/test_cudla_cuda_transport.py` uses the real NVIDIA frontend, our built
-backend and the real installed CUDA driver. Its NPU transport is a temporary
-mock that records submitted bytes and returns a fixed pattern, not an inference
-implementation. Thirty-four scenarios pass, including all three graph serializers,
-transport errors, wrong-reference rejection, ownership, capture rejection,
-freed memory, sticky execution errors and injected CUDA copy/synchronization
-failures. Injected synchronization failures drain the real CUDA operation before
-reporting a synthetic error; they are not physical CUDA faults. This establishes CUDA/API transport
-behavior but not physical DLA arithmetic.
-
-```sh
 make test-cudla
 ```
 
-The accel fops now include `FOP_UNSIGNED_OFFSET`, required by this kernel's
-`drm_open_helper`. The startup qualifier opens the node and checks VERSION/INFO
-before any firmware trigger. The offline open test exercises the actual fops
-initializer against the kernel's open gates, including the prior failure.
+Produces:
+- `runtime/cudla/libnvcudla.so`: Backend shared library loaded by `libcudla.so.1`.
+- `runtime/cudla/cudla-smoke`: Direct CLI test linking `libcudla.so.1`.
+- `runtime/cudla/n1x-dla-broker`: Capability-confined UNIX-socket broker used by `./demo-superres`, `./demo-denoise`, and `./demo-classify`.
 
-## Physical qualification
+## Supported cuDLA Features
 
-The [current hardware receipt](evidence/npu-hardware-2026-10-28.json) records
-48 fixture jobs, 15 changing-input REEXECs and two healthy module reload cycles.
-The first eight-job result below documents the earlier retention-only driver.
+- **Hybrid CUDA Mode**: Supports up to 16 device handles bound to the active CUDA context.
+- **Loadable Deserialization**: Parses `.nvda` FlatBuffers loadables, validates address-list entries and `task-0-stats` v2 profiling descriptors, and registers input/output tensor descriptors sorted by bind ID.
+- **Synchronous Stream Staging & `REEXEC_IO`**: Enqueues async device-to-host input copies on the caller's `CUstream`, synchronizes before `DRM_IOCTL_N1X_DLA_EXEC` (initial run) or `DRM_IOCTL_N1X_DLA_REEXEC` (subsequent runs), reads outputs via `DRM_IOCTL_N1X_DLA_READ`, and copies results back to CUDA memory on the caller's stream.
+- **Profiling & Attributes**: Supports `CUDLA_NUM_OUTPUT_TASK_STATISTICS`, `CUDLA_OUTPUT_TASK_STATISTICS_DESCRIPTORS`, `CUDLA_TASK_STATISTICS` (`DRM_IOCTL_N1X_DLA_STATS`), `CUDLA_DEVICE_VERSION` (`0x0200`), `cudlaSetTaskTimeoutInMs` (`1..1000000` ms), `CUDLA_SUBMIT_NOOP`, and `CUDLA_SUBMIT_SKIP_LOCK_ACQUIRE`.
 
-### Physical result: 2026-10-28
+## Hardware Qualification
 
-The real `cudla-smoke` application linked NVIDIA's unmodified Linux frontend,
-loaded our backend and used real CUDA allocations. The backend passed the
-materialized jobs to the actual Linux accel driver and extracted firmware.
-All eight 3,136-byte outputs matched their independent reference files, and
-all eight CUDA input allocations remained unchanged:
-
-| Graph | Distinct inputs | Numerical results |
-| --- | --- | --- |
-| FP16 ReLU | 2 | 2 exact matches |
-| FP16 1x1 convolution with channel bias | 3 | 3 exact matches |
-| FP16 convolution followed by ReLU | 3 | 3 exact matches |
-
-Kernel: `7.2.8-23-rtx-spark-npu`; module srcversion
-`A867C2D035B190C79E9E143`; boot ID
-`81aeb5b0-5475-4a34-99db-a12c0195ba54`; performance profile.
-The kernel reported zero retained accel jobs before the run and exactly eight
-afterward, consuming 22,953,984 bytes. Its queue remained unpoisoned. Firmware
-startup and the bypass probe completed first, and VERSION/INFO passed before
-the firmware triggers.
-
-The [tracked qualification receipt](evidence/cudla-hardware-2026-10-28.json) records the
-frontend/backend/application/transport/firmware hashes and each model, input
-and output hash. Full local records are under
-`results/cudla-start-81aeb5b0.jsonl` and `results/cudla-hardware-81aeb5b0/`.
-No mock transport or CUDA fault interposer was in the hardware application's
-library search path. The only CPU arithmetic computed reference files; the
-application obtained the compared results from CUDA buffers populated by DLA.
-
-This qualifies this complete path for the three fixtures and eight jobs.
-Blocking staging, kernel DMA retention, privileged access and the other limits
-above remain in force.
-
-### Reproduction
-
-Use a fresh boot of `7.2.8-23-rtx-spark-npu` with no bootstrap loaded.
-The module is manually loaded from the build tree; no boot artifact changes
-are required for this path. An earlier module without controlled shutdown,
-or an instance whose stop has failed, requires a reboot before replacement.
-For the current full lifecycle procedure, use [shutdown/reload](shutdown-reload.md).
-
-```sh
-make -C /usr/lib/modules/$(uname -r)/build M="$PWD/driver" n1x_npu_bootstrap.ko
-pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_p16_start.py" \
-  --through bypass_task --enable-accel --log "$PWD/results/NEW-cudla-start.jsonl"
-pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_cudla.py" \
-  --output-dir "$PWD/results/NEW-cudla-results"
-```
-
-The second qualifier runs eight independent application processes: two ReLU
-inputs, three convolution inputs and three Conv -> ReLU inputs. Each process
-uses the actual public cuDLA API, CUDA buffers and Linux driver. Independent
-reference files are generated before execution, output is poisoned, inputs
-are checked unchanged, and any failure stops the series without retry. A
-successful final record must be present before claiming physical qualification.
-
-`--prepare-only` generates the plan and references without CUDA or device
-access. The current fixtures require 22,953,984 retained kernel bytes in total.
-Result directories must be new; plans, attempt records, stdout/stderr and output
-hashes are preserved, including on error. This does not qualify safe kernel
-buffer reclamation, arbitrary graphs, suspend/resume or recovery.
-
-### Completed-task reuse qualification
-
-The default qualifier keeps the eight independent-process baseline jobs. Add
-`--reuse` to execute the same eight distinct inputs with one loaded module per
-graph, requiring exactly three new retained allocations and five REEXECs:
+Run the 8-job baseline or `--reuse` (`REEXEC_IO`) physical qualification suite ([receipt](evidence/npu-hardware-2026-10-28.json)):
 
 ```sh
 pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_cudla.py" \
   --reuse --output-dir "$PWD/results/NEW-cudla-reuse"
 ```
-
-This requires a healthy initialized NPU with the reuse capability. The complete
-reload qualifier now runs both baseline and reuse checks before the first stop
-and after every restart. These checks passed in two physical P16 reload
-cycles; see the [hardware receipt](evidence/npu-hardware-2026-10-28.json).
-The production application's multi-input path has passed real-CUDA tests with
-a modeled NPU peer, including changing-input snapshots and stopping on a wrong
-reference without executing subsequent jobs. Those tests do not establish
-physical DLA arithmetic or lifecycle behavior.

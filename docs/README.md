@@ -1,28 +1,11 @@
 # Documentation
 
-## Use the NPU
-
-1. [Setup and reproduction](setup.md): platform, dependencies, pinned vendor inputs, model compilation and startup.
-2. [Super-resolution demo](../demo/README.md): run a complete image and inspect its output and reference metrics.
-3. [Support status](status.md): measured behavior and remaining limits.
-
-Additional applications: [denoising and classification](../demo/vision.md) ·
-[heterogeneous ONNX Execution Provider demos (`./demo-onnx`)](../demo/README.md#heterogeneous-onnx-execution-provider-demo-demo-onnx).
-
-## Understand the implementation
-
-- [cuDLA backend](cudla-backend.md): implemented API, CUDA staging, ownership and allocation behavior.
-- [Heterogeneous ONNX Execution Provider design](designs/n1x-onnx-execution-provider.md): native `t254` DAG compilation, C++ `CHW16`/`CHW32` surface packing, cycle-free graph partitioning, and `INT8` calibration.
-- [Shutdown and reload](shutdown-reload.md): firmware confirmation, lifetime ordering and hardware qualification.
-- [Tool index](../scripts/README.md): operational commands, tests and research tools.
-- [Contributing](../CONTRIBUTING.md): development workflow and verification by change type.
-
-## Examine the evidence
-
-- [Measurement receipts](evidence/README.md): exact hashes and physical/offline outcomes.
-- [Published demo images](../demo/assets/README.md): unmodified sample and actual DLA output.
-- [Research archive](research/README.md): original driver/firmware analysis, compiler bridge and historical boot experiments.
-
-Research reports preserve the evidence available at their stated date. Follow
-the maintained guides above for current operation; historical boot commands are
-not a general installation sequence.
+- [Architecture & Protocol Reference](architecture.md): ACPI endpoints, VBIOS policy carveout, HFRP bring-up, `/dev/accel/accel0` UAPI, native `t254` compiler, and ONNX Execution Provider internals.
+- [Setup and Reproduction](setup.md): Dependencies, pinned vendor inputs, firmware extraction, model compilation, and module build.
+- [Support Status](status.md): Qualified hardware/software configuration and benchmark summary.
+- [Controlled Shutdown and Reload](shutdown-reload.md): HFRP power-down contract, DMA/VMA lifetime, and reload qualification.
+- [cuDLA Backend](cudla-backend.md): `libnvcudla.so` implementation and `n1x-dla-broker` IPC service.
+- [Arch Package & Kernel Updates](updates.md): Building and installing `n1x-npu-bootstrap-rtx-spark` and `n1x-npu.service`.
+- [Hardware Qualification Receipts](evidence/README.md): JSON receipts and artifact SHA-256 digests.
+- [Demos](../demo/README.md): Super-resolution (`./demo-superres`), [denoising & classification](../demo/vision.md) (`./demo-denoise`, `./demo-classify`), and [ONNX Execution Provider](../demo/README.md#heterogeneous-onnx-execution-provider-demo-demo-onnx) (`./demo-onnx`).
+- [Scripts & Test Matrix](../scripts/README.md): Operational scripts and `Makefile` test targets.

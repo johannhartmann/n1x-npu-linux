@@ -1,23 +1,14 @@
-# Qualification evidence
+# Qualification Receipts
 
-Receipts identify exact artifacts and the boundary between original-code
-emulation, modeled I/O and physical hardware. Existing receipt contents are
-preserved when the repository is reorganized. New measurements receive new
-records; [current status](../status.md) summarizes the supported behavior.
+Tracked JSON receipts record artifact SHA-256 digests and physical/offline verification outputs. [`scripts/check_repo.py`](../../scripts/check_repo.py) verifies that published demo assets in [`demo/assets/`](../../demo/assets/README.md) match these receipts.
 
 | Receipt | Scope |
 | --- | --- |
-| [Heterogeneous ONNX EP & `INT8` hardware qualification](n1x-ort-hardware-2026-11-01.json) | `mnist-12.onnx` (`FP16` & auto-calibrated `INT8`), `super-resolution-10.onnx` (`DLA + Host`), 3-stage `DLA -> Host -> DLA`, `REEXEC_IO` reuse, and confirmed `43 00` / state `07` shutdown |
-| [Current physical NPU qualification](npu-hardware-2026-10-28.json) | 48 fixture jobs, two healthy reload cycles and two complete super-resolution image runs |
-| [Vision examples](vision-hardware-2026-10-29.json) | Six denoising/classification image runs, 657 physical application submissions, batch reuse and three healthy stops/startups |
-| [Vision compiler reproduction](vision-reproduction-2026-10-29.json) | Fresh outputs for all 15 pinned vision loadables; existing super-resolution artifact unchanged |
-| [First cuDLA hardware qualification](cudla-hardware-2026-10-28.json) | Eight independent numerical jobs with the earlier retention-only driver |
-| [First super-resolution window](superres-tile-2026-10-28.json) | One physical 64x64 window; not a complete image |
-| [Offline model reproduction](offline-reproduction-2026-10-28.json) | Clean source export reconstructed all four pinned loadables |
-| [First reload attempt](reload-attempt-2026-10-28.json) | Startup and inference passed; host mask assertion stopped shutdown before power-off |
-| [Lifecycle review](lifecycle-review-2026-10-28.json) | Original-code comparisons, confirmation fix and joined shutdown/transport tests before requalification |
-
-Complete local logs and generated outputs remain in ignored `results/`.
-The published [demo images](../../demo/assets/README.md) retain the hashes from
-the current physical receipt. Two healthy reload cycles establish a bounded
-qualification on one board, not long-term reliability or uncertain-failure recovery.
+| [`n1x-ort-hardware-2026-11-01.json`](n1x-ort-hardware-2026-11-01.json) | `N1xInferenceSession` physical qualification on `mnist-12.onnx`, `emotion-ferplus-8.onnx`, `super-resolution-10.onnx`, and 3-stage `DLA -> Host -> DLA` (`FP16` & `INT8`, `REEXEC_IO`) |
+| [`npu-hardware-2026-10-28.json`](npu-hardware-2026-10-28.json) | 48 cuDLA fixture jobs, 15 `REEXEC`s, 2 stop/unload/reload cycles, and 512×512 / 1024×1024 super-resolution runs |
+| [`vision-hardware-2026-10-29.json`](vision-hardware-2026-10-29.json) | 6 DnCNN denoising and ResNet-18 classification runs (657 NPU submissions) |
+| [`vision-reproduction-2026-10-29.json`](vision-reproduction-2026-10-29.json) | Offline reproduction of all 15 DnCNN and ResNet-18 partition `.nvda` loadables |
+| [`offline-reproduction-2026-10-28.json`](offline-reproduction-2026-10-28.json) | Offline reproduction of the `relu`, `conv1x1`, `conv1x1_relu`, and `superres` `.nvda` loadables |
+| [`cudla-hardware-2026-10-28.json`](cudla-hardware-2026-10-28.json) | Initial 8-job physical cuDLA qualification |
+| [`superres-tile-2026-10-28.json`](superres-tile-2026-10-28.json) | Single 64×64 super-resolution tile verification |
+| [`reload-attempt-2026-10-28.json`](reload-attempt-2026-10-28.json), [`lifecycle-review-2026-10-28.json`](lifecycle-review-2026-10-28.json) | Earlier shutdown mask-readback diagnosis and transport verification |
