@@ -199,7 +199,7 @@ int main(int argc,char **argv)
  reset_request();privileged=false;check(-EPERM);assert(!allocations&&!submits);
  struct n1x_dla_accel_info info;
  assert(info_ioctl(&accel.drm,&info,&owner)==-EPERM);
- require_rawio=false;assert(!info_ioctl(&accel.drm,&info,&owner));require_rawio=true;
+ require_rawio=false;assert(!info_ioctl(&accel.drm,&info,&owner)&&!(info.capabilities&N1X_DLA_CAP_RAWIO_REQUIRED));require_rawio=true;
  struct n1x_dla_accel_read read={0};
  assert(read_ioctl(&accel.drm,&read,&owner)==-EPERM);
  for(int mode=0;mode<11;mode++){

@@ -12,7 +12,6 @@ make test-cudla
 Produces:
 - `runtime/cudla/libnvcudla.so`: Backend shared library loaded by `libcudla.so.1`.
 - `runtime/cudla/cudla-smoke`: Direct CLI test linking `libcudla.so.1`.
-- `runtime/cudla/n1x-dla-broker`: Capability-confined UNIX-socket broker used by `./demo-superres`, `./demo-denoise`, and `./demo-classify`.
 
 ## Supported cuDLA Features
 

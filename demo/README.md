@@ -16,11 +16,7 @@ Executes the ONNX Model Zoo 3× sub-pixel CNN across overlapping 64×64 windows 
 After completing [setup](../docs/setup.md):
 
 ```sh
-uv venv --python 3.12 sources/superres-venv
-uv pip install --python sources/superres-venv/bin/python --require-hashes \
-  --only-binary :all: -r requirements-superres.lock
-make module cudla
-pkexec /usr/bin/python3 "$PWD/scripts/install_cudla_broker.py" --models superres
+make runtime cudla
 ./demo-superres demo/assets/astronaut-input.png --output-dir results/my-superres-run
 ```
 

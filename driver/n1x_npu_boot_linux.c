@@ -50,45 +50,9 @@ static bool autostart = true;
 module_param(autostart, bool, 0400);
 MODULE_PARM_DESC(autostart, "Automatically run full NPU bring-up in C once both endpoints probe (default true)");
 
-static bool enable_upload = true;
-module_param(enable_upload, bool, 0400);
-MODULE_PARM_DESC(enable_upload, "Permit SROOT firmware upload phase (default true)");
-
-static bool enable_hfrp = true;
-module_param(enable_hfrp, bool, 0400);
-MODULE_PARM_DESC(enable_hfrp, "Permit board-policy HFRP prepare/power-on phase (default true)");
-
 static unsigned int firmware_variant;
 module_param(firmware_variant, uint, 0400);
 MODULE_PARM_DESC(firmware_variant, "Pinned remapper-1 image: 0=initial, 1=Windows fallback; no automatic retry (default 0)");
-
-static bool enable_ping = true;
-module_param(enable_ping, bool, 0400);
-MODULE_PARM_DESC(enable_ping, "Permit DMA-word ping after upload phase (default true)");
-
-static bool enable_config_snapshot = true;
-module_param(enable_config_snapshot, bool, 0400);
-MODULE_PARM_DESC(enable_config_snapshot, "Permit command-22 config snapshot after DMA ping (default true)");
-
-static bool enable_region5 = true;
-module_param(enable_region5, bool, 0400);
-MODULE_PARM_DESC(enable_region5, "Permit region-5 initialization after DMA ping (default true)");
-
-static bool enable_config_apply = true;
-module_param(enable_config_apply, bool, 0400);
-MODULE_PARM_DESC(enable_config_apply, "Permit default config import after region-5 (default true)");
-
-static bool enable_lpwr_config = true;
-module_param(enable_lpwr_config, bool, 0400);
-MODULE_PARM_DESC(enable_lpwr_config, "Permit command-23 board-policy LPWR config import (default true)");
-
-static bool enable_bypass_task = true;
-module_param(enable_bypass_task, bool, 0400);
-MODULE_PARM_DESC(enable_bypass_task, "Permit initial bypass task verification (default true)");
-
-static bool enable_accel = true;
-module_param(enable_accel, bool, 0400);
-MODULE_PARM_DESC(enable_accel, "Register /dev/accel/accel* DRM accelerator device (default true)");
 
 static bool strict_platform;
 module_param(strict_platform, bool, 0400);
@@ -102,9 +66,15 @@ static bool enable_preempt = true;
 module_param(enable_preempt, bool, 0400);
 MODULE_PARM_DESC(enable_preempt, "Permit HAL-1 preemption enablement (0x31c) and resumable job control (default true)");
 
-static bool debug_sysfs;
-module_param(debug_sysfs, bool, 0400);
-MODULE_PARM_DESC(debug_sysfs, "Expose step-by-step qualification sysfs attributes (default false; automatically enabled when autostart=0)");
+static bool enable_upload = true;
+static bool enable_hfrp = true;
+static bool enable_ping = true;
+static bool enable_config_snapshot = true;
+static bool enable_region5 = true;
+static bool enable_config_apply = true;
+static bool enable_lpwr_config = true;
+static bool enable_bypass_task = true;
+static bool enable_accel = true;
 
 static DECLARE_WAIT_QUEUE_HEAD(boot_waitq);
 static atomic_t boot_irq_count = ATOMIC_INIT(0);
@@ -1668,7 +1638,10 @@ static umode_t boot_attr_is_visible(struct kobject *kobj, struct attribute *attr
 	(void)n;
 	if (!endpoint || endpoint->sroot)
 		return 0;
-	if (!debug_sysfs && autostart && attr != &dev_attr_status.attr)
+	if (autostart && attr != &dev_attr_status.attr &&
+	    attr != &dev_attr_hfrp_status.attr &&
+	    attr != &dev_attr_shutdown.attr &&
+	    attr != &dev_attr_shutdown_status.attr)
 		return 0;
 	return attr->mode;
 }

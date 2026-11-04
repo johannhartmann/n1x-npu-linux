@@ -15,7 +15,7 @@ from PIL import Image, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'runtime'))
-from cudla_broker import Device, FRONTEND_SHA256, BROKER
+from cudla_python import Device, FRONTEND_SHA256
 from loadable import Model
 from n1x_compiler import ensure_reference_loadable
 from vision_image import classify_input, denoise, psnr, reference, resnet18, ssim
@@ -134,7 +134,6 @@ def main():
     parser.add_argument('--add-noise',action='store_true',help='denoise only: Gaussian noise, sigma 25/255, seed 0')
     args = parser.parse_args()
     if args.add_noise and args.example!='denoise': parser.error('--add-noise is for denoising only')
-    if os.geteuid()==0: parser.error('run as an unprivileged desktop user; the installed broker isolates RAWIO')
     if not Path('/sys/module/n1x_npu_bootstrap/srcversion').is_file(): parser.error('requires the loaded N1X NPU bootstrap module')
     manifest = json.loads((ROOT/'config/vision-models.json').read_text())
     for name,expected in manifest['prepared'].items():
@@ -169,7 +168,6 @@ def main():
         total_required_retained_bytes=required,
         learned_convolutions='N1X DLA via NVIDIA cuDLA')
     with Device(models) as device:
-        metadata['broker_sha256']=sha(BROKER)
         before=device.info()
         if not before['capabilities']&4: parser.error('driver lacks completed-task I/O reuse')
         if required>before['retain_limit']-before['retained_bytes'] or len(models)>before['max_jobs']-before['retained_jobs']:

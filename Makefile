@@ -14,7 +14,7 @@ help:
 	@echo 'make test-portable   Portable driver/protocol/lifetime unit tests'
 	@echo 'make runtime cudla   Build userspace compiler, ONNX EP, and cuDLA backend'
 	@echo 'make test-compiler   Run native t254 compiler and ONNX Execution Provider tests'
-	@echo 'make test-cudla      Run cuDLA backend, model, broker, and CUDA staging tests'
+	@echo 'make test-cudla      Run cuDLA backend, model, and CUDA staging tests'
 	@echo 'make module          Build n1x_npu_bootstrap.ko against KERNEL_RELEASE'
 	@echo 'make clean           Remove generated userspace build outputs'
 
@@ -41,16 +41,13 @@ test-portable:
 	$(PYTHON) scripts/test_shutdown_transport.py
 	$(PYTHON) scripts/test_dla_runtime.py
 	$(PYTHON) scripts/test_npu_reload.py
-	$(PYTHON) scripts/test_npu_trigger.py
-	$(PYTHON) scripts/test_qualify_npu_start.py
-	$(PYTHON) scripts/test_npu_dma_domains.py
 	$(PYTHON) scripts/test_sroot_cca_quirk.py
 
 module:
 	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" modules
 
 clean:
-	rm -f runtime/libn1x_dla.so runtime/libn1x_compiler.so runtime/n1x-compile runtime/libn1x_ort.so runtime/n1x-ort-run runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke runtime/cudla/n1x-dla-broker
+	rm -f runtime/libn1x_dla.so runtime/libn1x_compiler.so runtime/n1x-compile runtime/libn1x_ort.so runtime/n1x-ort-run runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke
 
 runtime: runtime/libn1x_dla.so runtime/libn1x_compiler.so runtime/n1x-compile runtime/libn1x_ort.so runtime/n1x-ort-run
 compiler: runtime/libn1x_compiler.so runtime/n1x-compile
@@ -76,12 +73,10 @@ test-compiler: compiler ort
 	$(PYTHON) scripts/test_n1x_ort.py
 	$(PYTHON) scripts/test_superres_image.py
 
-cudla: runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke runtime/cudla/n1x-dla-broker
+cudla: runtime/cudla/libnvcudla.so runtime/cudla/cudla-smoke
 
 test-cudla: cudla compiler ort
 	$(PYTHON) scripts/test_cudla_model.py
-	$(PYTHON) scripts/test_cudla_broker.py
-	$(PYTHON) scripts/test_cudla_broker_security.py
 	$(PYTHON) scripts/test_qualify_cudla.py
 	$(PYTHON) scripts/test_cudla_cuda_transport.py
 	$(PYTHON) scripts/test_vision_examples.py
@@ -96,12 +91,3 @@ runtime/cudla/libnvcudla.so: runtime/cudla_backend.cpp runtime/cudla_model.cpp r
 runtime/cudla/cudla-smoke: runtime/cudla_smoke.cpp $(CUDLA_PACKAGE)/include/cudla.h $(CUDA_ROOT)/include/cuda.h
 	mkdir -p runtime/cudla
 	$(CXX) -std=c++17 $(CFLAGS) -I$(CUDLA_PACKAGE)/include -I$(CUDA_ROOT)/include $< -L$(CUDLA_PACKAGE)/lib -lcudla -L$(CUDA_ROOT)/lib64/stubs -lcuda -Wl,-rpath,$(CUDLA_PACKAGE)/lib -o $@
-
-runtime/cudla/n1x-dla-broker: runtime/cudla_broker.cpp runtime/n1x_dla.h runtime/n1x_cudla_private.h include/uapi/n1x_dla_accel.h runtime/cudla/libnvcudla.so runtime/libn1x_dla.so $(CUDLA_PACKAGE)/include/cudla.h $(CUDA_ROOT)/include/cuda.h
-	mkdir -p runtime/cudla
-	$(CXX) -std=c++17 $(CFLAGS) -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fPIE \
-		-Iinclude -Iruntime -I$(CUDLA_PACKAGE)/include -I$(CUDA_ROOT)/include $< \
-		-Wl,--no-as-needed -Lruntime/cudla -lnvcudla -Wl,--as-needed -L$(CUDLA_PACKAGE)/lib -lcudla \
-		-Lruntime -ln1x_dla -L$(CUDA_ROOT)/lib64/stubs -lcuda -lcrypto \
-		-pie -Wl,-rpath,/usr/lib/n1x-npu-linux/cudla:/usr/lib/n1x-npu-linux \
-		-Wl,-z,relro,-z,now,-z,noexecstack -o $@

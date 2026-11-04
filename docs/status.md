@@ -20,7 +20,6 @@ By default (`strict_platform=0`, `autostart=1`), `n1x_npu_bootstrap.ko` dynamica
 | ONNX EP: `mnist-12.onnx` | 1 `DLAStage` (`2.98 MB` `.nvda`), `FP16` & auto-calibrated `INT8` | `0.833 ms` `EXEC`, `0.332 ms` `REEXEC_IO`; `FP16 RMSE 0.002614`, `INT8 cos 0.999853` |
 | ONNX EP: `emotion-ferplus-8.onnx` | 1 `DLAStage` (37 nodes, `21.21 MB` `FP16` / `12.47 MB` `INT8`) | `1.37 ms` `FP16` / `0.98 ms` `INT8` `REEXEC_IO`; `6/6` gallery top-1 matches |
 | ONNX EP: `super-resolution-10.onnx` | `1 DLAStage` + `1 HostStage` (`DepthToSpace`) | `1.357 ms` `EXEC`, `1.037 ms` `REEXEC_IO`; `RMSE 0.000244` |
-| Dynamic frequency scaling | `/sys/bus/platform/devices/NVDA200A:00/npu_freq_khz` (`892.8 MHz` → `1500 MHz`) | 64-tile super-resolution reduced from `224.2 ms` to `97.1 ms` (`2.31x`) |
 
 ## Current Boundaries
 

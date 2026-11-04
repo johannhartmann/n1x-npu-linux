@@ -4,7 +4,19 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
-from npu_trigger import TRIGGERS
+
+TRIGGERS = {
+    'start': b'start\n',
+    'prepare_hfrp': b'prepare\n',
+    'upload': b'upload\n',
+    'ping': b'ping\n',
+    'init_region5': b'init\n',
+    'read_config': b'read\n',
+    'apply_config': b'apply\n',
+    'apply_lpwr': b'apply\n',
+    'bypass_task': b'run\n',
+    'shutdown': b'stop\n',
+}
 
 ROOT = Path(__file__).resolve().parents[1]
 

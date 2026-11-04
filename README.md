@@ -35,8 +35,8 @@ End-to-end execution of ONNX Model Zoo's `emotion-ferplus-8.onnx` (37 nodes lowe
 ## Features & Hardware Support
 
 - **Dynamic ACPI & VBIOS Discovery (`strict_platform=0`)**: Binds `NVDA200A` (`_HRV=0x34`) and `NVDA8600` (`_HRV=1` `SROOT`) via `<linux/component.h>`, discovers `_CRS` MMIO apertures and IORT SMMUv3 mappings dynamically, and parses the live VBIOS BIT `0x6c` clock/gating policy from the hardware carveout (`0x1182bc80`).
-- **In-Kernel Bring-Up, PM & Frequency Scaling (`autostart=1`)**: Executes the 8-stage HFRP/SROOT bring-up in C on probe, supports `.suspend` / `.resume` power transitions, and exposes `/sys/bus/platform/devices/NVDA200A:00/npu_freq_khz` (`892.8 MHz`–`1500 MHz`, `2.31x` throughput boost).
-- **`/dev/accel/accel0` DRM Accelerator**: Supports `EXEC`, `REEXEC` (in-place I/O patching with zero DMA allocations), `READ`, `STATS` (v2 hardware layer profiling), `CONTROL` (HAL-1 checkpoint preemption & resume), zero-copy read-only `mmap()` (`N1X_DLA_CAP_MMAP`), and automatic per-FD `postclose()` DMA cleanup.
+- **In-Kernel Bring-Up & Power Management (`autostart=1`)**: Executes the 8-stage HFRP/SROOT bring-up in C on probe, configures the VBIOS policy clock via HFRP, and supports `.suspend` / `.resume` power transitions.
+- **`/dev/accel/accel0` DRM Accelerator**: Supports `EXEC`, `REEXEC` (in-place I/O patching with zero DMA allocations), `READ`, `STATS` (v2 hardware layer profiling), `CONTROL` (HAL-1 checkpoint preemption & resume), zero-copy read-only `mmap()`, and automatic per-FD `postclose()` DMA cleanup.
 - **Native `t254` Compiler & ONNX Execution Provider**: [`runtime/libn1x_compiler.so`](runtime/n1x_compile.cpp) and [`runtime/libn1x_ort.so`](runtime/n1x_ort.cpp) ([`N1xInferenceSession`](runtime/n1x_ort.py)) compile and execute `FP16` (`CHW16`) and `INT8` (`CHW32`, per-tensor and per-channel) multi-branch DAGs in-process with SHA-256 `.nvda` caching.
 
 | Capability | Measured Result on NVIDIA N1X (`t254`) |
@@ -45,7 +45,6 @@ End-to-end execution of ONNX Model Zoo's `emotion-ferplus-8.onnx` (37 nodes lowe
 | 3× super-resolution (`./demo-superres`) | 512×512 → 1536×1536 (`0.856 s`) and 1024×1024 → 3072×3072 (`2.181 s`), `RMSE <= 0.000162` |
 | DnCNN denoising & ResNet-18 (`./demo-denoise`, `./demo-classify`) | 657 NPU submissions; DnCNN PSNR `20.73 -> 31.83 dB`, ResNet-18 top-1 exact match |
 | ONNX Execution Provider (`./demo-onnx`) | `emotion-ferplus-8` (`1.37 ms` `FP16` / `0.98 ms` `INT8`), `mnist-12` (`0.33 ms`), `super-resolution-10` (`1.04 ms`) |
-| Dynamic frequency scaling (`npu_freq_khz`) | `892.8 MHz` → `1500 MHz` (`224.2 ms` → `97.1 ms` on 64-tile super-resolution, `2.31x` speedup) |
 
 ## Quick Start
 

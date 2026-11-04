@@ -5,7 +5,7 @@
 - **Kernel**: ARM64 Linux kernel (`>= 6.12`) with matching headers and the [`NVDA8600` `_HRV=1` noncoherent DMA quirk](../patches/arm64-acpi-iort-nvda8600-noncoherent-dma.patch) applied.
 - **Host Packages (Arch/ARM64)**: `base-devel`, `python`, `uv`, `bubblewrap`, `gdb`, `openssl`, `libdrm`, `acpica`, `7zip`, and CUDA (`/opt/cuda`) for the optional cuDLA backend.
 
-## 2. Checkout and Python Environments
+## 2. Checkout and Python Environment
 
 ```sh
 git clone https://github.com/johannhartmann/n1x-npu-linux.git
@@ -14,14 +14,6 @@ uv venv --python 3.12 venv
 uv pip install --python venv/bin/python --require-hashes --only-binary :all: -r requirements.lock
 mkdir -p sources results
 make check
-```
-
-Optional image environment for `./demo-superres`:
-
-```sh
-uv venv --python 3.12 sources/superres-venv
-uv pip install --python sources/superres-venv/bin/python --require-hashes \
-  --only-binary :all: -r requirements-superres.lock
 ```
 
 ## 3. Acquire Pinned Inputs
@@ -71,12 +63,6 @@ make module
 ```
 
 By default (`strict_platform=0`), `n1x_npu_bootstrap.ko` reads the VBIOS policy directly from the live hardware carveout (`0x1182bc80`), so no `.rom` file is needed in `/usr/lib/firmware`.
-
-To install the optional privileged cuDLA broker for `./demo-superres`, `./demo-denoise`, and `./demo-classify`:
-
-```sh
-pkexec /usr/bin/python3 "$PWD/scripts/install_cudla_broker.py" --models superres
-```
 
 ## 6. Hardware Qualification
 

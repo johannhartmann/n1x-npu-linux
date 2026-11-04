@@ -4,8 +4,11 @@ Explicit hybrid CUDA execution only. Reference inference lives elsewhere.
 """
 import ctypes as c
 import hashlib
+import os
 from pathlib import Path
 import numpy as np
+
+from n1x_dla import Device as _DlaDevice
 
 ROOT=Path(__file__).resolve().parents[1]
 FRONTEND_SHA256='89c7431ded0c95c8cf7e68c878e20396d3d905534a6283a6c48307f09f9798c9'
@@ -17,6 +20,39 @@ class Descriptor(c.Structure):
               ('codes',c.c_uint8*5),('strides',c.c_uint32*8)]
     @property
     def shape(self):return self.n,self.channels,self.h,self.w
+
+
+def _descriptor(tensor):
+    value=Descriptor()
+    value.name=tensor.name.encode()
+    value.size=tensor.bytes
+    value.n,value.channels,value.h,value.w=tensor.shape
+    for index,item in enumerate(tensor.format_codes):value.codes[index]=item
+    for index,item in enumerate(tensor.strides):value.strides[index]=item
+    return value
+
+
+def describe_model(model):
+    def _fmt(desc):
+        return {
+            'name':desc.name.decode('utf-8',errors='replace'),
+            'size':int(desc.size),
+            'shape':list(desc.shape),
+            'dataFormat':int(desc.codes[0]),
+            'dataType':int(desc.codes[1]),
+            'dataCategory':int(desc.codes[2]),
+            'pixelFormat':int(desc.codes[3]),
+            'pixelMapping':int(desc.codes[4]),
+            'stride':[int(x) for x in desc.strides],
+        }
+    inputs=[_descriptor(t) for t in model.inputs]
+    outputs=[_descriptor(t) for t in model.outputs]
+    return {
+        'inputs':[_fmt(d) for d in inputs],
+        'outputs':[_fmt(d) for d in outputs],
+        'total_input_bytes':sum(d.size for d in inputs),
+        'total_output_bytes':sum(d.size for d in outputs),
+    }
 
 
 class Attribute(c.Union):
@@ -80,7 +116,14 @@ def check(status,operation):
 
 
 class Device:
-    def __init__(self):
+    def __init__(self,models=None,device_path=None):
+        self.device_path=device_path or os.environ.get('N1X_DLA_DEVICE','/dev/accel/accel0')
+        if models is None:
+            self.model_paths={}
+        elif isinstance(models,dict):
+            self.model_paths={k:Path(v).resolve(strict=True) for k,v in models.items()}
+        else:
+            self.model_paths={Path(p).stem:Path(p).resolve(strict=True) for p in models}
         self.context=c.c_void_p();self.stream=c.c_void_p();self.handle=c.c_void_p();self.modules=[]
         self.cuda=c.CDLL('libcuda.so.1')
         cuda_args={
@@ -114,7 +157,12 @@ class Device:
     def call(self,name,*args):
         check(getattr(self.cuda if name.startswith('cu') and not name.startswith('cudla') else self.dla,name)(*args),name)
 
-    def load(self,path):
+    def info(self):
+        with _DlaDevice(self.device_path) as dla_dev:
+            return dla_dev.info()
+
+    def load(self,path_or_name):
+        path=self.model_paths.get(str(path_or_name),path_or_name)
         result=Module(self,path);self.modules.append(result);return result
 
     def close(self):
@@ -130,43 +178,70 @@ class Device:
 
 class Module:
     def __init__(self,device,path):
-        self.device=device;self.handle=c.c_void_p();self.buffers=[];self.tokens=[]
+        self.device=device;self.handle=c.c_void_p();self.in_buffers=[];self.out_buffers=[]
+        self.in_tokens=[];self.out_tokens=[];self.inputs=[];self.outputs=[]
         self.failed=False
         raw=Path(path).read_bytes();backing=c.create_string_buffer(raw)
         try:
             device.call('cudlaModuleLoadFromMemory',device.handle,backing,len(raw),c.byref(self.handle),0)
             attr=Attribute()
-            for direction in (0,1):
-                device.call('cudlaModuleGetAttributes',self.handle,direction,c.byref(attr))
-                if attr.count!=1:raise ValueError('demo requires one input and output')
-            self.input,self.output=Descriptor(),Descriptor()
-            for direction,desc in ((2,self.input),(3,self.output)):
-                attr.descriptor=c.pointer(desc);device.call('cudlaModuleGetAttributes',self.handle,direction,c.byref(attr))
+            device.call('cudlaModuleGetAttributes',self.handle,0,c.byref(attr))
+            num_in=int(attr.count)
+            device.call('cudlaModuleGetAttributes',self.handle,1,c.byref(attr))
+            num_out=int(attr.count)
+            if not (1<=num_in<=64 and 1<=num_out<=64):raise ValueError('cuDLA module requires 1..64 inputs and outputs')
+            in_arr=(Descriptor*num_in)();attr.descriptor=in_arr
+            device.call('cudlaModuleGetAttributes',self.handle,2,c.byref(attr))
+            out_arr=(Descriptor*num_out)();attr.descriptor=out_arr
+            device.call('cudlaModuleGetAttributes',self.handle,3,c.byref(attr))
+            for desc in in_arr:
+                self.inputs.append(desc)
                 pointer=c.c_uint64();device.call('cuMemAlloc_v2',c.byref(pointer),desc.size)
-                self.buffers.append(pointer)
+                self.in_buffers.append(pointer)
                 token=c.c_void_p();device.call('cudlaMemRegister',device.handle,c.c_void_p(pointer.value),desc.size,c.byref(token),0)
-                self.tokens.append(token)
+                self.in_tokens.append(token)
+            for desc in out_arr:
+                self.outputs.append(desc)
+                pointer=c.c_uint64();device.call('cuMemAlloc_v2',c.byref(pointer),desc.size)
+                self.out_buffers.append(pointer)
+                token=c.c_void_p();device.call('cudlaMemRegister',device.handle,c.c_void_p(pointer.value),desc.size,c.byref(token),0)
+                self.out_tokens.append(token)
+            self.input,self.output=self.inputs[0],self.outputs[0]
         except Exception:self.close();raise
 
     def __call__(self,data):
         if self.failed:raise RuntimeError('module stopped after a previous failure')
-        device=self.device;packed=pack_tensor(data,self.input)
-        source=c.create_string_buffer(bytes(packed));destination=c.create_string_buffer(self.output.size)
-        inputs=(c.c_void_p*1)(self.tokens[0]);outputs=(c.c_void_p*1)(self.tokens[1])
-        task=Task(self.handle,outputs,1,1,inputs,None,None)
+        device=self.device
+        if len(self.inputs)==1 and not isinstance(data,(dict,list,tuple)):
+            in_arrays=[data]
+        elif isinstance(data,dict):
+            in_arrays=[data[d.name.decode('utf-8',errors='replace')] for d in self.inputs]
+        else:
+            if len(data)!=len(self.inputs):raise ValueError('input tensor count mismatch')
+            in_arrays=list(data)
+        packed_inputs=[bytes(pack_tensor(arr,desc)) for arr,desc in zip(in_arrays,self.inputs)]
+        in_ptrs=(c.c_void_p*len(self.in_tokens))(*[t.value for t in self.in_tokens])
+        out_ptrs=(c.c_void_p*len(self.out_tokens))(*[t.value for t in self.out_tokens])
+        task=Task(self.handle,out_ptrs,len(self.out_tokens),len(self.in_tokens),in_ptrs,None,None)
         try:
             device.call('cuCtxSetCurrent',device.context)
-            device.call('cuMemcpyHtoD_v2',self.buffers[0],source,len(packed))
+            for buf,packed in zip(self.in_buffers,packed_inputs):
+                src=c.create_string_buffer(packed)
+                device.call('cuMemcpyHtoD_v2',buf,src,len(packed))
             device.call('cuCtxSynchronize')
             device.call('cudlaSubmitTask',device.handle,c.byref(task),1,device.stream,0)
             device.call('cudlaGetLastError',device.handle)
-            device.call('cuMemcpyDtoH_v2',destination,self.buffers[1],self.output.size)
-            return unpack_tensor(destination.raw,self.output)
+            results=[]
+            for buf,desc in zip(self.out_buffers,self.outputs):
+                dst=c.create_string_buffer(desc.size)
+                device.call('cuMemcpyDtoH_v2',dst,buf,desc.size)
+                results.append(unpack_tensor(dst.raw,desc))
+            return results[0] if len(results)==1 else results
         except Exception:self.failed=True;raise
 
     def close(self):
-        for token in self.tokens:self.device.dla.cudlaMemUnregister(self.device.handle,token)
-        self.tokens.clear()
-        for pointer in self.buffers:self.device.cuda.cuMemFree_v2(pointer)
-        self.buffers.clear()
+        for token in self.in_tokens+self.out_tokens:self.device.dla.cudlaMemUnregister(self.device.handle,token)
+        self.in_tokens.clear();self.out_tokens.clear()
+        for pointer in self.in_buffers+self.out_buffers:self.device.cuda.cuMemFree_v2(pointer)
+        self.in_buffers.clear();self.out_buffers.clear()
         if self.handle:self.device.dla.cudlaModuleUnload(self.handle,0);self.handle=c.c_void_p()
