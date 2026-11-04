@@ -1,9 +1,4 @@
-"""Image/layout stages shared by the N1X demo and independent reference tests.
-
-The tile executor is explicit: this module never silently substitutes a CPU
-reference for DLA inference. Learned execution returns nine luminance planes;
-pixel shuffle and chroma resizing are ordinary host-side image operations.
-"""
+"""Tiling, pixel-shuffle, and YCbCr color-conversion helpers for 3x super-resolution."""
 from dataclasses import dataclass
 import hashlib
 import numpy as np

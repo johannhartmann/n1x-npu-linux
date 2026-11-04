@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Check pinned local inputs; optionally fetch public assets or extract firmware.
-
-Writes only ignored sources/ and results/. Never installs packages, accesses
-devices, loads modules, changes boot configuration or executes a vendor installer.
-"""
+"""Verify pinned local inputs; optionally download public assets or extract SROOT firmware."""
 import argparse
 import hashlib
 import io

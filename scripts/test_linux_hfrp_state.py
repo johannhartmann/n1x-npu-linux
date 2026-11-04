@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the actual sysfs power-query handlers with mocked OS/transport.
-
-No hardware access. Packet parsing and version gates have separate native
-transport coverage in test_hfrp_power_state.py.
-"""
+"""Unit tests for the sysfs HFRP power-query handlers with mocked OS/transport."""
 import os
 from pathlib import Path
 import shlex

@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Physically qualify stop -> DMA release -> unload -> load -> cuDLA inference.
-
-Run as root on the qualified NPU kernel. Requires the pinned artifacts described
-in docs/cudla-backend.md. Stops at the first failure; never forces unload,
-resets a failed channel or retries an uncertain operation. Leaves the final
-successfully reloaded device running, with durable per-cycle evidence.
-"""
+"""Qualify controlled HFRP shutdown, DMA release, module reload, and cuDLA inference."""
 import argparse
 import errno
 import hashlib

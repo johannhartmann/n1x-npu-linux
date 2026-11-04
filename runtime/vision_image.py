@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Image operations around explicit NPU executors; never substitutes CPU inference."""
+"""Image tiling, im2col/pooling, and quality metrics for DnCNN and ResNet-18."""
 from pathlib import Path
 import struct
 import zlib

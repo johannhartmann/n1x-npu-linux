@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Compile actual accel ioctl/lifetime code with modeled Linux user/DMA boundaries.
-
-No device is opened. The execution backend is a stub; protocol and firmware are
-covered independently by test_linux_bypass_task/firmware.py.
-"""
+"""Unit tests for /dev/accel/accel0 ioctl, mmap, and DMA lifetime semantics."""
 import os
 from pathlib import Path
 import shlex

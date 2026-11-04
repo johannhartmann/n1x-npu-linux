@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""3x full-image super-resolution using real N1X DLA through NVIDIA cuDLA.
-
-No CPU fallback for learned inference. CPU ONNX execution checks the result.
-"""
+"""3x full-image super-resolution on the N1X DLA via NVIDIA cuDLA."""
 import argparse
 import hashlib
 import html
@@ -52,7 +49,7 @@ def main():
                   onnx_sha256=MODEL_SHA256,frontend_sha256=FRONTEND_SHA256,
                   kernel=platform.release(),platform_profile=profile,boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
                   module_srcversion=Path('/sys/module/n1x_npu_bootstrap/srcversion').read_text().strip(),
-                  automatic_retry=False,learned_inference='physical N1X DLA via original NVIDIA cuDLA')
+                  learned_inference='N1X DLA via NVIDIA cuDLA')
     print(f'DLA super-resolution: {width}x{height} -> {width*3}x{height*3}, {len(plan)} tiles',flush=True)
     started=time.monotonic();completed=0
     try:
@@ -73,7 +70,7 @@ def main():
             after=device.info()
         elapsed=time.monotonic()-started
     except Exception as exc:
-        record('error.json',dict(error=str(exc),completed_tiles=completed,submission_state_uncertain=True,automatic_retry=False))
+        record('error.json',dict(error=str(exc),completed_tiles=completed,submission_state_uncertain=True))
         raise
     if after['retained_jobs']!=before['retained_jobs']+1 or after['retained_bytes']!=before['retained_bytes']+required:
         raise RuntimeError('kernel backing grew unexpectedly; stopped')
@@ -100,7 +97,7 @@ def main():
 <p>CPU: color conversion, pixel shuffle, chroma resizing. Independent CPU ONNX reference: {'PASS' if passed else 'FAIL'}.</p>
 <pre>{html.escape(json.dumps(metadata,indent=2))}</pre>'''
     (destination/'report.html').write_text(page)
-    if not passed:raise RuntimeError('DLA result differs from the independent reference; evidence retained')
+    if not passed:raise RuntimeError('DLA output exceeded reference error threshold')
     print(f'PASS: full DLA output saved to {destination/"upscaled.png"}; max error {maximum:.6g}, RMSE {rmse:.6g}',flush=True)
 
 

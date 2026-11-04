@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Check the actual image stitching against independent whole-image ONNX.
-
-CPU reference only: does not claim NPU execution or install/load a driver.
-"""
+"""Verify tiled 3x super-resolution stitching against full-image ONNX evaluation."""
 import json
 from pathlib import Path
 import sys
