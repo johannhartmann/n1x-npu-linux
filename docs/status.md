@@ -23,6 +23,6 @@
 
 ## Current Boundaries
 
-- Non-DLA ONNX operators (`DepthToSpace`, `ReduceMean`, `Resize`, `Softmax`, dynamic `Reshape`/`Transpose`) run on the host CPU via [`N1xInferenceSession`](../runtime/n1x_ort.py)'s graph partitioner.
+- Unsupported or dynamic ONNX subgraphs (or operators opted out via `fallback_ops`) run on the host CPU via [`N1xInferenceSession`](../runtime/n1x_ort.py)'s graph partitioner.
 - Completed jobs owned by an open `/dev/accel/accel0` file descriptor are freed automatically in `postclose()` (and `n1x_accel_vm_close()` when mapped via `mmap()`). Uncertain DMA/firmware errors or a failed hardware stop (`accel->stop_failed`) remain fail-closed and retain DMA allocations until confirmed hardware shutdown or reboot.
 - Live hardware reset after a hung firmware channel, multi-queue asynchronous scheduling, CUDA Graphs, and `DMA-BUF` / `NvSci` import are not implemented.

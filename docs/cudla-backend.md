@@ -17,7 +17,7 @@ Produces:
 
 - **Hybrid CUDA Mode**: Supports up to 16 device handles bound to the active CUDA context.
 - **Loadable Deserialization**: Parses `.nvda` FlatBuffers loadables, validates address-list entries and `task-0-stats` v2 profiling descriptors, and registers input/output tensor descriptors sorted by bind ID.
-- **Synchronous Stream Staging & `REEXEC_IO`**: Enqueues async device-to-host input copies on the caller's `CUstream`, synchronizes before `DRM_IOCTL_N1X_DLA_EXEC` (initial run) or `DRM_IOCTL_N1X_DLA_REEXEC` (subsequent runs), reads outputs via `DRM_IOCTL_N1X_DLA_READ`, and copies results back to CUDA memory on the caller's stream.
+- **Synchronous Stream Staging & Compact `REEXEC_IO`**: Enqueues async device-to-host input copies on the caller's `CUstream`, synchronizes before `DRM_IOCTL_N1X_DLA_EXEC` (initial run, full `.nvda` image) or `DRM_IOCTL_N1X_DLA_REEXEC` (subsequent runs, compact I/O + statistics slices only), reads outputs via `DRM_IOCTL_N1X_DLA_READ`, and copies results back to CUDA memory on the caller's stream.
 - **Profiling & Attributes**: Supports `CUDLA_NUM_OUTPUT_TASK_STATISTICS`, `CUDLA_OUTPUT_TASK_STATISTICS_DESCRIPTORS`, `CUDLA_TASK_STATISTICS` (`DRM_IOCTL_N1X_DLA_STATS`), `CUDLA_DEVICE_VERSION` (`0x0200`), `cudlaSetTaskTimeoutInMs` (`1..1000000` ms), `CUDLA_SUBMIT_NOOP`, and `CUDLA_SUBMIT_SKIP_LOCK_ACQUIRE`.
 
 ## Hardware Qualification
