@@ -13,6 +13,7 @@
 #include <linux/dma-map-ops.h>
 #include <linux/dma-mapping.h>
 #include <linux/firmware.h>
+#include <linux/hex.h>
 #include <linux/io.h>
 #include <linux/interrupt.h>
 #include <linux/iommu.h>
@@ -33,6 +34,7 @@
 #include "n1x_dla_job_control.h"
 #include "n1x_dla_accel.h"
 #include "n1x_hfrp_setup.h"
+#include "n1x_sroot_client.h"
 
 #define N1X_BOOT_FIRMWARE "nvidia/n1x/sroot-v0.bin"
 #define N1X_BOOT_FALLBACK_FIRMWARE "nvidia/n1x/sroot-v1.bin"
@@ -483,7 +485,129 @@ static int n1x_boot_validate_firmware(const struct firmware *firmware)
 	return memcmp(digest, expected[firmware_variant], sizeof(digest)) ? -EBADMSG : 0;
 }
 
-/* Caller holds boot_lock. This function is the only upload entry point. */
+/* All secure-loader transactions hold boot_lock, including DSP clients. */
+static bool sroot_client_poisoned;
+
+/* Each published buffer is deliberately retained until reboot. A successful
+ * mailbox reply alone does not establish that every DMA read has stopped.
+ */
+static struct n1x_sroot_client_buffer {
+	void *cpu;
+	dma_addr_t dma;
+	size_t bytes;
+	bool published;
+} sroot_dsp_buffers[3];
+
+int n1x_sroot_upload_dsp_v1(u32 image_id, const u8 *image, size_t bytes,
+			  struct n1x_sroot_client_result *result)
+{
+	static const struct {
+		size_t bytes;
+		const char *sha256;
+	} pinned[] = {
+		{363816, "434660b36f4e21cb794bc50e10a47b91882710cbe90cb60620111a2a753c5b94"},
+		{631436, "350e0d40b2f8a6dfb486d8dfd3362fb5b02ceb90da372176b008498adbca8cc4"},
+		{157996, "517ef0d447ca80b7cb88ec0589cda816d9b20c844800ca95ccf7cbe96fc7d40e"},
+	};
+	struct n1x_sroot_client_buffer *buffer;
+	struct n1x_sroot_reply reply = {};
+	struct n1x_dla_io io;
+	u8 digest[SHA256_DIGEST_SIZE], expected[SHA256_DIGEST_SIZE];
+	u32 words[3], index;
+	int err;
+
+	if (!result)
+		return -EINVAL;
+	memset(result, 0, sizeof(*result));
+	if (image_id < 0xc0303 || image_id > 0xc0305 || !image)
+		return -EINVAL;
+	index = image_id - 0xc0303;
+	if (bytes != pinned[index].bytes)
+		return -EBADMSG;
+	sha256(image, bytes, digest);
+	if (hex2bin(expected, pinned[index].sha256, sizeof(expected)) ||
+	    memcmp(digest, expected, sizeof(digest)))
+		return -EBADMSG;
+	mutex_lock(&boot_lock);
+	buffer = &sroot_dsp_buffers[index];
+	if (!boot_sroot || !boot_dla) {
+		err = -ENODEV;
+		goto unlock;
+	}
+	if (sroot_client_poisoned) {
+		err = -ENOTRECOVERABLE;
+		goto unlock;
+	}
+	if (buffer->published) {
+		err = -EALREADY;
+		goto unlock;
+	}
+	/* Do not begin on a failed or incomplete NPU secure-loader exchange. */
+	if (!boot_attempted || boot_error || !boot_result.reply_valid ||
+	    boot_result.reply.status || boot_result.reply.detail) {
+		err = -EHOSTDOWN;
+		goto unlock;
+	}
+	err = n1x_boot_dma_gate(boot_sroot);
+	if (err)
+		goto unlock;
+	err = dma_set_mask_and_coherent(boot_sroot->dev, DMA_BIT_MASK(32));
+	if (err)
+		goto unlock;
+	err = pm_runtime_resume_and_get(boot_sroot->dev);
+	if (err < 0)
+		goto unlock;
+	buffer->bytes = bytes + 4;
+	buffer->cpu = dma_alloc_coherent(boot_sroot->dev, buffer->bytes,
+					&buffer->dma, GFP_KERNEL);
+	if (!buffer->cpu) {
+		err = -ENOMEM;
+		goto put;
+	}
+	memcpy(buffer->cpu + 4, image, bytes);
+	for (index = 0; index < 4; index++)
+		((u8 *)buffer->cpu)[index] = image_id >> (index * 8);
+	err = buffer->dma & 255 ? -ERANGE : n1x_sroot_stage_image(buffer->cpu,
+		buffer->bytes, buffer->cpu, buffer->bytes, buffer->dma,
+		0xe0000000, 0xffffffff, words);
+	if (err)
+		goto free;
+	if (!try_module_get(THIS_MODULE)) {
+		err = -ENODEV;
+		goto free;
+	}
+	io = (struct n1x_dla_io){boot_sroot, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+	dma_wmb();
+	buffer->published = true;
+	result->published = 1;
+	err = n1x_sroot_exchange(&io, 16, N1X_SROOT_CMD_UPLOAD, words, 3,
+				 &reply, 5001, 1000);
+	if (!err) {
+		result->reply_valid = 1;
+		result->reply_header = reply.header;
+		if (reply.command != N1X_SROOT_CMD_UPLOAD || reply.status || reply.detail)
+			err = -EREMOTEIO;
+		else
+			result->accepted = 1;
+	}
+	if (err)
+		sroot_client_poisoned = true;
+	dev_info(boot_sroot->dev,
+		"DSP image %#x: error=%d reply_valid=%u header=%#x; staging DMA retained until reboot\n",
+		image_id, err, result->reply_valid, result->reply_header);
+	goto unlock;
+free:
+	dma_free_coherent(boot_sroot->dev, buffer->bytes, buffer->cpu, buffer->dma);
+	memset(buffer, 0, sizeof(*buffer));
+put:
+	pm_runtime_put(boot_sroot->dev);
+unlock:
+	mutex_unlock(&boot_lock);
+	return err;
+}
+EXPORT_SYMBOL_GPL(n1x_sroot_upload_dsp_v1);
+
+/* Caller holds boot_lock. */
 static int n1x_boot_upload(void)
 {
 	const struct firmware *firmware;
@@ -493,6 +617,8 @@ static int n1x_boot_upload(void)
 
 	if (!boot_sroot || !boot_dla)
 		return -ENODEV;
+	if (sroot_client_poisoned)
+		return -ENOTRECOVERABLE;
 	if (boot_attempted)
 		return -EALREADY;
 	if (!boot_hfrp.powered)
