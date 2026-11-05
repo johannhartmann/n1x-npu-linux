@@ -156,6 +156,13 @@ class Tensor:
     output: bool
 
 
+@dataclass(frozen=True)
+class Stats:
+    name: str
+    offset: int
+    bytes: int
+
+
 class Model:
     def __init__(self, data):
         reader = Reader(data)
@@ -203,6 +210,7 @@ class Model:
         layout, initializers, cursor = [], [], 0
         constant_memories = []
         scratch_memories = set()
+        self.stats = None
         for memory in memories:
             size, alignment, flags = memory.value(3, '<Q'), memory.value(4, '<I'), memory.value(2, '<H')
             require(memory.value(1, '<B') == 0 and flags & 1 and not flags & ~15, 'unsupported memory domain/flags')
@@ -228,6 +236,8 @@ class Model:
                     initializers.append((offset+content_offset, content))
                     if self.blob_versions[name]['interface'] == 0:
                         raw_constants.append((name, content_offset+len(content)))
+                    if name == 'task-0-stats' and self.blob_versions[name]['interface'] == 1 and len(content) >= 28:
+                        self.stats = Stats(name=name, offset=offset+content_offset, bytes=len(content))
                 if raw_constants:
                     constant_memories.append((len(layout)-1, flags, names, raw_constants))
         resolved = []
@@ -268,7 +278,7 @@ class Model:
                     'global constant-pool extent mismatch')
             start = layout[index]['offset']
             require(any(offset <= start and start+global_pool <= offset+size
-                        for offset, size in self.ranges),
+                        for offset, size in resolved),
                     'global constant pool is not covered by task addresses')
         tensors, names = [], set()
         for table in root.tables(6, 22):

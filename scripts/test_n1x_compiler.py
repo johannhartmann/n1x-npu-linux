@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline verification of native libn1x_compiler.so, DAG lowering, and INT8 support."""
 
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import ctypes as c
 import hashlib
@@ -278,15 +279,77 @@ def test_int8_compilation_and_packing() -> dict:
     return {"int8_bytes": len(nvda_int8), "qdq_bytes": len(nvda_qdq)}
 
 
+def test_extended_operators_and_profile_stats() -> dict:
+    w_ln = np.ones((1, 16, 1, 1), dtype="<f2")
+    b_ln = np.zeros((1, 16, 1, 1), dtype="<f2")
+    ext_dag = {
+        "target": "t254",
+        "compute_precision": "fp16",
+        "profile": {
+            "generate_stats": True,
+            "can_winograd": True,
+            "can_compress_weights": True,
+            "use_softmax_optz": True,
+        },
+        "inputs": [{"name": "input", "shape": [1, 16, 8, 8], "dtype": "fp16", "data_format": "chw16"}],
+        "outputs": [
+            {"name": "out_prob", "tensor_name": "out_prob", "dtype": "fp16", "data_format": "chw16"},
+            {"name": "out_up", "tensor_name": "out_up", "dtype": "fp16", "data_format": "chw16"},
+        ],
+        "layers": [
+            {
+                "op": "Pad", "name": "pad1", "input": "input", "output": "p1",
+                "pad_before": [1, 1], "pad_after": [1, 1], "mode": "constant", "value": 0.0,
+            },
+            {
+                "op": "Slice", "name": "slice1", "input": "p1", "output": "s1",
+                "starts": [1, 1], "ends": [9, 9], "axes": [2, 3], "steps": [1, 1],
+            },
+            {
+                "op": "LayerNormalization", "name": "ln1", "input": "s1", "output": "ln_out",
+                "axes": [1, 2, 3], "eps": 1e-5,
+                "scale_b64": _b64(w_ln, "<f2"), "scale_dtype": "fp16",
+                "bias_b64": _b64(b_ln, "<f2"), "bias_dtype": "fp16",
+            },
+            {"op": "Activation", "name": "relu1", "input": "ln_out", "output": "u_relu", "mode": "relu"},
+            {"op": "Unary", "name": "sqrt1", "input": "u_relu", "output": "u_abs", "mode": "sqrt"},
+            {"op": "Resize", "name": "up1", "input": "u_abs", "output": "out_up", "scales": [2.0, 2.0], "mode": "nearest"},
+            {"op": "ReduceMean", "name": "red1", "input": "u_abs", "output": "r_mean", "axes": [2, 3], "keepdims": True},
+            {"op": "SoftMax", "name": "sm1", "input": "r_mean", "output": "out_prob", "axis": 1},
+        ],
+    }
+    ext_nvda = compile_dag(ext_dag)
+    ext_model = Model(ext_nvda)
+    assert ext_model.stats is not None and ext_model.stats.bytes > 0
+    assert _check_cpp_materializer(ext_nvda) == len(ext_model.image)
+
+    # Also verify bilinear 2x2 single-channel resize and concurrent thread-safe compilation
+    bilin_dag = {
+        "target": "t254",
+        "compute_precision": "fp16",
+        "inputs": [{"name": "input", "shape": [1, 1, 8, 8], "dtype": "fp16", "data_format": "chw16"}],
+        "outputs": [{"name": "output", "tensor_name": "output", "dtype": "fp16", "data_format": "chw16"}],
+        "layers": [
+            {"op": "Resize", "name": "bilin", "input": "input", "output": "output", "scales": [2.0, 2.0], "mode": "linear"},
+        ],
+    }
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(compile_dag, [bilin_dag, ext_dag, bilin_dag, ext_dag]))
+    assert results[0] == results[2] and results[1] == results[3]
+    return {"ext_bytes": len(ext_nvda), "stats_bytes": ext_model.stats.bytes}
+
+
 def main() -> None:
     test_reference_reproduction()
     test_cli_binary()
     dag_stats = test_residual_dag_and_multi_io()
     int8_stats = test_int8_compilation_and_packing()
+    ext_stats = test_extended_operators_and_profile_stats()
     print(
         f"Native N1X compiler: 4 exact reference loadables, CLI, residual/multi-IO DAGs "
-        f"({dag_stats['residual_bytes']}/{dag_stats['multi_io_bytes']} B), and INT8/QDQ "
-        f"({int8_stats['int8_bytes']}/{int8_stats['qdq_bytes']} B) verified"
+        f"({dag_stats['residual_bytes']}/{dag_stats['multi_io_bytes']} B), INT8/QDQ "
+        f"({int8_stats['int8_bytes']}/{int8_stats['qdq_bytes']} B), and extended ops+stats "
+        f"({ext_stats['ext_bytes']}/{ext_stats['stats_bytes']} B) verified"
     )
 
 

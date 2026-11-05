@@ -314,6 +314,7 @@ def onnx_to_dag(
     input_shapes: dict[str, list[int]] | None = None,
     weight_dtype: str = "fp32",
     include_pixel_shuffle: bool = True,
+    profile_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Lower an ONNX model or path into a declarative N1X JSON DAG specification."""
     import onnx
@@ -520,7 +521,7 @@ def onnx_to_dag(
             layers_spec.append(layer_dict)
             tensor_shapes[out_name] = [1, out_channels, 1, 1]
 
-        elif op in ("Relu", "Sigmoid", "Tanh", "Clip", "LeakyRelu"):
+        elif op in ("Relu", "Sigmoid", "Tanh", "Clip", "LeakyRelu", "Elu", "Selu", "Softsign", "Softplus", "Abs"):
             inp_name = resolve(node.input[0])
             layer_dict = {
                 "op": "Activation",
@@ -535,6 +536,8 @@ def onnx_to_dag(
                 layer_dict["beta"] = [cmax]
             elif op == "LeakyRelu":
                 layer_dict["alpha"] = [float(attrs.get("alpha", 0.01))]
+            elif op == "Elu":
+                layer_dict["alpha"] = [float(attrs.get("alpha", 1.0))]
             layers_spec.append(layer_dict)
             if inp_name in tensor_shapes:
                 tensor_shapes[out_name] = list(tensor_shapes[inp_name])
@@ -705,6 +708,268 @@ def onnx_to_dag(
             if inp_name in tensor_shapes:
                 tensor_shapes[out_name] = list(tensor_shapes[inp_name])
 
+        elif op == "Slice":
+            inp_name = resolve(node.input[0])
+            in_sh = list(tensor_shapes.get(inp_name, [1, 1, 1, 1]))
+            if len(node.input) >= 3:
+                raw_starts = [int(x) for x in initializers[resolve(node.input[1])].reshape(-1)]
+                raw_ends = [int(x) for x in initializers[resolve(node.input[2])].reshape(-1)]
+                raw_axes = (
+                    [int(x) for x in initializers[resolve(node.input[3])].reshape(-1)]
+                    if len(node.input) > 3 and node.input[3]
+                    else list(range(len(raw_starts)))
+                )
+                raw_steps = (
+                    [int(x) for x in initializers[resolve(node.input[4])].reshape(-1)]
+                    if len(node.input) > 4 and node.input[4]
+                    else [1] * len(raw_starts)
+                )
+            else:
+                raw_starts = [int(x) for x in attrs.get("starts", [])]
+                raw_ends = [int(x) for x in attrs.get("ends", [])]
+                raw_axes = [int(x) for x in attrs.get("axes", list(range(len(raw_starts))))]
+                raw_steps = [1] * len(raw_starts)
+
+            s_out: list[int] = []
+            e_out: list[int] = []
+            ax_out: list[int] = []
+            st_out: list[int] = []
+            out_sh = list(in_sh)
+            for s, e, ax, st in zip(raw_starts, raw_ends, raw_axes, raw_steps):
+                if ax < 0:
+                    ax += 4
+                dim = in_sh[ax]
+                if s < 0:
+                    s += dim
+                s = max(0, min(s, dim))
+                if e < 0:
+                    e += dim
+                e = max(s, min(e, dim))
+                out_sh[ax] = max(1, (e - s + st - 1) // st)
+                if ax != 0:
+                    s_out.append(s)
+                    e_out.append(e)
+                    ax_out.append(ax)
+                    st_out.append(st)
+            if not ax_out:
+                s_out, e_out, ax_out, st_out = [0], [in_sh[1]], [1], [1]
+            layers_spec.append(
+                {
+                    "op": "Slice",
+                    "input": inp_name,
+                    "output": out_name,
+                    "starts": s_out,
+                    "ends": e_out,
+                    "axes": ax_out,
+                    "steps": st_out,
+                }
+            )
+            tensor_shapes[out_name] = out_sh
+
+        elif op in ("Resize", "Upsample"):
+            inp_name = resolve(node.input[0])
+            in_sh = list(tensor_shapes.get(inp_name, [1, 1, 1, 1]))
+            rmode = str(attrs.get("mode", "nearest")).lower()
+            scales_list: list[float] | None = None
+            out_dims_list: list[int] | None = None
+            if op == "Upsample":
+                if len(node.input) > 1 and node.input[1] and resolve(node.input[1]) in initializers:
+                    scales_list = [float(x) for x in initializers[resolve(node.input[1])].reshape(-1)]
+                elif "scales" in attrs:
+                    scales_list = [float(x) for x in attrs["scales"]]
+            else:
+                if len(node.input) > 3 and node.input[3] and resolve(node.input[3]) in initializers:
+                    sizes_arr = initializers[resolve(node.input[3])].reshape(-1)
+                    if sizes_arr.size == 4:
+                        out_dims_list = [int(x) for x in sizes_arr]
+                if out_dims_list is None and len(node.input) > 2 and node.input[2] and resolve(node.input[2]) in initializers:
+                    sc_arr = initializers[resolve(node.input[2])].reshape(-1)
+                    if sc_arr.size == 4:
+                        scales_list = [float(x) for x in sc_arr]
+                elif out_dims_list is None and len(node.input) == 2 and node.input[1] and resolve(node.input[1]) in initializers:
+                    sc_arr = initializers[resolve(node.input[1])].reshape(-1)
+                    if sc_arr.size == 4:
+                        scales_list = [float(x) for x in sc_arr]
+            layer_dict = {
+                "op": "Resize",
+                "input": inp_name,
+                "output": out_name,
+                "mode": "linear" if rmode in ("linear", "bilinear") else "nearest",
+            }
+            if out_dims_list is not None:
+                layer_dict["output_dims"] = out_dims_list
+                tensor_shapes[out_name] = list(out_dims_list)
+            else:
+                if scales_list is None:
+                    scales_list = [1.0, 1.0, 2.0, 2.0]
+                layer_dict["scales"] = scales_list
+                tensor_shapes[out_name] = [max(1, int(round(d * s))) for d, s in zip(in_sh, scales_list)]
+            layers_spec.append(layer_dict)
+
+        elif op == "Softmax":
+            inp_name = resolve(node.input[0])
+            axis = int(attrs.get("axis", 1))
+            if axis < 0:
+                axis += 4
+            layers_spec.append(
+                {
+                    "op": "SoftMax",
+                    "input": inp_name,
+                    "output": out_name,
+                    "axis": axis,
+                }
+            )
+            if inp_name in tensor_shapes:
+                tensor_shapes[out_name] = list(tensor_shapes[inp_name])
+
+        elif op in (
+            "ReduceMean",
+            "ReduceSum",
+            "ReduceMax",
+            "ReduceMin",
+            "ReduceL1",
+            "ReduceL2",
+            "ReduceSumSquare",
+        ):
+            inp_name = resolve(node.input[0])
+            if len(node.input) > 1 and node.input[1] and resolve(node.input[1]) in initializers:
+                axes = [int(x) for x in initializers[resolve(node.input[1])].reshape(-1)]
+            else:
+                axes = [int(x) for x in attrs.get("axes", [2, 3])]
+            norm_axes = [ax + 4 if ax < 0 else ax for ax in axes]
+            layers_spec.append(
+                {
+                    "op": op,
+                    "input": inp_name,
+                    "output": out_name,
+                    "axes": norm_axes,
+                }
+            )
+            if inp_name in tensor_shapes:
+                out_sh = list(tensor_shapes[inp_name])
+                for ax in norm_axes:
+                    if 0 <= ax < 4:
+                        out_sh[ax] = 1
+                tensor_shapes[out_name] = out_sh
+
+        elif op in (
+            "Sin",
+            "Cos",
+            "Atan",
+            "Exp",
+            "Log",
+            "Reciprocal",
+            "Ceil",
+            "Floor",
+            "Round",
+            "Sqrt",
+            "Erf",
+            "Neg",
+            "Sign",
+            "Tan",
+            "Sinh",
+            "Cosh",
+            "Asin",
+            "Acos",
+        ):
+            inp_name = resolve(node.input[0])
+            layers_spec.append(
+                {
+                    "op": op,
+                    "input": inp_name,
+                    "output": out_name,
+                }
+            )
+            if inp_name in tensor_shapes:
+                tensor_shapes[out_name] = list(tensor_shapes[inp_name])
+
+        elif op in ("LayerNormalization", "InstanceNormalization"):
+            inp_name = resolve(node.input[0])
+            eps = float(attrs.get("epsilon", 1e-5))
+            if op == "InstanceNormalization":
+                norm_axes = [2, 3]
+            else:
+                axis = int(attrs.get("axis", 1))
+                if axis < 0:
+                    axis += 4
+                norm_axes = list(range(axis, 4))
+            layer_dict = {
+                "op": op,
+                "input": inp_name,
+                "output": out_name,
+                "axes": norm_axes,
+                "epsilon": eps,
+            }
+            if len(node.input) > 1 and node.input[1] and resolve(node.input[1]) in initializers:
+                sc_arr = np.asarray(initializers[resolve(node.input[1])], dtype=np.float32).reshape(-1)
+                scb64, scdt, _ = _encode_b64_array(sc_arr, weight_dtype)
+                layer_dict["scale_b64"] = scb64
+                layer_dict["scale_dtype"] = scdt
+                if len(node.input) > 2 and node.input[2] and resolve(node.input[2]) in initializers:
+                    b_arr = np.asarray(initializers[resolve(node.input[2])], dtype=np.float32).reshape(-1)
+                else:
+                    b_arr = np.zeros_like(sc_arr, dtype=np.float32)
+                bb64, bdt, _ = _encode_b64_array(b_arr, weight_dtype)
+                layer_dict["bias_b64"] = bb64
+                layer_dict["bias_dtype"] = bdt
+            layers_spec.append(layer_dict)
+            if inp_name in tensor_shapes:
+                tensor_shapes[out_name] = list(tensor_shapes[inp_name])
+
+        elif op == "Pad":
+            inp_name = resolve(node.input[0])
+            if len(node.input) > 1 and node.input[1] and resolve(node.input[1]) in initializers:
+                raw_pads = [int(x) for x in initializers[resolve(node.input[1])].reshape(-1)]
+            else:
+                raw_pads = [int(x) for x in attrs.get("pads", [0, 0, 0, 0, 0, 0, 0, 0])]
+            if len(raw_pads) == 8:
+                pre_pad = raw_pads[:4]
+                post_pad = raw_pads[4:8]
+            elif len(raw_pads) == 4:
+                pre_pad = [0, 0, raw_pads[0], raw_pads[1]]
+                post_pad = [0, 0, raw_pads[2], raw_pads[3]]
+            else:
+                pre_pad = [0, 0, 0, 0]
+                post_pad = [0, 0, 0, 0]
+            cval = (
+                float(initializers[resolve(node.input[2])].reshape(-1)[0])
+                if len(node.input) > 2 and node.input[2] and resolve(node.input[2]) in initializers
+                else float(attrs.get("value", 0.0))
+            )
+            pmode = str(attrs.get("mode", "constant")).lower()
+            layers_spec.append(
+                {
+                    "op": "Pad",
+                    "input": inp_name,
+                    "output": out_name,
+                    "pre_pad": pre_pad,
+                    "post_pad": post_pad,
+                    "mode": pmode,
+                    "value": cval,
+                }
+            )
+            if inp_name in tensor_shapes:
+                in_sh = tensor_shapes[inp_name]
+                tensor_shapes[out_name] = [
+                    in_sh[i] + pre_pad[i] + post_pad[i] for i in range(4)
+                ]
+
+        elif op == "LRN":
+            inp_name = resolve(node.input[0])
+            layers_spec.append(
+                {
+                    "op": "LRN",
+                    "input": inp_name,
+                    "output": out_name,
+                    "size": int(attrs.get("size", 5)),
+                    "alpha": float(attrs.get("alpha", 1e-4)),
+                    "beta": float(attrs.get("beta", 0.75)),
+                    "bias": float(attrs.get("bias", 1.0)),
+                }
+            )
+            if inp_name in tensor_shapes:
+                tensor_shapes[out_name] = list(tensor_shapes[inp_name])
+
         else:
             raise CompilerError(f"unsupported ONNX operator in graph: {op}")
 
@@ -729,6 +994,8 @@ def onnx_to_dag(
     }
     if calibration:
         dag["calibration"] = calibration
+    if profile_options:
+        dag.update(profile_options)
     return dag
 
 
@@ -741,6 +1008,7 @@ def compile_onnx(
     explicit_qdq: bool = False,
     input_shapes: dict[str, list[int]] | None = None,
     include_pixel_shuffle: bool = True,
+    profile_options: dict[str, Any] | None = None,
 ) -> bytes:
     """Compile an ONNX model directly into a .nvda loadable."""
     dag = onnx_to_dag(
@@ -750,5 +1018,6 @@ def compile_onnx(
         explicit_qdq=explicit_qdq,
         input_shapes=input_shapes,
         include_pixel_shuffle=include_pixel_shuffle,
+        profile_options=profile_options,
     )
     return compile_dag(dag, output_path=output_path)

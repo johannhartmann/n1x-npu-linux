@@ -13,12 +13,15 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
+
+std::mutex g_compile_mutex;
 
 /* IEEE-754 FP32 -> FP16 conversion (round-to-nearest-even) */
 uint16_t fp32_to_fp16(float value) {
@@ -404,6 +407,79 @@ uint8_t parse_bn_mode(const JsonValue &v) {
     return N1X_DLA_BN_CHANNEL;
 }
 
+uint8_t parse_unary_type(const JsonValue &v) {
+    if (v.is_number()) return static_cast<uint8_t>(v.num_val);
+    if (v.is_string()) {
+        const std::string &s = v.str_val;
+        if (s == "sin" || s == "SIN" || s == "Sin") return N1X_DLA_UNARY_SIN;
+        if (s == "cos" || s == "COS" || s == "Cos") return N1X_DLA_UNARY_COS;
+        if (s == "atan" || s == "ATAN" || s == "Atan") return N1X_DLA_UNARY_ATAN;
+        if (s == "exp" || s == "EXP" || s == "Exp") return N1X_DLA_UNARY_EXP;
+        if (s == "log" || s == "LOG" || s == "Log") return N1X_DLA_UNARY_LOG;
+        if (s == "reciprocal" || s == "RECIPROCAL" || s == "Reciprocal") return N1X_DLA_UNARY_RECIPROCAL;
+        if (s == "ceil" || s == "CEIL" || s == "Ceil") return N1X_DLA_UNARY_CEIL;
+        if (s == "floor" || s == "FLOOR" || s == "Floor") return N1X_DLA_UNARY_FLOOR;
+        if (s == "round" || s == "ROUND" || s == "Round") return N1X_DLA_UNARY_ROUND;
+        if (s == "pow" || s == "power" || s == "POWER" || s == "Pow") return N1X_DLA_UNARY_POWER;
+        if (s == "equal" || s == "EQUAL" || s == "Equal") return N1X_DLA_UNARY_EQUAL;
+        if (s == "greater" || s == "GREATER_UNARY" || s == "Greater") return N1X_DLA_UNARY_GREATER;
+        if (s == "less" || s == "LESS_UNARY" || s == "Less") return N1X_DLA_UNARY_LESS;
+        if (s == "greater_or_equal" || s == "GREATER_OR_EQUAL_UNARY" || s == "GreaterOrEqual") return N1X_DLA_UNARY_GREATER_OR_EQUAL;
+        if (s == "less_or_equal" || s == "LESS_OR_EQUAL_UNARY" || s == "LessOrEqual") return N1X_DLA_UNARY_LESS_OR_EQUAL;
+        if (s == "div_unary" || s == "DIV_UNARY") return N1X_DLA_UNARY_DIV;
+        if (s == "acos" || s == "ACOS" || s == "Acos") return N1X_DLA_UNARY_ACOS;
+        if (s == "acosh" || s == "ACOSH" || s == "Acosh") return N1X_DLA_UNARY_ACOSH;
+        if (s == "asin" || s == "ASIN" || s == "Asin") return N1X_DLA_UNARY_ASIN;
+        if (s == "asinh" || s == "ASINH" || s == "Asinh") return N1X_DLA_UNARY_ASINH;
+        if (s == "atanh" || s == "ATANH" || s == "Atanh") return N1X_DLA_UNARY_ATANH;
+        if (s == "cosh" || s == "COSH" || s == "Cosh") return N1X_DLA_UNARY_COSH;
+        if (s == "sinh" || s == "SINH" || s == "Sinh") return N1X_DLA_UNARY_SINH;
+        if (s == "tan" || s == "TAN" || s == "Tan") return N1X_DLA_UNARY_TAN;
+        if (s == "sign" || s == "SIGN" || s == "Sign") return N1X_DLA_UNARY_SIGN;
+        if (s == "sqrt" || s == "SQRT" || s == "Sqrt") return N1X_DLA_UNARY_SQRT;
+        if (s == "erf" || s == "ERF" || s == "Erf") return N1X_DLA_UNARY_ERF;
+        if (s == "float_mod" || s == "FLOAT_MOD" || s == "Mod") return N1X_DLA_UNARY_FLOAT_MOD;
+        if (s == "neg" || s == "NEG" || s == "Neg") return N1X_DLA_UNARY_NEG;
+        if (s == "rsqrt" || s == "RSQRT" || s == "Rsqrt") return N1X_DLA_UNARY_RSQRT;
+    }
+    return N1X_DLA_UNARY_EXP;
+}
+
+uint8_t parse_reduce_op(const JsonValue &v) {
+    if (v.is_number()) return static_cast<uint8_t>(v.num_val);
+    if (v.is_string()) {
+        const std::string &s = v.str_val;
+        if (s == "min" || s == "MIN" || s == "ReduceMin") return N1X_DLA_POOLING_MIN;
+        if (s == "max" || s == "MAX" || s == "ReduceMax") return N1X_DLA_POOLING_MAX;
+        if (s == "average" || s == "mean" || s == "AVERAGE" || s == "ReduceMean") return N1X_DLA_POOLING_AVERAGE;
+        if (s == "sum" || s == "SUM" || s == "ReduceSum") return N1X_DLA_POOLING_SUM;
+        if (s == "sum_square" || s == "SUM_SQUARE" || s == "ReduceSumSquare") return N1X_DLA_POOLING_SUM_SQUARE;
+        if (s == "l1" || s == "L1_NORM" || s == "ReduceL1") return N1X_DLA_POOLING_L1_NORM;
+        if (s == "l2" || s == "L2_NORM" || s == "ReduceL2") return N1X_DLA_POOLING_L2_NORM;
+    }
+    return N1X_DLA_POOLING_AVERAGE;
+}
+
+uint8_t parse_pad_mode(const JsonValue &v) {
+    if (v.is_number()) return static_cast<uint8_t>(v.num_val);
+    if (v.is_string()) {
+        const std::string &s = v.str_val;
+        if (s == "constant" || s == "CONSTANT") return N1X_DLA_PAD_CONSTANT;
+        if (s == "reflect" || s == "REFLECT") return N1X_DLA_PAD_REFLECT;
+        if (s == "edge" || s == "EDGE" || s == "replicate" || s == "REPLICATE") return N1X_DLA_PAD_EDGE;
+    }
+    return N1X_DLA_PAD_CONSTANT;
+}
+
+uint8_t parse_gather_mode(const JsonValue &v) {
+    if (v.is_number()) return static_cast<uint8_t>(v.num_val);
+    if (v.is_string()) {
+        const std::string &s = v.str_val;
+        if (s == "elements" || s == "GATHER_ELEMENTS" || s == "GatherElements") return N1X_DLA_GATHER_ELEMENTS;
+    }
+    return N1X_DLA_GATHER_DEFAULT;
+}
+
 N1xDlaDims2 parse_dims2(const JsonValue &v, int32_t def_h, int32_t def_w) {
     if (v.is_array() && v.arr_val.size() >= 2) {
         return N1xDlaDims2{
@@ -504,25 +580,49 @@ N1xDlaWeights parse_weights(const JsonValue &node,
     return w;
 }
 
-N1xDlaWeights make_int32_dims_weights(const JsonValue &v,
-                                      int32_t def_val,
-                                      std::vector<std::vector<uint8_t>> &arena) {
-    std::vector<uint8_t> buf(4 * sizeof(int32_t));
-    auto *dst = reinterpret_cast<int32_t *>(buf.data());
-    if (v.is_array() && v.arr_val.size() == 4) {
-        for (size_t i = 0; i < 4; ++i) {
-            dst[i] = static_cast<int32_t>(v.arr_val[i].num_val);
+N1xDlaWeights make_int32_array_weights(const JsonValue &v,
+                                       const std::vector<int32_t> &def_vals,
+                                       std::vector<std::vector<uint8_t>> &arena) {
+    std::vector<int32_t> vals;
+    if (v.is_array() && !v.arr_val.empty()) {
+        for (const auto &elem : v.arr_val) {
+            vals.push_back(static_cast<int32_t>(elem.num_val));
         }
+    } else if (v.is_number()) {
+        vals.push_back(static_cast<int32_t>(v.num_val));
     } else {
-        for (size_t i = 0; i < 4; ++i) {
-            dst[i] = def_val;
-        }
+        vals = def_vals;
     }
+    std::vector<uint8_t> buf(vals.size() * sizeof(int32_t));
+    memcpy(buf.data(), vals.data(), buf.size());
     arena.push_back(std::move(buf));
     N1xDlaWeights w{};
-    w.dtype = 7; /* INT32 in NvDla DataType */
+    w.dtype = N1X_DLA_DATA_TYPE_INT32;
     w.values = arena.back().data();
-    w.count = 4;
+    w.count = static_cast<int64_t>(vals.size());
+    return w;
+}
+
+N1xDlaWeights make_int64_array_weights(const JsonValue &v,
+                                       const std::vector<int64_t> &def_vals,
+                                       std::vector<std::vector<uint8_t>> &arena) {
+    std::vector<int64_t> vals;
+    if (v.is_array() && !v.arr_val.empty()) {
+        for (const auto &elem : v.arr_val) {
+            vals.push_back(static_cast<int64_t>(elem.num_val));
+        }
+    } else if (v.is_number()) {
+        vals.push_back(static_cast<int64_t>(v.num_val));
+    } else {
+        vals = def_vals;
+    }
+    std::vector<uint8_t> buf(vals.size() * sizeof(int64_t));
+    memcpy(buf.data(), vals.data(), buf.size());
+    arena.push_back(std::move(buf));
+    N1xDlaWeights w{};
+    w.dtype = N1X_DLA_DATA_TYPE_INT64;
+    w.values = arena.back().data();
+    w.count = static_cast<int64_t>(vals.size());
     return w;
 }
 
@@ -597,6 +697,7 @@ extern "C" int n1x_compile_json_graph(const char *json_spec,
         return -2;
     }
 
+    std::lock_guard<std::mutex> compile_lock(g_compile_mutex);
     N1xDlaHandle network = nullptr;
     N1xDlaHandle wisdom = nullptr;
     try {
@@ -832,12 +933,69 @@ extern "C" int n1x_compile_json_graph(const char *json_spec,
                 }
             } else if (op == "Slice") {
                 N1xDlaHandle inp = get_primary_input(l);
-                N1xDlaWeights start = make_int32_dims_weights(l.at("start"), 0, weight_arena);
-                N1xDlaWeights size = make_int32_dims_weights(l.at("size"), 1, weight_arena);
-                N1xDlaWeights stride = make_int32_dims_weights(l.at("stride"), 1, weight_arena);
-                N1xDlaWeights fill_val = parse_weights(l, "fill_val", default_weight_dtype, weight_arena);
-                uint8_t mode = static_cast<uint8_t>(l.int_or("mode", 0));
-                check_dla(NvDlaNetworkAddSlice(network, inp, start, size, stride, fill_val, mode, &layer),
+                std::vector<int64_t> def_starts = {0, 0, 0, 0};
+                std::vector<int64_t> def_ends = {1, 1, 1, 1};
+                std::vector<int64_t> def_axes = {0, 1, 2, 3};
+                std::vector<int64_t> def_steps = {1, 1, 1, 1};
+                if (!l.has("starts") && l.has("start") && l.at("start").is_array()) {
+                    def_starts.clear();
+                    for (const auto &e : l.at("start").arr_val) {
+                        def_starts.push_back(static_cast<int64_t>(e.num_val));
+                    }
+                }
+                if (!l.has("ends") && l.has("size") && l.at("size").is_array()) {
+                    def_ends.clear();
+                    for (size_t i = 0; i < l.at("size").arr_val.size(); ++i) {
+                        int64_t s = (i < def_starts.size()) ? def_starts[i] : 0;
+                        def_ends.push_back(s + static_cast<int64_t>(l.at("size").arr_val[i].num_val));
+                    }
+                }
+                N1xDlaWeights starts = make_int64_array_weights(l.at("starts"), def_starts, weight_arena);
+                N1xDlaWeights ends = make_int64_array_weights(l.at("ends"), def_ends, weight_arena);
+                if (!l.has("axes")) {
+                    def_axes.resize(static_cast<size_t>(starts.count));
+                    for (size_t i = 0; i < def_axes.size(); ++i) {
+                        def_axes[i] = static_cast<int64_t>(i);
+                    }
+                }
+                N1xDlaWeights axes = make_int64_array_weights(l.at("axes"), def_axes, weight_arena);
+                if (!l.has("steps") && !l.has("stride")) {
+                    def_steps.assign(static_cast<size_t>(starts.count), 1);
+                }
+                N1xDlaWeights steps = make_int64_array_weights(
+                    l.has("steps") ? l.at("steps") : l.at("stride"), def_steps, weight_arena);
+                if (axes.count == starts.count && axes.count == ends.count && axes.count == steps.count && axes.count > 1) {
+                    const auto *ax_p = static_cast<const int64_t *>(axes.values);
+                    const auto *st_p = static_cast<const int64_t *>(starts.values);
+                    const auto *en_p = static_cast<const int64_t *>(ends.values);
+                    const auto *sp_p = static_cast<const int64_t *>(steps.values);
+                    bool has_axis0 = false;
+                    for (int64_t i = 0; i < axes.count; ++i) {
+                        if (ax_p[i] == 0) {
+                            has_axis0 = true;
+                            break;
+                        }
+                    }
+                    if (has_axis0) {
+                        std::vector<int64_t> f_st, f_en, f_ax, f_sp;
+                        for (int64_t i = 0; i < axes.count; ++i) {
+                            if (ax_p[i] != 0) {
+                                f_st.push_back(st_p[i]);
+                                f_en.push_back(en_p[i]);
+                                f_ax.push_back(ax_p[i]);
+                                f_sp.push_back(sp_p[i]);
+                            }
+                        }
+                        if (!f_ax.empty()) {
+                            starts = make_int64_array_weights(JsonValue{}, f_st, weight_arena);
+                            ends = make_int64_array_weights(JsonValue{}, f_en, weight_arena);
+                            axes = make_int64_array_weights(JsonValue{}, f_ax, weight_arena);
+                            steps = make_int64_array_weights(JsonValue{}, f_sp, weight_arena);
+                        }
+                    }
+                }
+                uint8_t mode = static_cast<uint8_t>(l.int_or("mode", 1));
+                check_dla(NvDlaNetworkAddSlice(network, inp, starts, ends, axes, steps, mode, &layer),
                           "NvDlaNetworkAddSlice");
             } else if (op == "PixelShuffle" || op == "DepthToSpace") {
                 N1xDlaHandle inp = get_primary_input(l);
@@ -847,9 +1005,12 @@ extern "C" int n1x_compile_json_graph(const char *json_spec,
                           "NvDlaNetworkAddPixelShuffle");
             } else if (op == "Resize") {
                 N1xDlaHandle inp = get_primary_input(l);
-                uint8_t mode = static_cast<uint8_t>(l.int_or("mode", 0));
+                uint8_t mode = static_cast<uint8_t>(l.int_or("mode", N1X_DLA_RESIZE_NEAREST));
                 if (l.has("mode") && l.at("mode").is_string()) {
-                    mode = (l.at("mode").str_val == "linear" || l.at("mode").str_val == "LINEAR") ? 1 : 0;
+                    const std::string &ms = l.at("mode").str_val;
+                    mode = (ms == "linear" || ms == "LINEAR" || ms == "bilinear" || ms == "BILINEAR")
+                        ? N1X_DLA_RESIZE_LINEAR
+                        : N1X_DLA_RESIZE_NEAREST;
                 }
                 if (l.has("output_dims")) {
                     N1xDlaDims4 out_dims = parse_dims4(l.at("output_dims"));
@@ -858,6 +1019,18 @@ extern "C" int n1x_compile_json_graph(const char *json_spec,
                               "NvDlaNetworkAddResizeOutputDims");
                 } else {
                     N1xDlaWeights scales = parse_weights(l, "scales", N1X_DLA_DATA_TYPE_FLOAT, weight_arena);
+                    if (scales.count == 2 && scales.dtype == N1X_DLA_DATA_TYPE_FLOAT && scales.values) {
+                        const auto *src = static_cast<const float *>(scales.values);
+                        std::vector<uint8_t> buf4(4 * sizeof(float));
+                        auto *dst = reinterpret_cast<float *>(buf4.data());
+                        dst[0] = 1.0f;
+                        dst[1] = 1.0f;
+                        dst[2] = src[0];
+                        dst[3] = src[1];
+                        weight_arena.push_back(std::move(buf4));
+                        scales.values = weight_arena.back().data();
+                        scales.count = 4;
+                    }
                     check_dla(NvDlaNetworkAddResize(network, inp, mode, scales, &layer),
                               "NvDlaNetworkAddResize");
                 }
@@ -875,10 +1048,166 @@ extern "C" int n1x_compile_json_graph(const char *json_spec,
                 int32_t axis = static_cast<int32_t>(l.int_or("axis", 1));
                 check_dla(NvDlaNetworkAddDequantize(network, inp, scales, zps, axis, &layer),
                           "NvDlaNetworkAddDequantize");
+            } else if (op == "SoftMax" || op == "Softmax") {
+                N1xDlaHandle inp = get_primary_input(l);
+                if (l.has("axis")) {
+                    int32_t axis = static_cast<int32_t>(l.int_or("axis", 1));
+                    check_dla(NvDlaNetworkAddSoftMaxAxis(network, inp, axis, &layer),
+                              "NvDlaNetworkAddSoftMaxAxis");
+                } else {
+                    check_dla(NvDlaNetworkAddSoftMax(network, inp, &layer),
+                              "NvDlaNetworkAddSoftMax");
+                }
+            } else if (op == "Unary" || op == "Sin" || op == "Cos" || op == "Atan" || op == "Exp" ||
+                       op == "Log" || op == "Reciprocal" || op == "Ceil" || op == "Floor" ||
+                       op == "Round" || op == "Pow" || op == "Sqrt" || op == "Erf" ||
+                       op == "Neg" || op == "Rsqrt" || op == "Sign" || op == "Tan" ||
+                       op == "Sinh" || op == "Cosh" || op == "Asin" || op == "Acos") {
+                N1xDlaHandle inp = get_primary_input(l);
+                uint8_t utype = (op == "Unary")
+                    ? parse_unary_type(l.has("mode") ? l.at("mode") : l.at("unary_type"))
+                    : parse_unary_type(JsonValue{JsonValue::kString, false, 0.0, op, {}, {}});
+                if (l.has("alpha") || l.has("alpha_b64") || l.has("beta") || l.has("beta_b64")) {
+                    N1xDlaWeights alpha = parse_weights(l, "alpha", N1X_DLA_DATA_TYPE_FLOAT, weight_arena);
+                    N1xDlaWeights beta = parse_weights(l, "beta", N1X_DLA_DATA_TYPE_FLOAT, weight_arena);
+                    check_dla(NvDlaNetworkAddUnaryWeights(network, inp, utype, alpha, beta, &layer),
+                              "NvDlaNetworkAddUnaryWeights");
+                } else {
+                    check_dla(NvDlaNetworkAddUnary(network, inp, utype, &layer),
+                              "NvDlaNetworkAddUnary");
+                }
+            } else if (op == "Reduce" || op == "ReduceMean" || op == "ReduceSum" ||
+                       op == "ReduceMax" || op == "ReduceMin" || op == "ReduceL1" ||
+                       op == "ReduceL2" || op == "ReduceSumSquare") {
+                N1xDlaHandle inp = get_primary_input(l);
+                uint8_t rop = (op == "Reduce")
+                    ? parse_reduce_op(l.has("mode") ? l.at("mode") : l.at("reduce_op"))
+                    : parse_reduce_op(JsonValue{JsonValue::kString, false, 0.0, op, {}, {}});
+                N1xDlaWeights axes = make_int32_array_weights(l.at("axes"), {2, 3}, weight_arena);
+                check_dla(NvDlaNetworkAddReduce(network, inp, rop, axes, &layer),
+                          "NvDlaNetworkAddReduce");
+            } else if (op == "Normalization" || op == "LayerNormalization" ||
+                       op == "InstanceNormalization" || op == "RMSNormalization") {
+                N1xDlaHandle inp = get_primary_input(l);
+                N1xDlaWeights axes = make_int32_array_weights(l.at("axes"), {1}, weight_arena);
+                float eps = static_cast<float>(l.num_or("epsilon", l.num_or("eps", 1e-5)));
+                N1xDlaHandle norm_layer = nullptr;
+                check_dla(NvDlaNetworkAddNormalization(network, inp, axes, eps, &norm_layer),
+                          "NvDlaNetworkAddNormalization");
+                if (!norm_layer) {
+                    throw std::runtime_error("NvDlaNetworkAddNormalization returned null layer");
+                }
+                if (op == "RMSNormalization" || l.has("normalize_mean")) {
+                    uint8_t norm_mean = (op == "RMSNormalization") ? 0 : (l.bool_or("normalize_mean", true) ? 1 : 0);
+                    check_dla(NvDlaNormalizationLayerSetNormalizeMean(norm_layer, norm_mean),
+                              "NvDlaNormalizationLayerSetNormalizeMean");
+                }
+                if (l.has("normalize_variance")) {
+                    uint8_t norm_var = l.bool_or("normalize_variance", true) ? 1 : 0;
+                    check_dla(NvDlaNormalizationLayerSetNormalizeVariance(norm_layer, norm_var),
+                              "NvDlaNormalizationLayerSetNormalizeVariance");
+                }
+                if (l.has("scale") || l.has("scale_b64") || l.has("bias") || l.has("bias_b64")) {
+                    std::string norm_name = l.str_or("name", "norm_" + std::to_string(idx)) + "_norm";
+                    check_dla(NvDlaLayerSetName(norm_layer, norm_name.c_str()), "NvDlaLayerSetName");
+                    N1xDlaHandle norm_out = nullptr;
+                    check_dla(NvDlaLayerGetOutput(norm_layer, 0, &norm_out), "NvDlaLayerGetOutput");
+                    all_tensors.push_back(norm_out);
+                    if (is_int8 && !explicit_qdq) {
+                        apply_tensor_calibration(norm_out, l, true, default_dyn_range);
+                    }
+                    N1xDlaWeights scale = parse_weights(l, "scale", default_weight_dtype, weight_arena);
+                    N1xDlaWeights shift = parse_weights(l, "bias", default_weight_dtype, weight_arena);
+                    N1xDlaWeights power{};
+                    uint8_t smode = (scale.count > 1 || shift.count > 1)
+                        ? N1X_DLA_SCALE_CHANNEL
+                        : N1X_DLA_SCALE_UNIFORM;
+                    check_dla(NvDlaNetworkAddScale(network, norm_out, smode, shift, scale, power, &layer),
+                              "NvDlaNetworkAddScale");
+                } else {
+                    layer = norm_layer;
+                }
+            } else if (op == "MatMul") {
+                if (!l.has("inputs") || !l.at("inputs").is_array() || l.at("inputs").arr_val.size() < 2) {
+                    throw std::runtime_error("MatMul requires 'inputs' array of 2 tensor names");
+                }
+                N1xDlaHandle in0 = get_tensor(l.at("inputs").arr_val[0].str_val);
+                N1xDlaHandle in1 = get_tensor(l.at("inputs").arr_val[1].str_val);
+                check_dla(NvDlaNetworkAddMatMul(network, in0, in1, &layer),
+                          "NvDlaNetworkAddMatMul");
+            } else if (op == "Reshape") {
+                N1xDlaHandle inp = get_primary_input(l);
+                N1xDlaDims4 dims = parse_dims4(l.has("shape") ? l.at("shape") : l.at("dims"));
+                check_dla(NvDlaNetworkAddReshape(network, inp, dims, &layer),
+                          "NvDlaNetworkAddReshape");
+            } else if (op == "Transpose") {
+                N1xDlaHandle inp = get_primary_input(l);
+                N1xDlaDims4 perm = parse_dims4(l.at("perm"));
+                check_dla(NvDlaNetworkAddTranspose(network, inp, perm, &layer),
+                          "NvDlaNetworkAddTranspose");
+            } else if (op == "Pad") {
+                N1xDlaHandle inp = get_primary_input(l);
+                N1xDlaDims4 pre_pad = l.has("pre_pad") ? parse_dims4(l.at("pre_pad")) : N1xDlaDims4{0, 0, 1, 1};
+                N1xDlaDims4 post_pad = l.has("post_pad") ? parse_dims4(l.at("post_pad")) : pre_pad;
+                uint8_t pmode = parse_pad_mode(l.at("mode"));
+                check_dla(NvDlaNetworkAddPad(network, inp, pre_pad, post_pad, pmode, &layer),
+                          "NvDlaNetworkAddPad");
+                if (l.has("value") || l.has("constant_value")) {
+                    float cval = static_cast<float>(l.num_or("value", l.num_or("constant_value", 0.0)));
+                    check_dla(NvDlaPadLayerSetConstantValue(layer, cval),
+                              "NvDlaPadLayerSetConstantValue");
+                }
+            } else if (op == "Tile") {
+                N1xDlaHandle inp = get_primary_input(l);
+                N1xDlaDims4 repeats = parse_dims4(l.at("repeats"));
+                check_dla(NvDlaNetworkAddTile(network, inp, repeats, &layer),
+                          "NvDlaNetworkAddTile");
+            } else if (op == "Gather" || op == "GatherElements") {
+                if (!l.has("inputs") || !l.at("inputs").is_array() || l.at("inputs").arr_val.size() < 2) {
+                    throw std::runtime_error(op + " requires 'inputs' array of [data, indices]");
+                }
+                N1xDlaHandle data_t = get_tensor(l.at("inputs").arr_val[0].str_val);
+                N1xDlaHandle idx_t = get_tensor(l.at("inputs").arr_val[1].str_val);
+                uint8_t gmode = (op == "GatherElements")
+                    ? static_cast<uint8_t>(N1X_DLA_GATHER_ELEMENTS)
+                    : parse_gather_mode(l.at("mode"));
+                int32_t axis = static_cast<int32_t>(l.int_or("axis", 0));
+                check_dla(NvDlaNetworkAddGather(network, data_t, idx_t, gmode, axis, &layer),
+                          "NvDlaNetworkAddGather");
+            } else if (op == "Select" || op == "Where") {
+                if (!l.has("inputs") || !l.at("inputs").is_array() || l.at("inputs").arr_val.size() < 2) {
+                    throw std::runtime_error(op + " requires 'inputs' array of 2 tensor names");
+                }
+                N1xDlaHandle in0 = get_tensor(l.at("inputs").arr_val[0].str_val);
+                N1xDlaHandle in1 = get_tensor(l.at("inputs").arr_val[1].str_val);
+                N1xDlaWeights cond = parse_weights(l, "cond", N1X_DLA_DATA_TYPE_INT8, weight_arena);
+                N1xDlaDims4 cdims = l.has("cond_dims")
+                    ? parse_dims4(l.at("cond_dims"))
+                    : N1xDlaDims4{1, static_cast<int32_t>(cond.count), 1, 1};
+                check_dla(NvDlaNetworkAddSelect(network, in0, in1, cond, cdims, &layer),
+                          "NvDlaNetworkAddSelect");
+            } else if (op == "TopK") {
+                N1xDlaHandle inp = get_primary_input(l);
+                uint32_t k = static_cast<uint32_t>(l.int_or("k", 1));
+                uint32_t reduce_axes = static_cast<uint32_t>(l.int_or("reduce_axes", 2));
+                check_dla(NvDlaNetworkAddTopK(network, inp, k, reduce_axes, &layer),
+                          "NvDlaNetworkAddTopK");
+            } else if (op == "LRN") {
+                N1xDlaHandle inp = get_primary_input(l);
+                int32_t window = static_cast<int32_t>(l.int_or("window", l.int_or("size", 5)));
+                float alpha = static_cast<float>(l.num_or("alpha", 1e-4));
+                float beta = static_cast<float>(l.num_or("beta", 0.75));
+                float k = static_cast<float>(l.num_or("k", l.num_or("bias", 1.0)));
+                check_dla(NvDlaNetworkAddLRN(network, inp, window, alpha, beta, k, &layer),
+                          "NvDlaNetworkAddLRN");
             } else {
                 throw std::runtime_error("unsupported layer op: " + op);
             }
 
+            if (!layer) {
+                throw std::runtime_error("NvDlaNetworkAdd returned null layer for op " + op +
+                                         " (" + l.str_or("name", "unnamed") + ")");
+            }
             if (l.has("name") && l.at("name").is_string()) {
                 check_dla(NvDlaLayerSetName(layer, l.at("name").str_val.c_str()), "NvDlaLayerSetName");
             }
@@ -997,6 +1326,65 @@ extern "C" int n1x_compile_json_graph(const char *json_spec,
             }
             check_dla(NvDlaProfileSetQuantizationMode(profile, qmode), "NvDlaProfileSetQuantizationMode");
             check_dla(NvDlaProfileSetTensorScalingMode(profile, smode), "NvDlaProfileSetTensorScalingMode");
+        }
+
+        const JsonValue &prof_cfg = root.has("profile") && root.at("profile").is_object()
+                                        ? root.at("profile")
+                                        : root;
+        auto has_prof_opt = [&](const char *key) -> bool {
+            return prof_cfg.has(key) || root.has(key);
+        };
+        auto get_prof_bool = [&](const char *key) -> uint8_t {
+            if (prof_cfg.has(key)) return prof_cfg.bool_or(key, false) ? 1 : 0;
+            return root.bool_or(key, false) ? 1 : 0;
+        };
+        if (has_prof_opt("generate_stats") || has_prof_opt("layerwise_stats")) {
+            uint8_t v = has_prof_opt("generate_stats") ? get_prof_bool("generate_stats") : get_prof_bool("layerwise_stats");
+            check_dla(NvDlaProfileSetCanGenerateLayerwiseStats(profile, v),
+                      "NvDlaProfileSetCanGenerateLayerwiseStats");
+        }
+        if (has_prof_opt("detailed_stats")) {
+            check_dla(NvDlaProfileSetCanGenerateDetailedLayerwiseStats(profile, get_prof_bool("detailed_stats")),
+                      "NvDlaProfileSetCanGenerateDetailedLayerwiseStats");
+        }
+        if (has_prof_opt("winograd")) {
+            check_dla(NvDlaProfileSetCanWinograd(profile, get_prof_bool("winograd")),
+                      "NvDlaProfileSetCanWinograd");
+        }
+        if (has_prof_opt("compress_weights")) {
+            check_dla(NvDlaProfileSetCanCompressWeights(profile, get_prof_bool("compress_weights")),
+                      "NvDlaProfileSetCanCompressWeights");
+        }
+        if (has_prof_opt("sparse_weights")) {
+            check_dla(NvDlaProfileSetCanCompressStructuredSparseWeights(profile, get_prof_bool("sparse_weights")),
+                      "NvDlaProfileSetCanCompressStructuredSparseWeights");
+        }
+        if (has_prof_opt("sdp_fuse_vertical")) {
+            check_dla(NvDlaProfileSetCanSDPFuseVerticalOps(profile, get_prof_bool("sdp_fuse_vertical")),
+                      "NvDlaProfileSetCanSDPFuseVerticalOps");
+        }
+        if (has_prof_opt("sdp_fuse_subengine")) {
+            check_dla(NvDlaProfileSetCanSDPFuseSubEngineOps(profile, get_prof_bool("sdp_fuse_subengine")),
+                      "NvDlaProfileSetCanSDPFuseSubEngineOps");
+        }
+        if (has_prof_opt("sdp_merge_math")) {
+            check_dla(NvDlaProfileSetCanSDPMergeMathOps(profile, get_prof_bool("sdp_merge_math")),
+                      "NvDlaProfileSetCanSDPMergeMathOps");
+        }
+        if (has_prof_opt("sdp_pdp_on_fly")) {
+            check_dla(NvDlaProfileSetCanSDPPDPOnFly(profile, get_prof_bool("sdp_pdp_on_fly")),
+                      "NvDlaProfileSetCanSDPPDPOnFly");
+        }
+        if (has_prof_opt("softmax_optz")) {
+            check_dla(NvDlaProfileSetUseSoftMaxOptz(profile, get_prof_bool("softmax_optz")),
+                      "NvDlaProfileSetUseSoftMaxOptz");
+        }
+        if (has_prof_opt("multi_batch_size")) {
+            uint32_t mbs = static_cast<uint32_t>(
+                prof_cfg.has("multi_batch_size")
+                    ? prof_cfg.int_or("multi_batch_size", 1)
+                    : root.int_or("multi_batch_size", 1));
+            check_dla(NvDlaProfileSetMultiBatchSize(profile, mbs), "NvDlaProfileSetMultiBatchSize");
         }
 
         N1xDlaHandle loadable = nullptr;

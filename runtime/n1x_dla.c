@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
 #include "n1x_dla.h"
 int n1x_dla_info(int fd, struct n1x_dla_accel_info *info)
@@ -100,4 +103,29 @@ int n1x_dla_control(int fd, unsigned long long job_id, unsigned int action,
     *control = (struct n1x_dla_accel_control){.job_id = job_id, .action = action};
     if (ioctl(fd, DRM_IOCTL_N1X_DLA_CONTROL, control) < 0) return -errno;
     return control->status;
+}
+int n1x_dla_mmap(int fd, unsigned long long job_id, unsigned long long bytes,
+                 const void **out_ptr)
+{
+    struct stat st;
+    long page_size = sysconf(_SC_PAGESIZE);
+    void *mapped;
+    if (fd < 0 || !job_id || !bytes || !out_ptr || page_size <= 0)
+        return -EINVAL;
+    if (fstat(fd, &st) < 0)
+        return -errno;
+    if (S_ISCHR(st.st_mode) && major(st.st_rdev) == 1)
+        return -ENODEV;
+    mapped = mmap(NULL, (size_t)bytes, PROT_READ, MAP_SHARED, fd,
+                  (off_t)(job_id * (unsigned long long)page_size));
+    if (mapped == MAP_FAILED)
+        return -errno;
+    *out_ptr = mapped;
+    return 0;
+}
+int n1x_dla_munmap(const void *ptr, unsigned long long bytes)
+{
+    if (!ptr || !bytes)
+        return -EINVAL;
+    return munmap((void *)ptr, (size_t)bytes) < 0 ? -errno : 0;
 }

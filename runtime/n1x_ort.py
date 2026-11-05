@@ -162,6 +162,23 @@ class N1xOrtClient:
         lib.n1x_ort_module_used_resubmit.argtypes = [ctypes.c_void_p]
         lib.n1x_ort_module_used_resubmit.restype = ctypes.c_int
 
+        lib.n1x_ort_module_used_mmap.argtypes = [ctypes.c_void_p]
+        lib.n1x_ort_module_used_mmap.restype = ctypes.c_int
+
+        lib.n1x_ort_module_has_stats.argtypes = [ctypes.c_void_p]
+        lib.n1x_ort_module_has_stats.restype = ctypes.c_int
+
+        lib.n1x_ort_module_stats_bytes.argtypes = [ctypes.c_void_p]
+        lib.n1x_ort_module_stats_bytes.restype = ctypes.c_size_t
+
+        lib.n1x_ort_module_read_stats.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        lib.n1x_ort_module_read_stats.restype = ctypes.c_int
+
         lib.n1x_ort_module_set_input_quant.argtypes = [
             ctypes.c_void_p,
             ctypes.c_size_t,
@@ -360,6 +377,31 @@ class N1xOrtModuleWrapper:
     def used_resubmit(self) -> bool:
         return bool(self._lib.n1x_ort_module_used_resubmit(self._handle))
 
+    @property
+    def used_mmap(self) -> bool:
+        return bool(self._lib.n1x_ort_module_used_mmap(self._handle))
+
+    @property
+    def has_stats(self) -> bool:
+        return bool(self._lib.n1x_ort_module_has_stats(self._handle))
+
+    @property
+    def stats_bytes(self) -> int:
+        return int(self._lib.n1x_ort_module_stats_bytes(self._handle))
+
+    def read_stats(self) -> bytes:
+        nbytes = self.stats_bytes
+        if not self.has_stats or nbytes == 0:
+            raise N1xOrtError("module does not contain a task-0-stats profiling surface")
+        out_buf = (ctypes.c_uint8 * nbytes)()
+        actual = ctypes.c_size_t(0)
+        rc = self._lib.n1x_ort_module_read_stats(
+            self._handle, out_buf, nbytes, ctypes.byref(actual)
+        )
+        if rc != 0:
+            raise N1xOrtError(f"n1x_ort_module_read_stats failed ({rc})")
+        return bytes(out_buf[: int(actual.value)])
+
     def set_input_quant(
         self, index: int, scale: float | np.ndarray, zero_point: int | np.ndarray = 0
     ) -> None:
@@ -435,6 +477,8 @@ class N1xOrtModuleWrapper:
             msg = err_buf.value.decode("utf-8", errors="replace")
             raise N1xOrtError(f"n1x_ort_module_run_fp32 failed ({rc}): {msg}")
         return out_arrays
+
+    run = run_fp32
 
 
 def _load_onnx_model(path_or_bytes: Any) -> onnx.ModelProto:
@@ -837,15 +881,135 @@ def _propagate_shapes(
             "Tanh",
             "Clip",
             "LeakyRelu",
+            "Elu",
+            "Selu",
+            "Softsign",
+            "Softplus",
+            "Abs",
             "BatchNormalization",
             "Softmax",
             "LayerNormalization",
+            "InstanceNormalization",
+            "LRN",
             "Identity",
             "Dropout",
             "QuantizeLinear",
             "DequantizeLinear",
+            "Sin",
+            "Cos",
+            "Atan",
+            "Exp",
+            "Log",
+            "Reciprocal",
+            "Ceil",
+            "Floor",
+            "Round",
+            "Sqrt",
+            "Erf",
+            "Neg",
+            "Sign",
+            "Tan",
+            "Sinh",
+            "Cosh",
+            "Asin",
+            "Acos",
         ) and sh0:
             shape_map[out] = list(sh0)
+        elif op in (
+            "ReduceMean",
+            "ReduceSum",
+            "ReduceMax",
+            "ReduceMin",
+            "ReduceL1",
+            "ReduceL2",
+            "ReduceSumSquare",
+        ) and sh0:
+            keepdims = int(attrs.get("keepdims", 1))
+            if len(node.input) > 1 and node.input[1] in const_map:
+                axes = [int(x) for x in const_map[node.input[1]].reshape(-1)]
+            else:
+                axes = [int(x) for x in attrs.get("axes", [2, 3])]
+            norm_axes = {ax + len(sh0) if ax < 0 else ax for ax in axes}
+            if keepdims:
+                shape_map[out] = [1 if i in norm_axes else d for i, d in enumerate(sh0)]
+            else:
+                shape_map[out] = [d for i, d in enumerate(sh0) if i not in norm_axes] or [1]
+        elif op == "Slice" and sh0 and len(sh0) == 4:
+            if len(node.input) >= 3 and node.input[1] in const_map and node.input[2] in const_map:
+                raw_starts = [int(x) for x in const_map[node.input[1]].reshape(-1)]
+                raw_ends = [int(x) for x in const_map[node.input[2]].reshape(-1)]
+                raw_axes = (
+                    [int(x) for x in const_map[node.input[3]].reshape(-1)]
+                    if len(node.input) > 3 and node.input[3] in const_map
+                    else list(range(len(raw_starts)))
+                )
+                raw_steps = (
+                    [int(x) for x in const_map[node.input[4]].reshape(-1)]
+                    if len(node.input) > 4 and node.input[4] in const_map
+                    else [1] * len(raw_starts)
+                )
+            else:
+                raw_starts = [int(x) for x in attrs.get("starts", [])]
+                raw_ends = [int(x) for x in attrs.get("ends", [])]
+                raw_axes = [int(x) for x in attrs.get("axes", list(range(len(raw_starts))))]
+                raw_steps = [1] * len(raw_starts)
+            out_sh = list(sh0)
+            for s, e, ax, st in zip(raw_starts, raw_ends, raw_axes, raw_steps):
+                if ax < 0:
+                    ax += 4
+                if 0 <= ax < 4 and st > 0:
+                    dim = sh0[ax]
+                    if s < 0:
+                        s += dim
+                    s = max(0, min(s, dim))
+                    if e < 0:
+                        e += dim
+                    e = max(s, min(e, dim))
+                    out_sh[ax] = max(1, (e - s + st - 1) // st)
+            shape_map[out] = out_sh
+        elif op in ("Resize", "Upsample") and sh0 and len(sh0) == 4:
+            if op != "Upsample" and len(node.input) > 3 and node.input[3] in const_map:
+                sizes_arr = const_map[node.input[3]].reshape(-1)
+                if sizes_arr.size == 4:
+                    shape_map[out] = [int(x) for x in sizes_arr]
+            else:
+                sc_arr = None
+                if op == "Upsample":
+                    if len(node.input) > 1 and node.input[1] in const_map:
+                        sc_arr = const_map[node.input[1]].reshape(-1)
+                    elif "scales" in attrs:
+                        sc_arr = np.asarray(attrs["scales"], dtype=np.float32)
+                else:
+                    if len(node.input) > 2 and node.input[2] in const_map:
+                        sc_arr = const_map[node.input[2]].reshape(-1)
+                    elif len(node.input) == 2 and node.input[1] in const_map:
+                        sc_arr = const_map[node.input[1]].reshape(-1)
+                if sc_arr is not None:
+                    if sc_arr.size == 4:
+                        shape_map[out] = [
+                            max(1, int(round(d * float(s)))) for d, s in zip(sh0, sc_arr)
+                        ]
+                    elif sc_arr.size == 2:
+                        shape_map[out] = [
+                            sh0[0],
+                            sh0[1],
+                            max(1, int(round(sh0[2] * float(sc_arr[0])))),
+                            max(1, int(round(sh0[3] * float(sc_arr[1])))),
+                        ]
+        elif op == "Pad" and sh0 and len(sh0) == 4:
+            if len(node.input) > 1 and node.input[1] in const_map:
+                raw_pads = [int(x) for x in const_map[node.input[1]].reshape(-1)]
+            else:
+                raw_pads = [int(x) for x in attrs.get("pads", [])]
+            if len(raw_pads) == 8:
+                shape_map[out] = [sh0[i] + raw_pads[i] + raw_pads[i + 4] for i in range(4)]
+            elif len(raw_pads) == 4:
+                shape_map[out] = [
+                    sh0[0],
+                    sh0[1],
+                    sh0[2] + raw_pads[0] + raw_pads[2],
+                    sh0[3] + raw_pads[1] + raw_pads[3],
+                ]
         elif op in ("Add", "Sub", "Mul", "Div", "Max", "Min"):
             if sh0:
                 shape_map[out] = list(sh0)
@@ -960,7 +1124,7 @@ def is_node_dla_supported(
                 return False
         return len(sh0) in (2, 4)
 
-    if op in ("Relu", "Sigmoid", "Tanh", "Clip", "LeakyRelu"):
+    if op in ("Relu", "Sigmoid", "Tanh", "Clip", "LeakyRelu", "Elu", "Selu", "Softsign", "Softplus", "Abs"):
         return len(sh0) in (2, 4)
 
     if op in ("MaxPool", "AveragePool", "GlobalAveragePool"):
@@ -1046,6 +1210,126 @@ def is_node_dla_supported(
             and int(np.prod(sh0)) == int(np.prod(sh_out))
         )
 
+    if op == "Slice":
+        if len(sh0) != 4:
+            return False
+        if len(node.input) >= 3:
+            if node.input[1] not in const_map or node.input[2] not in const_map:
+                return False
+            if len(node.input) > 3 and node.input[3] and node.input[3] not in const_map:
+                return False
+            if len(node.input) > 4 and node.input[4]:
+                if node.input[4] not in const_map:
+                    return False
+                steps = [int(x) for x in const_map[node.input[4]].reshape(-1)]
+                if any(st != 1 for st in steps):
+                    return False
+            return True
+        return "starts" in attrs and "ends" in attrs
+
+    if op in ("Resize", "Upsample"):
+        if len(sh0) != 4 or not sh_out or len(sh_out) != 4:
+            return False
+        if sh_out[0] != sh0[0] or sh_out[1] != sh0[1]:
+            return False
+        if sh_out[2] < sh0[2] or sh_out[3] < sh0[3]:
+            return False
+        if sh_out[2] % sh0[2] != 0 or sh_out[3] % sh0[3] != 0:
+            return False
+        rmode = str(attrs.get("mode", "nearest")).lower()
+        if rmode == "nearest":
+            return True
+        if rmode in ("linear", "bilinear"):
+            return sh0[1] == 1 and sh_out[2] == 2 * sh0[2] and sh_out[3] == 2 * sh0[3]
+        return False
+
+    if op == "Softmax":
+        axis = int(attrs.get("axis", 1))
+        if len(sh0) == 2:
+            return axis in (1, -1)
+        if len(sh0) == 4 and sh0[2] == 1 and sh0[3] == 1:
+            return axis in (1, -3)
+        return False
+
+    if op in (
+        "ReduceMean",
+        "ReduceSum",
+        "ReduceMax",
+        "ReduceMin",
+        "ReduceL1",
+        "ReduceL2",
+        "ReduceSumSquare",
+    ):
+        if len(sh0) != 4 or int(attrs.get("keepdims", 1)) != 1:
+            return False
+        if len(node.input) > 1 and node.input[1]:
+            if node.input[1] not in const_map:
+                return False
+            axes = [int(x) for x in const_map[node.input[1]].reshape(-1)]
+        else:
+            axes = [int(x) for x in attrs.get("axes", [2, 3])]
+        norm_axes = [ax + 4 if ax < 0 else ax for ax in axes]
+        return bool(norm_axes) and all(ax in (1, 2, 3) for ax in norm_axes)
+
+    if op in (
+        "Sin",
+        "Cos",
+        "Atan",
+        "Exp",
+        "Log",
+        "Reciprocal",
+        "Ceil",
+        "Floor",
+        "Round",
+        "Sqrt",
+        "Erf",
+        "Neg",
+        "Sign",
+        "Tan",
+        "Sinh",
+        "Cosh",
+        "Asin",
+        "Acos",
+    ):
+        return len(sh0) in (2, 4)
+
+    if op in ("LayerNormalization", "InstanceNormalization"):
+        if len(sh0) != 4 or len(node.output) != 1:
+            return False
+        if len(node.input) > 1 and node.input[1] and node.input[1] not in const_map:
+            return False
+        if len(node.input) > 2 and node.input[2] and node.input[2] not in const_map:
+            return False
+        return True
+
+    if op == "Pad":
+        if len(sh0) != 4:
+            return False
+        if len(node.input) > 1 and node.input[1]:
+            if node.input[1] not in const_map:
+                return False
+            raw_pads = [int(x) for x in const_map[node.input[1]].reshape(-1)]
+        else:
+            raw_pads = [int(x) for x in attrs.get("pads", [])]
+        if len(node.input) > 2 and node.input[2] and node.input[2] not in const_map:
+            return False
+        if len(raw_pads) == 8:
+            pre_pad, post_pad = raw_pads[:4], raw_pads[4:8]
+        elif len(raw_pads) == 4:
+            pre_pad, post_pad = [0, 0, raw_pads[0], raw_pads[1]], [0, 0, raw_pads[2], raw_pads[3]]
+        else:
+            return False
+        return (
+            pre_pad[0] == 0
+            and pre_pad[1] == 0
+            and post_pad[0] == 0
+            and post_pad[1] == 0
+            and all(p >= 0 for p in pre_pad + post_pad)
+        )
+
+    if op == "LRN":
+        return len(sh0) == 4
+
     return False
 
 
@@ -1103,8 +1387,10 @@ def calibrate_onnx_model(
     calibration_data: Iterable[Mapping[str, np.ndarray]] | None = None,
     input_shapes: Mapping[str, Sequence[int]] | None = None,
     num_synthetic_samples: int = 4,
+    *,
+    per_channel: bool = False,
 ) -> dict[str, Any]:
-    """Run calibration samples through `model_or_path` and collect per-tensor max_abs ranges."""
+    """Run calibration samples through `model_or_path` and collect per-tensor and per-channel max_abs ranges."""
     canon_model, shape_map = canonicalize_onnx_model(model_or_path, input_shapes=input_shapes)
     inst_model = copy.deepcopy(canon_model)
     rewritten_nodes: list[onnx.NodeProto] = []
@@ -1148,22 +1434,42 @@ def calibrate_onnx_model(
             samples.append(feed)
 
     max_abs_map: dict[str, float] = {}
+    channel_max_abs_map: dict[str, np.ndarray] = {}
+
+    def _accumulate_stats(tname: str, arr_np: np.ndarray) -> None:
+        val = float(np.max(np.abs(arr_np))) if arr_np.size else 1.0
+        max_abs_map[tname] = max(max_abs_map.get(tname, 1e-5), val, 1e-5)
+        if arr_np.ndim >= 2 and arr_np.shape[1] >= 1 and arr_np.size > 0:
+            reduce_axes = tuple(i for i in range(arr_np.ndim) if i != 1)
+            ch_max = np.maximum(np.max(np.abs(arr_np), axis=reduce_axes).astype(np.float64), 1e-5)
+            prev_ch = channel_max_abs_map.get(tname)
+            if prev_ch is None or prev_ch.shape != ch_max.shape:
+                channel_max_abs_map[tname] = ch_max
+            else:
+                channel_max_abs_map[tname] = np.maximum(prev_ch, ch_max)
+
     out_names = [o.name for o in inst_model.graph.output]
     for feed in samples:
         np_feed = {k: np.asarray(v, dtype=np.float32) for k, v in feed.items()}
         for k, arr in np_feed.items():
-            val = float(np.max(np.abs(arr))) if arr.size else 1.0
-            max_abs_map[k] = max(max_abs_map.get(k, 1e-5), val, 1e-5)
+            _accumulate_stats(k, arr)
         results = evaluator.run(None, np_feed)
         for name, arr in zip(out_names, results):
-            arr_np = np.asarray(arr, dtype=np.float32)
-            val = float(np.max(np.abs(arr_np))) if arr_np.size else 1.0
-            max_abs_map[name] = max(max_abs_map.get(name, 1e-5), val, 1e-5)
+            _accumulate_stats(name, np.asarray(arr, dtype=np.float32))
 
-    calib_dict: dict[str, Any] = {
-        name: {"dynamic_range": [-val, val]} for name, val in max_abs_map.items()
-    }
+    calib_dict: dict[str, Any] = {}
+    for name, val in max_abs_map.items():
+        entry: dict[str, Any] = {"dynamic_range": [-val, val]}
+        if per_channel and name in channel_max_abs_map:
+            entry["channel_dynamic_ranges"] = [
+                [-float(c_val), float(c_val)] for c_val in channel_max_abs_map[name]
+            ]
+        calib_dict[name] = entry
     calib_dict["tensor_ranges"] = max_abs_map
+    calib_dict["channel_ranges"] = {
+        name: [float(c_val) for c_val in ch_arr]
+        for name, ch_arr in channel_max_abs_map.items()
+    }
     return calib_dict
 
 

@@ -65,7 +65,19 @@ bool current(const Device& d) {
     return cuCtxGetCurrent(&ctx)==CUDA_SUCCESS && ctx && ctx==d.context;
 }
 int open_device() {
-    if(const char *path=std::getenv("N1X_DLA_DEVICE")) return n1x_dla_open(path);
+    if(const char *path=std::getenv("N1X_DLA_DEVICE")) {
+        static constexpr const char *kAllowed[]={
+            "/dev/accel/accel0",
+            "/dev/accel/accel1",
+            "/dev/accel/accel2",
+            "/dev/accel/accel3",
+            "/dev/modeled-npu-only",
+        };
+        for(const char *allowed:kAllowed) {
+            if(std::strcmp(path,allowed)==0) return n1x_dla_open(allowed);
+        }
+        return -EINVAL;
+    }
     glob_t paths{};
     if(glob("/dev/accel/accel*",0,nullptr,&paths)) { globfree(&paths); return -ENOENT; }
     int result=-ENOENT;
@@ -299,42 +311,75 @@ cudlaStatus cudlaDrvSubmitTask(cudlaDevHandle handle,const cudlaTask *tasks,uint
         bool reuse=m->retained_job && (info.capabilities&N1X_DLA_CAP_REEXEC_IO);
         if(!reuse && (info.retained_bytes>info.retain_limit || required>info.retain_limit-info.retained_bytes ||
            info.retained_jobs>=info.max_jobs)) return cudlaErrorOutOfResources;
+        std::vector<size_t> in_stage_off(m->model.inputs.size());
+        std::vector<size_t> out_stage_off(m->model.outputs.size());
+        size_t stats_stage_off=0;
+        size_t stage_bytes=0;
+        if(reuse) {
+            for(size_t i=0;i<m->model.inputs.size();i++) {
+                in_stage_off[i]=stage_bytes;
+                stage_bytes+=m->model.inputs[i].desc.size;
+            }
+            for(size_t i=0;i<m->model.outputs.size();i++) {
+                out_stage_off[i]=stage_bytes;
+                stage_bytes+=m->model.outputs[i].desc.size;
+            }
+            if(want_stats) {
+                stats_stage_off=stage_bytes;
+                stage_bytes+=m->model.stats.desc.size;
+            }
+            if(!stage_bytes) stage_bytes=1;
+        } else {
+            for(size_t i=0;i<m->model.inputs.size();i++) in_stage_off[i]=m->model.inputs[i].offset;
+            for(size_t i=0;i<m->model.outputs.size();i++) out_stage_off[i]=m->model.outputs[i].offset;
+            stats_stage_off=m->model.stats.offset;
+            stage_bytes=m->model.image.size();
+        }
         HostImage host;
         if(quarantine_count==quarantined.size() ||
-           m->model.image.size()>(64U<<20)-quarantine_bytes) return cudlaErrorOutOfResources;
-        if(cuMemHostAlloc(&host.data,m->model.image.size(),0)!=CUDA_SUCCESS) return cudlaErrorOutOfResources;
+           stage_bytes>(64U<<20)-quarantine_bytes) return cudlaErrorOutOfResources;
+        if(cuMemHostAlloc(&host.data,stage_bytes,0)!=CUDA_SUCCESS) return cudlaErrorOutOfResources;
         auto image=static_cast<uint8_t*>(host.data);
-        std::memcpy(image,m->model.image.data(),m->model.image.size());
-        for(const auto& tensor:m->model.outputs) std::memset(image+tensor.offset,0xff,tensor.desc.size);
+        if(!reuse) std::memcpy(image,m->model.image.data(),m->model.image.size());
+        for(size_t i=0;i<m->model.outputs.size();i++)
+            std::memset(image+out_stage_off[i],0xff,m->model.outputs[i].desc.size);
         bool copy_error=false;
         for(size_t i=0;i<inputs.size();i++) {
             const auto& t=m->model.inputs[i];
-            if(cuMemcpyDtoHAsync(image+t.offset,inputs[i].pointer,t.desc.size,stream)!=CUDA_SUCCESS) {copy_error=true; break;}
+            if(cuMemcpyDtoHAsync(image+in_stage_off[i],inputs[i].pointer,t.desc.size,stream)!=CUDA_SUCCESS) {copy_error=true; break;}
         }
         // Always drain queued copies before releasing their pinned storage,
         // including when a subsequent copy fails. No EXEC has occurred yet.
         if(cuStreamSynchronize(stream)!=CUDA_SUCCESS) {
-            host.quarantine(m->model.image.size()); return d->last=cudlaErrorCuda;
+            host.quarantine(stage_bytes); return d->last=cudlaErrorCuda;
         }
         if(copy_error) return d->last=cudlaErrorCuda;
         n1x_dla_accel_exec result{};
-        std::vector<n1x_dla_accel_range> writable;
-        for(const auto *tensors:{&m->model.inputs,&m->model.outputs})
-            for(const auto& tensor:*tensors) writable.push_back({tensor.offset,tensor.desc.size});
         if(reuse) {
             std::vector<n1x_dla_accel_patch> patches;
-            for(const auto *tensors:{&m->model.inputs,&m->model.outputs})
-                for(const auto& tensor:*tensors)
-                    patches.push_back({tensor.offset,tensor.desc.size,reinterpret_cast<uintptr_t>(image+tensor.offset)});
+            patches.reserve(m->model.inputs.size()+m->model.outputs.size());
+            for(size_t i=0;i<m->model.inputs.size();i++) {
+                const auto& tensor=m->model.inputs[i];
+                patches.push_back({tensor.offset,tensor.desc.size,reinterpret_cast<uintptr_t>(image+in_stage_off[i])});
+            }
+            for(size_t i=0;i<m->model.outputs.size();i++) {
+                const auto& tensor=m->model.outputs[i];
+                patches.push_back({tensor.offset,tensor.desc.size,reinterpret_cast<uintptr_t>(image+out_stage_off[i])});
+            }
             err=n1x_dla_resubmit(d->fd,m->retained_job,patches.data(),patches.size(),&result);
         } else {
+            std::vector<n1x_dla_accel_range> writable;
+            writable.reserve(m->model.inputs.size()+m->model.outputs.size());
+            for(const auto *tensors:{&m->model.inputs,&m->model.outputs})
+                for(const auto& tensor:*tensors) writable.push_back({tensor.offset,tensor.desc.size});
             err=n1x_dla_submit(d->fd,image,m->model.image.size(),m->model.ranges.data(),m->model.ranges.size(),
                                writable.data(),writable.size(),&result);
         }
         if(err) return d->last=kernel_error(err); // Never retry an uncertain EXEC.
         if(info.capabilities&N1X_DLA_CAP_REEXEC_IO) m->retained_job=result.job_id;
-        for(const auto& t:m->model.outputs) {
-            err=n1x_dla_read(d->fd,result.job_id,t.offset,image+t.offset,t.desc.size);
+        for(size_t i=0;i<m->model.outputs.size();i++) {
+            const auto& t=m->model.outputs[i];
+            err=n1x_dla_read(d->fd,result.job_id,t.offset,image+out_stage_off[i],t.desc.size);
             if(err) return d->last=kernel_error(err);
         }
         if(want_stats) {
@@ -342,20 +387,20 @@ cudlaStatus cudlaDrvSubmitTask(cudlaDevHandle handle,const cudlaTask *tasks,uint
             err=n1x_dla_stats(d->fd,result.job_id,m->model.stats.offset,m->model.stats.desc.size,&stats_info);
             if(!err)
                 err=n1x_dla_read(d->fd,result.job_id,m->model.stats.offset,
-                                 image+m->model.stats.offset,m->model.stats.desc.size);
+                                 image+stats_stage_off,m->model.stats.desc.size);
             if(err) return d->last=kernel_error(err);
         }
         for(size_t i=0;i<outputs.size();i++) {
             const auto& t=m->model.outputs[i];
-            if(cuMemcpyHtoDAsync(outputs[i].pointer,image+t.offset,t.desc.size,stream)!=CUDA_SUCCESS) {copy_error=true; break;}
+            if(cuMemcpyHtoDAsync(outputs[i].pointer,image+out_stage_off[i],t.desc.size,stream)!=CUDA_SUCCESS) {copy_error=true; break;}
         }
         if(!copy_error && want_stats) {
-            if(cuMemcpyHtoDAsync(stats_reg.pointer,image+m->model.stats.offset,
+            if(cuMemcpyHtoDAsync(stats_reg.pointer,image+stats_stage_off,
                                  m->model.stats.desc.size,stream)!=CUDA_SUCCESS)
                 copy_error=true;
         }
         if(cuStreamSynchronize(stream)!=CUDA_SUCCESS) {
-            host.quarantine(m->model.image.size()); return d->last=cudlaErrorCuda;
+            host.quarantine(stage_bytes); return d->last=cudlaErrorCuda;
         }
         if(copy_error) return d->last=cudlaErrorCuda;
         return cudlaSuccess;

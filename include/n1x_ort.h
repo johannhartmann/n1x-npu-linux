@@ -48,11 +48,19 @@ int n1x_ort_module_get_input_desc(const N1xOrtModule *module, size_t index,
 int n1x_ort_module_get_output_desc(const N1xOrtModule *module, size_t index,
 									N1xOrtTensorDesc *out_desc);
 
-/* Return the count of hardware execution calls made on this module and whether
- * the most recent call used a retained kernel job (n1x_dla_resubmit).
+/* Return the count of hardware execution calls made on this module, whether
+ * the most recent call used a retained kernel job (n1x_dla_resubmit), and whether
+ * the most recent output readback used a zero-copy read-only kernel mmap.
  */
 uint64_t n1x_ort_module_run_count(const N1xOrtModule *module);
 int n1x_ort_module_used_resubmit(const N1xOrtModule *module);
+int n1x_ort_module_used_mmap(const N1xOrtModule *module);
+
+/* Query and read optional task-0-stats profiling surface from the most recent job. */
+int n1x_ort_module_has_stats(const N1xOrtModule *module);
+size_t n1x_ort_module_stats_bytes(const N1xOrtModule *module);
+int n1x_ort_module_read_stats(N1xOrtModule *module, uint8_t *out_buf,
+								size_t buf_size, size_t *out_bytes);
 
 /* Configure optional per-input / per-output INT8 quantization scales (float32, length 1 or C)
  * and zero-points (int8, length 1 or C). Default scale is 1.0f, zero-point 0.

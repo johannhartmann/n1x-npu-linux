@@ -28,6 +28,9 @@ int n1x_dla_stats(int fd, unsigned long long job_id, unsigned long long offset,
                   unsigned long long bytes, struct n1x_dla_accel_stats *stats);
 int n1x_dla_control(int fd, unsigned long long job_id, unsigned int action,
                     struct n1x_dla_accel_control *control);
+int n1x_dla_mmap(int fd, unsigned long long job_id, unsigned long long bytes,
+                 const void **out_ptr);
+int n1x_dla_munmap(const void *ptr, unsigned long long bytes);
 #ifdef __cplusplus
 }
 #endif

@@ -15,11 +15,19 @@
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
+#include <dlfcn.h>
 #include <fstream>
 #include <glob.h>
 #include <memory>
 #include <stdexcept>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 struct N1xOrtQuantParams {
     std::vector<float> scales{1.0f};
@@ -36,8 +44,10 @@ struct N1xOrtModule {
     int fd = -1;
     bool owns_fd = false;
     uint64_t retained_job_id = 0;
+    uint64_t last_job_id = 0;
     uint64_t run_count = 0;
     bool last_used_resubmit = false;
+    bool last_used_mmap = false;
 
     N1xOrtModule(const uint8_t *bytes, size_t size, int accel_fd)
         : model(bytes, size), staging_image(model.image), fd(accel_fd), owns_fd(false) {
@@ -252,6 +262,65 @@ int n1x_ort_module_used_resubmit(const N1xOrtModule *module) {
     return (module && module->last_used_resubmit) ? 1 : 0;
 }
 
+int n1x_ort_module_used_mmap(const N1xOrtModule *module) {
+    return (module && module->last_used_mmap) ? 1 : 0;
+}
+
+int n1x_ort_module_has_stats(const N1xOrtModule *module) {
+    return (module && module->model.stats.present) ? 1 : 0;
+}
+
+size_t n1x_ort_module_stats_bytes(const N1xOrtModule *module) {
+    if (!module || !module->model.stats.present) {
+        return 0;
+    }
+    return static_cast<size_t>(module->model.stats.desc.size);
+}
+
+int n1x_ort_module_read_stats(N1xOrtModule *module, uint8_t *out_buf,
+                              size_t buf_size, size_t *out_bytes) {
+    if (!module || !out_buf) {
+        return -EINVAL;
+    }
+    if (!module->model.stats.present) {
+        return -ENOENT;
+    }
+    const size_t stats_size = static_cast<size_t>(module->model.stats.desc.size);
+    if (buf_size < stats_size) {
+        return -EINVAL;
+    }
+    if (module->fd < 0 || module->last_job_id == 0) {
+        return -EINVAL;
+    }
+    n1x_dla_accel_stats stats_info{};
+    using StatsFn = int (*)(int, unsigned long long, unsigned long long,
+                            unsigned long long, struct n1x_dla_accel_stats *);
+    auto stats_fn = reinterpret_cast<StatsFn>(dlsym(RTLD_DEFAULT, "n1x_dla_stats"));
+    int err = 0;
+    if (stats_fn) {
+        err = stats_fn(module->fd, module->last_job_id,
+                       module->model.stats.offset, module->model.stats.desc.size,
+                       &stats_info);
+    } else {
+        stats_info.job_id = module->last_job_id;
+        stats_info.offset = module->model.stats.offset;
+        stats_info.bytes = module->model.stats.desc.size;
+        err = (ioctl(module->fd, DRM_IOCTL_N1X_DLA_STATS, &stats_info) < 0) ? -errno : 0;
+    }
+    if (err != 0) {
+        return err;
+    }
+    err = n1x_dla_read(module->fd, module->last_job_id,
+                       module->model.stats.offset, out_buf, module->model.stats.desc.size);
+    if (err != 0) {
+        return err;
+    }
+    if (out_bytes) {
+        *out_bytes = stats_size;
+    }
+    return 0;
+}
+
 int n1x_ort_module_set_input_quant(N1xOrtModule *module, size_t index,
                                    const float *scales, size_t num_scales,
                                    const int8_t *zero_points, size_t num_zps) {
@@ -337,7 +406,27 @@ int n1x_ort_pack_fp32(const N1xOrtTensorDesc *desc,
             for (uint32_t y = 0; y < H; ++y) {
                 const uint64_t row_base = c_base + static_cast<uint64_t>(y) * line;
                 const float *src_row = src_ch + static_cast<size_t>(y) * W;
-                for (uint32_t x = 0; x < W; ++x) {
+                uint32_t x = 0;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+                for (; x + 4 <= W; x += 4) {
+                    const float32x4_t v = vld1q_f32(src_row + x);
+                    if (vmaxvq_u32(vandq_u32(vreinterpretq_u32_f32(v), vdupq_n_u32(0x7f800000U))) >= 0x7f800000U) {
+                        return -EINVAL;
+                    }
+                    const float16x4_t vh = vcvt_f16_f32(v);
+                    const uint16x4_t uh = vreinterpret_u16_f16(vh);
+                    if (vmaxv_u16(vand_u16(uh, vdup_n_u16(0x7c00U))) >= 0x7c00U) {
+                        return -EINVAL;
+                    }
+                    uint16_t lanes[4];
+                    vst1_u16(lanes, uh);
+                    for (uint32_t k = 0; k < 4; ++k) {
+                        std::memcpy(out_surface + row_base + static_cast<uint64_t>(x + k) * pixel_group_bytes,
+                                    &lanes[k], sizeof(uint16_t));
+                    }
+                }
+#endif
+                for (; x < W; ++x) {
                     const float val = src_row[x];
                     if (!std::isfinite(val)) {
                         return -EINVAL;
@@ -370,10 +459,33 @@ int n1x_ort_pack_fp32(const N1xOrtTensorDesc *desc,
         const uint64_t cg = c % group_channels;
         const uint64_t c_base = g * surface + cg;
         const float *src_ch = nchw_fp32 + static_cast<size_t>(c) * H * W;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+        const float32x4_t vs = vdupq_n_f32(s);
+        const float32x4_t vzp = vdupq_n_f32(static_cast<float>(zp));
+        const int32x4_t vmin_i8 = vdupq_n_s32(-128);
+        const int32x4_t vmax_i8 = vdupq_n_s32(127);
+#endif
         for (uint32_t y = 0; y < H; ++y) {
             const uint64_t row_base = c_base + static_cast<uint64_t>(y) * line;
             const float *src_row = src_ch + static_cast<size_t>(y) * W;
-            for (uint32_t x = 0; x < W; ++x) {
+            uint32_t x = 0;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+            for (; x + 4 <= W; x += 4) {
+                const float32x4_t v = vld1q_f32(src_row + x);
+                if (vmaxvq_u32(vandq_u32(vreinterpretq_u32_f32(v), vdupq_n_u32(0x7f800000U))) >= 0x7f800000U) {
+                    return -EINVAL;
+                }
+                const float32x4_t scaled = vrndnq_f32(vaddq_f32(vdivq_f32(v, vs), vzp));
+                const int32x4_t clamped = vmaxq_s32(vmin_i8, vminq_s32(vmax_i8, vcvtq_s32_f32(scaled)));
+                int32_t lanes[4];
+                vst1q_s32(lanes, clamped);
+                for (uint32_t k = 0; k < 4; ++k) {
+                    out_surface[row_base + static_cast<uint64_t>(x + k) * pixel_group_bytes] =
+                        static_cast<uint8_t>(static_cast<int8_t>(lanes[k]));
+                }
+            }
+#endif
+            for (; x < W; ++x) {
                 const float val = src_row[x];
                 if (!std::isfinite(val)) {
                     return -EINVAL;
@@ -424,7 +536,23 @@ int n1x_ort_unpack_fp32(const N1xOrtTensorDesc *desc,
             for (uint32_t y = 0; y < H; ++y) {
                 const uint64_t row_base = c_base + static_cast<uint64_t>(y) * line;
                 float *dst_row = dst_ch + static_cast<size_t>(y) * W;
-                for (uint32_t x = 0; x < W; ++x) {
+                uint32_t x = 0;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+                for (; x + 4 <= W; x += 4) {
+                    uint16_t lanes[4];
+                    for (uint32_t k = 0; k < 4; ++k) {
+                        std::memcpy(&lanes[k],
+                                    surface + row_base + static_cast<uint64_t>(x + k) * pixel_group_bytes,
+                                    sizeof(uint16_t));
+                    }
+                    const uint16x4_t uh = vld1_u16(lanes);
+                    if (vmaxv_u16(vand_u16(uh, vdup_n_u16(0x7c00U))) >= 0x7c00U) {
+                        return -EINVAL;
+                    }
+                    vst1q_f32(dst_row + x, vcvt_f32_f16(vreinterpret_f16_u16(uh)));
+                }
+#endif
+                for (; x < W; ++x) {
                     _Float16 hval;
                     std::memcpy(&hval, surface + row_base + static_cast<uint64_t>(x) * pixel_group_bytes,
                                 sizeof(hval));
@@ -455,10 +583,26 @@ int n1x_ort_unpack_fp32(const N1xOrtTensorDesc *desc,
         const uint64_t cg = c % group_channels;
         const uint64_t c_base = g * surf_stride + cg;
         float *dst_ch = out_nchw_fp32 + static_cast<size_t>(c) * H * W;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+        const float32x4_t vs = vdupq_n_f32(s);
+        const float32x4_t vzp = vdupq_n_f32(static_cast<float>(zp));
+#endif
         for (uint32_t y = 0; y < H; ++y) {
             const uint64_t row_base = c_base + static_cast<uint64_t>(y) * line;
             float *dst_row = dst_ch + static_cast<size_t>(y) * W;
-            for (uint32_t x = 0; x < W; ++x) {
+            uint32_t x = 0;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+            for (; x + 4 <= W; x += 4) {
+                int32_t lanes[4];
+                for (uint32_t k = 0; k < 4; ++k) {
+                    lanes[k] = static_cast<int8_t>(
+                        surface[row_base + static_cast<uint64_t>(x + k) * pixel_group_bytes]);
+                }
+                const float32x4_t vq = vcvtq_f32_s32(vld1q_s32(lanes));
+                vst1q_f32(dst_row + x, vmulq_f32(vsubq_f32(vq, vzp), vs));
+            }
+#endif
+            for (; x < W; ++x) {
                 const int8_t qval = static_cast<int8_t>(
                     surface[row_base + static_cast<uint64_t>(x) * pixel_group_bytes]);
                 dst_row[x] = (static_cast<float>(qval) - static_cast<float>(zp)) * s;
@@ -517,6 +661,16 @@ int n1x_ort_module_run_fp32(N1xOrtModule *module,
     }
 
     const bool reuse = (module->retained_job_id != 0) && ((info.capabilities & N1X_DLA_CAP_REEXEC_IO) != 0);
+    const size_t required = (module->staging_image.size() + 8192 + 4095) & ~size_t(4095);
+    if (!reuse &&
+        ((info.retain_limit > 0 &&
+          (info.retained_bytes > info.retain_limit ||
+           required > info.retain_limit - info.retained_bytes)) ||
+         (info.max_jobs > 0 && info.retained_jobs >= info.max_jobs))) {
+        set_err(err_buf, err_buf_len, "kernel retained-job budget exhausted");
+        return -ENOSPC;
+    }
+
     n1x_dla_accel_exec result{};
     if (reuse) {
         std::vector<n1x_dla_accel_patch> patches;
@@ -553,30 +707,65 @@ int n1x_ort_module_run_fp32(N1xOrtModule *module,
         return err;
     }
 
+    module->last_job_id = result.job_id;
     if (info.capabilities & N1X_DLA_CAP_REEXEC_IO) {
         module->retained_job_id = result.job_id;
     }
     module->run_count += 1;
 
+    const void *mapped = nullptr;
+    const size_t mapped_bytes = module->staging_image.size();
+    bool have_mmap = false;
+    const long page_size = sysconf(_SC_PAGESIZE);
+    struct stat st{};
+    const bool can_mmap_fd =
+        (fstat(module->fd, &st) == 0) &&
+        !(S_ISCHR(st.st_mode) && major(st.st_rdev) == 1);
+    if (can_mmap_fd && page_size > 0 && result.job_id > 0 && mapped_bytes > 0 &&
+        !std::getenv("N1X_ORT_DISABLE_MMAP")) {
+        void *ptr = mmap(nullptr, mapped_bytes, PROT_READ, MAP_SHARED, module->fd,
+                         static_cast<off_t>(result.job_id * static_cast<uint64_t>(page_size)));
+        if (ptr != MAP_FAILED && ptr != nullptr) {
+            mapped = ptr;
+            have_mmap = true;
+        }
+    }
+    module->last_used_mmap = have_mmap;
+
     for (size_t i = 0; i < num_outputs; ++i) {
         const auto &t = module->model.outputs[i];
         const auto &desc = module->output_descs[i];
         const auto &q = module->output_quant[i];
-        err = n1x_dla_read(module->fd, result.job_id, t.offset,
-                           module->staging_image.data() + t.offset, t.desc.size);
-        if (err != 0) {
-            set_err(err_buf, err_buf_len, "n1x_dla_read failed");
-            return err;
+        const uint8_t *surface_ptr = nullptr;
+        if (have_mmap && t.offset <= mapped_bytes && t.desc.size <= mapped_bytes - t.offset) {
+            surface_ptr = static_cast<const uint8_t *>(mapped) + t.offset;
+        } else {
+            err = n1x_dla_read(module->fd, result.job_id, t.offset,
+                               module->staging_image.data() + t.offset, t.desc.size);
+            if (err != 0) {
+                if (have_mmap) {
+                    munmap(const_cast<void *>(mapped), mapped_bytes);
+                }
+                set_err(err_buf, err_buf_len, "n1x_dla_read failed");
+                return err;
+            }
+            surface_ptr = module->staging_image.data() + t.offset;
         }
         err = n1x_ort_unpack_fp32(
-            &desc, module->staging_image.data() + t.offset, static_cast<size_t>(desc.size),
+            &desc, surface_ptr, static_cast<size_t>(desc.size),
             q.scales.data(), q.scales.size(),
             q.zero_points.data(), q.zero_points.size(),
             outputs_fp32[i], output_elem_counts[i]);
         if (err != 0) {
+            if (have_mmap) {
+                munmap(const_cast<void *>(mapped), mapped_bytes);
+            }
             set_err(err_buf, err_buf_len, "failed unpacking output tensor from NPU surface");
             return err;
         }
+    }
+    if (have_mmap) {
+        munmap(const_cast<void *>(mapped), mapped_bytes);
     }
     return 0;
 }
