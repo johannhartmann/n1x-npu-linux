@@ -13,7 +13,7 @@ struct n1x_dla_statistics {
 };
 
 /* Read-only validation of an immutable CPU snapshot. Supports only the
- * observed header words 0x00000300 / 0x00000002 and producer layout.
+ * header words 0x00000300 / 0x00000002 and their version-2 producer layout.
  * Metadata and per-record data remain opaque; no counter or timing decoding.
  * No DMA, device access, allocation, or output modification on failure.
  */

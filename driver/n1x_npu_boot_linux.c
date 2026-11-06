@@ -674,9 +674,8 @@ static int n1x_boot_upload(void)
 					0xe0000000, 0xffffffff, words);
 	if (err)
 		goto free;
-	/* Reference acquired BEFORE publication. Only checked explicit shutdown
-	 * may release it. Timeout/rejection/idle failure stays pinned; no guessed
-	 * DMA quiescence or forced unload.
+	/* Acquire the lifetime reference before publication and release it only
+	 * after checked shutdown. Retain it on timeout, rejection or idle failure.
 	 */
 	if (!try_module_get(THIS_MODULE)) {
 		err = -ENODEV;
@@ -1242,9 +1241,8 @@ static int n1x_boot_stop_hardware(struct device *dev)
 		boot_shutdown.hardware_off = true; /* No write/DMA publisher existed. */
 		goto done;
 	}
-	/* Only the healthy, retired protocol has a recovered shutdown contract.
-	 * In particular a poisoned queue, failed upload or incomplete HFRP setup
-	 * must keep ALL mappings, PM and module references. No forced recovery.
+	/* Shutdown requires a healthy, retired queue and complete setup. Retain
+	 * mappings, PM and module references after any queue or setup failure.
 	 */
 	if (!boot_hfrp.powered || boot_hfrp.error ||
 		(boot_hfrp.gating.request_mask & 0x70) != 0x70 ||
