@@ -2,8 +2,9 @@
 
 The kernel-only interface in
 [`n1x_sroot_client.h`](../include/n1x_sroot_client.h) serializes DSP image
-uploads with NPU bootstrap under `boot_lock`. It accepts only the three pinned
-ASUS MT8901 signed images and permits one published attempt per image ID.
+uploads with NPU bootstrap under `boot_lock`. It accepts MT8901 signed containers with supported image IDs and valid section
+bounds, and permits one published attempt per image ID. SROOT authenticates the
+original certificate/signatures; the host does not pin firmware file hashes.
 It does not expose raw SROOT MMIO or a userspace upload interface.
 
 ABI v1 retains the temporary image allocation and its provider module/runtime-PM

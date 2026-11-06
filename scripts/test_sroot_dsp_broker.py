@@ -22,6 +22,7 @@ def main():
 #include <pthread.h>
 #include "n1x_sroot.h"
 #include "n1x_sroot_client.h"
+#include "n1x_sroot_firmware.h"
 typedef uint8_t u8;
 typedef uint32_t u32;
 typedef uint64_t dma_addr_t;
@@ -40,20 +41,9 @@ static struct { bool reply_valid; struct n1x_sroot_reply reply; } boot_result;
 static int fault, exchanges, frees, pm_refs, module_refs, stage_calls, hash_index;
 static pthread_mutex_t boot_mutex=PTHREAD_MUTEX_INITIALIZER;
 static _Thread_local unsigned lock_depth;
-static bool valid_hash,allocation_published;
+static bool allocation_published;
 static unsigned leases(void);
 static void *allocation;
-static const char *hashes[] = {
- "434660b36f4e21cb794bc50e10a47b91882710cbe90cb60620111a2a753c5b94",
- "350e0d40b2f8a6dfb486d8dfd3362fb5b02ceb90da372176b008498adbca8cc4",
- "517ef0d447ca80b7cb88ec0589cda816d9b20c844800ca95ccf7cbe96fc7d40e"};
-static int hex2bin(u8 *out, const char *input, size_t count) {
- for(size_t i=0;i<count;i++){unsigned value;assert(sscanf(input+2*i,"%2x",&value)==1);out[i]=value;}
- return 0;
-}
-static void sha256(const u8 *data, size_t bytes, u8 *out) {
- assert(data && bytes);hex2bin(out,hashes[hash_index],32);if(!valid_hash)out[0]^=1;
-}
 static void mutex_lock(int *lock) {assert(lock==&boot_lock && !lock_depth);assert(!pthread_mutex_lock(&boot_mutex));assert(!*lock);*lock=1;lock_depth=1;}
 static void mutex_unlock(int *lock) {assert(lock==&boot_lock && *lock && lock_depth);*lock=0;lock_depth=0;assert(!pthread_mutex_unlock(&boot_mutex));}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *e) {
@@ -108,10 +98,19 @@ int n1x_sroot_exchange(const struct n1x_dla_io *io,u32 stride,__u8 cmd,
 ''' + broker + r'''
 static unsigned leases(void) {unsigned count=0;for(unsigned i=0;i<3;i++)count+=sroot_dsp_buffers[i].published;return count;}
 static u8 image[631436];
+static void image_put32(u8 *p,u32 value) {for(unsigned i=0;i<4;i++)p[i]=value>>(8*i);}
+static void make_image(u8 *p,size_t bytes,u32 id)
+{
+ assert(bytes>=83);memset(p,0,bytes);p[0]=0x59;
+ u8 *n=p+3;image_put32(n,1);image_put32(n+4,2);image_put32(n+8,0xefbeadde);
+ image_put32(n+12,0xefbeadde);image_put32(n+16,id);image_put32(n+32,80);
+ image_put32(n+44,0xefbeadde);image_put32(n+48,id);image_put32(n+56,80);
+ image_put32(n+64,bytes-83);image_put32(n+76,0xefbeadde);
+}
 static void reset(void) {
  free(allocation);allocation=NULL;memset(sroot_dsp_buffers,0,sizeof(sroot_dsp_buffers));
  sroot_client_poisoned=false;allocation_published=false;fault=exchanges=frees=pm_refs=module_refs=stage_calls=0;
- hash_index=1;valid_hash=true;boot_sroot=boot_dla=&endpoint;boot_attempted=true;boot_error=0;boot_stopping=false;
+ hash_index=1;make_image(image,sizeof(image),0xc0304);boot_sroot=boot_dla=&endpoint;boot_attempted=true;boot_error=0;boot_stopping=false;
  boot_result.reply_valid=true;memset(&boot_result.reply,0,sizeof(boot_result.reply));
  assert(!boot_lock);
 }
@@ -146,7 +145,7 @@ int main(void) {
   if(guard==3)boot_error=-EIO;
   if(guard==4)boot_result.reply_valid=false;
   if(guard==5)boot_result.reply.status=1;
-  if(guard==6)valid_hash=false;
+  if(guard==6)image[0]=0;
   if(guard==7)boot_stopping=true;
   assert(n1x_sroot_upload_dsp_v1(0xc0304,image,sizeof(image),&result)<0);
   assert(!result.published && !pm_refs && !module_refs && !allocation && !exchanges);
@@ -179,7 +178,7 @@ int main(void) {
 
  reset();const unsigned order[]={1,2,0};const size_t sizes[]={363816,631436,157996};
  for(unsigned i=0;i<3;i++){
-  hash_index=order[i];assert(!n1x_sroot_upload_dsp_v2(0xc0303+hash_index,image,sizes[hash_index],&result2));
+  hash_index=order[i];make_image(image,sizes[hash_index],0xc0303+hash_index);assert(!n1x_sroot_upload_dsp_v2(0xc0303+hash_index,image,sizes[hash_index],&result2));
   assert(result2.accepted && result2.staging_released && !allocation);
   assert(pm_refs==(int)i+1 && module_refs==(int)i+1 && frees==(int)i+1 && leases()==i+1);
  }

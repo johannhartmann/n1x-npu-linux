@@ -4,7 +4,6 @@
  * initialization, and exposes the /dev/accel/accel* DRM compute accelerator node.
  * Retains DMA allocations across uncertain hardware faults (fail-closed).
  */
-#include <crypto/sha2.h>
 #include <linux/acpi.h>
 #include <linux/capability.h>
 #include <linux/component.h>
@@ -13,7 +12,6 @@
 #include <linux/dma-map-ops.h>
 #include <linux/dma-mapping.h>
 #include <linux/firmware.h>
-#include <linux/hex.h>
 #include <linux/io.h>
 #include <linux/interrupt.h>
 #include <linux/iommu.h>
@@ -22,6 +20,7 @@
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/wait.h>
@@ -35,17 +34,18 @@
 #include "n1x_dla_accel.h"
 #include "n1x_hfrp_setup.h"
 #include "n1x_sroot_client.h"
+#include "n1x_sroot_firmware.h"
 
 #define N1X_BOOT_FIRMWARE "nvidia/n1x/sroot-v0.bin"
 #define N1X_BOOT_FALLBACK_FIRMWARE "nvidia/n1x/sroot-v1.bin"
-#define N1X_BOOT_BYTES 67508
 #define N1X_REGION5_ALLOC (1U << 20)
 #define N1X_REGION5_OFFSET 16U
 #define N1X_REGION5_STRIDE 52U
 #define N1X_REGION5_BYTES (((N1X_REGION5_ALLOC - N1X_REGION5_OFFSET - 8U) / \
 				N1X_REGION5_STRIDE) * N1X_REGION5_STRIDE + 8U)
-/* GB10/T264 SVP0 (NVDA3000) register offset holding the 4 KiB-shifted VBIOS carveout offset. */
-#define N1X_SVP0_VBIOS_LOCATOR_OFFSET 0x82bc80ULL
+/* GB10/T264 display register holding the 4 KiB-shifted VBIOS carveout.
+ * NVDA3000 describes SVP registers, not this display aperture.
+ */
 #define N1X_DISP_VBIOS_LOCATOR_PHYS 0x1182bc80ULL
 #define N1X_VBIOS_CARVEOUT_BASE 0x80000600ULL
 #define N1X_VBIOS_CARVEOUT_SIZE 0x110000U
@@ -84,6 +84,7 @@ struct n1x_boot_endpoint {
 static DEFINE_MUTEX(boot_lock);
 static struct n1x_boot_endpoint *boot_dla, *boot_sroot;
 static struct n1x_dla_sroot_load_result boot_result;
+static size_t boot_bytes;
 static void *boot_buffer;
 static dma_addr_t boot_dma;
 static int boot_error;
@@ -311,27 +312,6 @@ static int n1x_boot_board_policy(const void *data, size_t size)
 	return n1x_dla_prepare_gating(&boot_hfrp.policy, &boot_hfrp.gating);
 }
 
-static resource_size_t n1x_boot_vbios_locator_phys(void)
-{
-	resource_size_t phys = N1X_DISP_VBIOS_LOCATOR_PHYS;
-	struct acpi_device *adev;
-
-	adev = acpi_dev_get_first_match_dev("NVDA3000", NULL, -1);
-	if (adev) {
-		struct device *phys_dev = acpi_get_first_physical_node(adev);
-
-		if (phys_dev && dev_is_platform(phys_dev)) {
-			struct platform_device *pdev = to_platform_device(phys_dev);
-			struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-
-			if (res && resource_size(res) >= N1X_SVP0_VBIOS_LOCATOR_OFFSET + sizeof(u32))
-				phys = res->start + N1X_SVP0_VBIOS_LOCATOR_OFFSET;
-		}
-		acpi_dev_put(adev);
-	}
-	return phys;
-}
-
 static int n1x_boot_live_board_policy(void)
 {
 	void __iomem *locator_io;
@@ -340,7 +320,7 @@ static int n1x_boot_live_board_policy(void)
 	void *rom;
 	int err;
 
-	locator_io = ioremap(n1x_boot_vbios_locator_phys(), sizeof(u32));
+	locator_io = ioremap(N1X_DISP_VBIOS_LOCATOR_PHYS, sizeof(u32));
 	if (!locator_io)
 		return -ENOMEM;
 	locator = readl(locator_io);
@@ -468,25 +448,12 @@ put:
 
 static int n1x_boot_validate_firmware(const struct firmware *firmware)
 {
-	static const u8 expected[2][SHA256_DIGEST_SIZE] = {{
-		0x0f, 0x16, 0x91, 0x1c, 0xce, 0xd7, 0xbb, 0x95,
-		0x77, 0x3d, 0xa5, 0xaf, 0xf9, 0xd9, 0xa4, 0x4d,
-		0xfd, 0x1b, 0x1a, 0x11, 0xf3, 0xc5, 0x60, 0xee,
-		0x69, 0x8a, 0x5c, 0x99, 0x31, 0x0f, 0xf2, 0xc4,
-	}, {
-		0x6b, 0x1e, 0x81, 0x92, 0xfc, 0x1e, 0x61, 0x94,
-		0x4e, 0x9b, 0x2a, 0x84, 0x25, 0x1b, 0x7d, 0x18,
-		0xf3, 0x05, 0x02, 0x5f, 0xfb, 0x2c, 0xfa, 0x1d,
-		0xe8, 0x67, 0x7f, 0x8f, 0x98, 0xb5, 0x9a, 0xd4,
-	}};
-	u8 digest[SHA256_DIGEST_SIZE];
-
 	if (firmware_variant > 1)
 		return -EINVAL;
-	if (!firmware || !firmware->data || firmware->size != N1X_BOOT_BYTES)
+	if (!firmware || !firmware->data || firmware->size < 4 ||
+	    n1x_sroot_image_u32(firmware->data) != 0xc0302)
 		return -EBADMSG;
-	sha256(firmware->data, firmware->size, digest);
-	return memcmp(digest, expected[firmware_variant], sizeof(digest)) ? -EBADMSG : 0;
+	return n1x_sroot_validate_image(firmware->data + 4, firmware->size - 4, 0xc0302);
 }
 
 /* All secure-loader transactions hold boot_lock, including DSP clients. */
@@ -507,18 +474,9 @@ static int n1x_sroot_upload_dsp(u32 image_id, const u8 *image, size_t bytes,
 			       struct n1x_sroot_client_result *result,
 			       bool release_staging, bool *staging_released)
 {
-	static const struct {
-		size_t bytes;
-		const char *sha256;
-	} pinned[] = {
-		{363816, "434660b36f4e21cb794bc50e10a47b91882710cbe90cb60620111a2a753c5b94"},
-		{631436, "350e0d40b2f8a6dfb486d8dfd3362fb5b02ceb90da372176b008498adbca8cc4"},
-		{157996, "517ef0d447ca80b7cb88ec0589cda816d9b20c844800ca95ccf7cbe96fc7d40e"},
-	};
 	struct n1x_sroot_client_buffer *buffer;
 	struct n1x_sroot_reply reply = {};
 	struct n1x_dla_io io;
-	u8 digest[SHA256_DIGEST_SIZE], expected[SHA256_DIGEST_SIZE];
 	u32 words[3], index;
 	int err;
 
@@ -530,12 +488,9 @@ static int n1x_sroot_upload_dsp(u32 image_id, const u8 *image, size_t bytes,
 	if (image_id < 0xc0303 || image_id > 0xc0305 || !image)
 		return -EINVAL;
 	index = image_id - 0xc0303;
-	if (bytes != pinned[index].bytes)
-		return -EBADMSG;
-	sha256(image, bytes, digest);
-	if (hex2bin(expected, pinned[index].sha256, sizeof(expected)) ||
-	    memcmp(digest, expected, sizeof(digest)))
-		return -EBADMSG;
+	err = n1x_sroot_validate_image(image, bytes, image_id);
+	if (err)
+		return err;
 	mutex_lock(&boot_lock);
 	buffer = &sroot_dsp_buffers[index];
 	if (!boot_sroot || !boot_dla) {
@@ -678,9 +633,12 @@ static int n1x_boot_upload(void)
 		err = n1x_boot_dma_gate(boot_dla);
 	if (err)
 		return err;
-	err = request_firmware_direct(&firmware, firmware_variant ?
-						N1X_BOOT_FALLBACK_FIRMWARE : N1X_BOOT_FIRMWARE,
-						boot_sroot->dev);
+	{
+		const char *name = firmware_variant ? N1X_BOOT_FALLBACK_FIRMWARE : N1X_BOOT_FIRMWARE;
+
+		device_property_read_string(boot_sroot->dev, "firmware-name", &name);
+		err = request_firmware_direct(&firmware, name, boot_sroot->dev);
+	}
 	if (err)
 		return err;
 	err = n1x_boot_validate_firmware(firmware);
@@ -699,7 +657,8 @@ static int n1x_boot_upload(void)
 		dev_err(boot_dla->dev, "runtime resume before upload failed: %d\n", err);
 		goto put_sroot;
 	}
-	boot_buffer = dma_alloc_coherent(boot_sroot->dev, N1X_BOOT_BYTES,
+	boot_bytes = firmware->size;
+	boot_buffer = dma_alloc_coherent(boot_sroot->dev, boot_bytes,
 					&boot_dma, GFP_KERNEL);
 	if (!boot_buffer) {
 		err = -ENOMEM;
@@ -709,7 +668,7 @@ static int n1x_boot_upload(void)
 		err = -ERANGE;
 		goto free;
 	}
-	err = n1x_sroot_stage_image(boot_buffer, N1X_BOOT_BYTES,
+	err = n1x_sroot_stage_image(boot_buffer, boot_bytes,
 					firmware->data, firmware->size, boot_dma,
 					0xe0000000, 0xffffffff, words);
 	if (err)
@@ -735,7 +694,7 @@ static int n1x_boot_upload(void)
 	release_firmware(firmware);
 	return err;
 free:
-	dma_free_coherent(boot_sroot->dev, N1X_BOOT_BYTES, boot_buffer, boot_dma);
+	dma_free_coherent(boot_sroot->dev, boot_bytes, boot_buffer, boot_dma);
 	boot_buffer = NULL;
 	boot_dma = 0;
 put_dla:
@@ -1358,7 +1317,7 @@ static int n1x_boot_stop_hardware(struct device *dev)
 	FREE_DLA_BUFFER(boot_ping, 4096);
 #undef FREE_DLA_BUFFER
 	if (boot_buffer) {
-		dma_free_coherent(boot_sroot->dev, N1X_BOOT_BYTES, boot_buffer, boot_dma);
+		dma_free_coherent(boot_sroot->dev, boot_bytes, boot_buffer, boot_dma);
 		boot_buffer = NULL;
 		boot_dma = 0;
 	}

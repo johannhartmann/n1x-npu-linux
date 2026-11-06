@@ -14,7 +14,7 @@ struct n1x_sroot_client_result {
 	__u8 published, reply_valid, accepted, reserved;
 };
 
-/* Accepts only the three pinned ASUS MT8901 signed DSP images, without an
+/* Accepts MT8901 signed DSP containers with a supported image ID, without an
  * image-ID prefix. One attempt per image ID; no automatic retry.
  */
 int n1x_sroot_upload_dsp_v1(__u32 image_id, const __u8 *image, size_t bytes,

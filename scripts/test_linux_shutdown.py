@@ -57,7 +57,6 @@ typedef size_t resource_size_t;
 #define WRITE_ONCE(x, val) ((x) = (val))
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
 #define SHA256_DIGEST_SIZE 32
-#define N1X_BOOT_BYTES 67508
 #define N1X_REGION5_ALLOC (1U<<20)
 #define DEFINE_MUTEX(name) int name
 #define THIS_MODULE ((void *)1)
@@ -132,7 +131,7 @@ static void reset(void)
  boot_ping.attempted=boot_ping.verified=true;boot_config.attempted=boot_config.valid=true;
  boot_region5.attempted=boot_region5.registered=true;boot_config_apply.attempted=boot_config_apply.accepted=true;
  boot_lpwr.attempted=boot_lpwr.accepted=true;boot_task.attempted=boot_task.verified=true;
- boot_buffer=(void *)1;boot_dma=1;
+ boot_buffer=(void *)1;boot_dma=1;boot_bytes=67508;
  boot_ping.buffer=boot_config.buffer=boot_region5.buffer=boot_lpwr.buffer=(void *)1;
  boot_ping.dma=boot_config.dma=boot_region5.dma=boot_lpwr.dma=1;
  boot_task.buffer=(void *)1;boot_task.dma=1;

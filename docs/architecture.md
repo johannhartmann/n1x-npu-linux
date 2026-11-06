@@ -13,8 +13,8 @@ The driver discovers both `_CRS` MMIO apertures, IORT SMMUv3 mappings, and the l
 
 ## 2. VBIOS Policy & HFRP Bring-Up
 
-### Live VBIOS Carveout (`NVDA3000` / `0x1182bc80`)
-[`n1x_boot_live_board_policy()`](../driver/n1x_npu_boot_linux.c) resolves the `NVDA3000` (`\_SB_.SVP0`) locator register (`0x1182bc80`), computes the 32-bit physical carveout base (`(((u64)locator << 12) + N1X_VBIOS_CARVEOUT_BASE) & 0xffffffffULL`, yielding `0xe5b81800` for locator `0xffe5b812`), and parses the BIT `0x6c` table ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)) to extract the board's clock/power/gating policy (`892.8 MHz` nominal, gating mask `0x70`).
+### Live VBIOS Carveout (GB10/T264 display / `0x1182bc80`)
+[`n1x_boot_live_board_policy()`](../driver/n1x_npu_boot_linux.c) reads the GB10/T264 display locator register (`0x1182bc80`), computes the 32-bit physical carveout base (`(((u64)locator << 12) + N1X_VBIOS_CARVEOUT_BASE) & 0xffffffffULL`, yielding `0xe5b81800` for locator `0xffe5b812`), and parses the BIT `0x6c` table ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)) to extract the board's clock/power/gating policy (`892.8 MHz` nominal, gating mask `0x70`).
 
 ### 8-Stage In-Kernel Bring-Up
 When both endpoints bind, [`n1x_master_bind()`](../driver/n1x_npu_boot_linux.c) runs the 8-stage initialization sequence in C:
