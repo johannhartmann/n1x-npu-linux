@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def shutdown_harness():
     text = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     state = text[text.index('struct n1x_boot_endpoint {'):text.index('static int n1x_boot_group_member(')]
+    dsp_state = text[text.index('static struct n1x_sroot_client_buffer {'):
+                     text.index('int n1x_sroot_upload_dsp_v1(')]
     code = text[text.index('static int n1x_boot_stop_hardware('):text.index('static DEVICE_ATTR_WO(shutdown);')]
     start_fn = text[text.index('static int n1x_boot_start_once('):text.index('static struct attribute *boot_attrs[]')]
     names = set(re.findall(r'\b(n1x_boot_\w+)\(\)', start_fn))-{'n1x_boot_start_once'}
@@ -53,6 +55,7 @@ typedef uint8_t u8;typedef uint32_t u32;typedef uint64_t dma_addr_t;
 typedef size_t resource_size_t;
 #define __iomem
 #define WRITE_ONCE(x, val) ((x) = (val))
+#define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
 #define SHA256_DIGEST_SIZE 32
 #define N1X_BOOT_BYTES 67508
 #define N1X_REGION5_ALLOC (1U<<20)
@@ -63,7 +66,7 @@ typedef size_t resource_size_t;
 struct device {int refs,id;void *data;};
 struct device_attribute {int unused;};
 struct n1x_dla_accel {bool locked;int bytes;};
-''' + state + r'''
+''' + state + dsp_state + r'''
 static struct device device={0,0,NULL},sroot_device={0,1,NULL},foreign={0,2,NULL};
 static struct n1x_boot_endpoint dla_ep,sroot_ep;
 static struct n1x_dla_accel accel;
@@ -118,6 +121,7 @@ static void reset(void)
  memset(&boot_ping,0,sizeof(boot_ping));memset(&boot_config,0,sizeof(boot_config));
  memset(&boot_region5,0,sizeof(boot_region5));memset(&boot_config_apply,0,sizeof(boot_config_apply));
  memset(&boot_lpwr,0,sizeof(boot_lpwr));memset(&boot_task,0,sizeof(boot_task));
+ memset(sroot_dsp_buffers,0,sizeof(sroot_dsp_buffers));
  boot_stopping=false;boot_hfrp_held=boot_upload_held=true;boot_unpinned=false;boot_attempted=true;boot_error=0;
  device.refs=2;sroot_device.refs=1;module_refs=2;accel.bytes=4096;
  dla_ep=(struct n1x_boot_endpoint){.dev=&device,.accel=&accel};
@@ -151,6 +155,13 @@ int main(void)
  reset();assert(shutdown_store(&device,NULL,"no",2)==-EPERM && !gates);
  reset();assert(n1x_boot_stop_device(&foreign)==-ENODEV);
  assert(n1x_boot_stop_device(&sroot_device)==-ENODEV && !gates);
+ for(unsigned i=0;i<ARRAY_SIZE(sroot_dsp_buffers);i++) {
+  reset();sroot_dsp_buffers[i].published=true;
+  assert(n1x_boot_stop_device(&device)==-EBUSY);
+  assert(!boot_stopping && !boot_shutdown.attempted && !boot_lock && !accel.locked);
+  assert(!gates && !accesses && !stops && !dma_frees && !pm_puts && module_refs==2);
+  assert(accel.bytes==4096 && boot_buffer && boot_task.buffer);
+ }
  for(int i=0;i<14;i++){
   reset();switch(i){
   case 0:boot_hfrp.powered=false;break;

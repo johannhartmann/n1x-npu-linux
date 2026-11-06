@@ -29,6 +29,7 @@ test-portable:
 	$(PYTHON) scripts/test_prepare_inputs.py
 	$(PYTHON) scripts/test_hfrp_channel.py
 	$(PYTHON) scripts/test_linux_bootstrap_guards.py
+	$(PYTHON) scripts/test_linux_boot_delay.py
 	$(PYTHON) scripts/test_linux_bootstrap_ping.py
 	$(PYTHON) scripts/test_linux_hfrp_state.py
 	$(PYTHON) scripts/test_linux_config_snapshot.py

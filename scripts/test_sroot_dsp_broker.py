@@ -32,7 +32,7 @@ typedef uint64_t dma_addr_t;
 struct device { int unused; } dev;
 struct n1x_boot_endpoint { struct device *dev; } endpoint = {&dev};
 static struct n1x_boot_endpoint *boot_sroot = &endpoint, *boot_dla = &endpoint;
-static bool boot_attempted = true;
+static bool boot_attempted = true, boot_stopping;
 static int boot_error, boot_lock;
 static struct { bool reply_valid; struct n1x_sroot_reply reply; } boot_result;
 static int fault, exchanges, frees, pm_refs, module_refs, stage_calls, hash_index;
@@ -102,7 +102,7 @@ static u8 image[631436];
 static void reset(void) {
  free(allocation);allocation=NULL;memset(sroot_dsp_buffers,0,sizeof(sroot_dsp_buffers));
  sroot_client_poisoned=false;fault=exchanges=frees=pm_refs=module_refs=stage_calls=0;
- hash_index=1;valid_hash=true;boot_sroot=boot_dla=&endpoint;boot_attempted=true;boot_error=0;
+ hash_index=1;valid_hash=true;boot_sroot=boot_dla=&endpoint;boot_attempted=true;boot_error=0;boot_stopping=false;
  boot_result.reply_valid=true;memset(&boot_result.reply,0,sizeof(boot_result.reply));
  assert(!boot_lock);
 }
@@ -126,7 +126,7 @@ int main(void) {
  assert(result.published && result.reply_valid && result.accepted && module_refs==1 && pm_refs==1);
  assert(!sroot_client_poisoned && !frees);
  assert(n1x_sroot_upload_dsp_v1(0xc0304,image,sizeof(image),&result)==-EALREADY && exchanges==1);
- for(int guard=0;guard<7;guard++) {
+ for(int guard=0;guard<8;guard++) {
   reset();
   if(guard==0)boot_sroot=NULL;
   if(guard==1)boot_dla=NULL;
@@ -135,9 +135,13 @@ int main(void) {
   if(guard==4)boot_result.reply_valid=false;
   if(guard==5)boot_result.reply.status=1;
   if(guard==6)valid_hash=false;
+  if(guard==7)boot_stopping=true;
   assert(n1x_sroot_upload_dsp_v1(0xc0304,image,sizeof(image),&result)<0);
   assert(!result.published && !pm_refs && !module_refs && !allocation && !exchanges);
  }
+ reset();boot_stopping=true;
+ assert(n1x_sroot_upload_dsp_v1(0xc0304,image,sizeof(image),&result)==-ESHUTDOWN);
+ assert(!result.published && !exchanges && !allocation && !pm_refs && !module_refs);
  reset();assert(n1x_sroot_upload_dsp_v1(0xc0302,image,sizeof(image),&result)==-EINVAL);
  assert(n1x_sroot_upload_dsp_v1(0xc0304,image,sizeof(image)-1,&result)==-EBADMSG);
  assert(n1x_sroot_upload_dsp_v1(0xc0304,image,sizeof(image),NULL)==-EINVAL);

@@ -275,6 +275,7 @@ static irqreturn_t n1x_boot_irq_handler(int irq, void *data)
 static void n1x_boot_delay(void *context, u32 interval_us)
 {
 	if (opt_enable_irq && boot_irq_registered && context == boot_dla &&
+		READ_ONCE(boot_hfrp.powered) && !READ_ONCE(boot_stopping) &&
 		interval_us >= 1000) {
 		int before = atomic_read(&boot_irq_count);
 		u32 owned = 0, saved = 0;
@@ -287,6 +288,9 @@ static void n1x_boot_delay(void *context, u32 interval_us)
 					max(1UL, usecs_to_jiffies(interval_us)));
 		return;
 	}
+	/* HFRP establishes DLA power. Its early polls must not access the DLA
+	 * interrupt registers, and shutdown must not re-enable those interrupts.
+	 */
 	usleep_range(interval_us, interval_us + 100);
 }
 
@@ -532,6 +536,10 @@ int n1x_sroot_upload_dsp_v1(u32 image_id, const u8 *image, size_t bytes,
 	buffer = &sroot_dsp_buffers[index];
 	if (!boot_sroot || !boot_dla) {
 		err = -ENODEV;
+		goto unlock;
+	}
+	if (boot_stopping) {
+		err = -ESHUTDOWN;
 		goto unlock;
 	}
 	if (sroot_client_poisoned) {
@@ -1332,10 +1340,24 @@ out:
 static int n1x_boot_stop_device(struct device *dev)
 {
 	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
+	unsigned int i;
 	int err;
 
 	if (!endpoint || endpoint->sroot)
 		return -ENODEV;
+	/* Serialize shutdown against DSP publication. The DSP loader has no
+	 * verified release operation yet, so its published buffers must survive.
+	 * Refuse before stopping the accelerator or changing its lifetime state.
+	 */
+	mutex_lock(&boot_lock);
+	for (i = 0; i < ARRAY_SIZE(sroot_dsp_buffers); i++) {
+		if (sroot_dsp_buffers[i].published) {
+			mutex_unlock(&boot_lock);
+			return -EBUSY;
+		}
+	}
+	WRITE_ONCE(boot_stopping, true);
+	mutex_unlock(&boot_lock);
 	/* Keep the same lock order for shutdown and EXEC; never call this while
 	 * holding boot_lock. accel_stop frees its list only after hardware success.
 	 */
