@@ -14,6 +14,12 @@ If any shutdown step fails, `accel->stop_failed` is set to `true` (and `boot_shu
 
 ## Build and Qualify
 
+Published [DSP client leases](sroot-dsp-lifetime.md) prevent this shutdown
+sequence with `EBUSY`, before accelerator or power changes. Their guard is
+independent of whether temporary image staging remains allocated. A verified
+DSP core shutdown and provider-lease release contract is still required before
+the shared NPU/SROOT provider may shut down in that state.
+
 Run the offline shutdown and transport regression suite:
 
 ```sh

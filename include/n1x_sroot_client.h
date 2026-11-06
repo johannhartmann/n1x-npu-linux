@@ -19,4 +19,19 @@ struct n1x_sroot_client_result {
  */
 int n1x_sroot_upload_dsp_v1(__u32 image_id, const __u8 *image, size_t bytes,
 			  struct n1x_sroot_client_result *result);
+
+struct n1x_sroot_client_result_v2 {
+	__u32 reply_header;
+	__u8 published, reply_valid, accepted, staging_released;
+};
+
+/* ABI v2 releases only the temporary image allocation after the serialized
+ * upload completes with the canonical successful reply. published records a
+ * provider lifetime lease: PM/module references remain held and NPU shutdown
+ * remains blocked even when staging_released is true. Uncertain or rejected
+ * uploads retain their staging allocation too. No DSP memory is released;
+ * there is no core shutdown, lease-release, retry or reinitialization API.
+ */
+int n1x_sroot_upload_dsp_v2(__u32 image_id, const __u8 *image, size_t bytes,
+			  struct n1x_sroot_client_result_v2 *result);
 #endif

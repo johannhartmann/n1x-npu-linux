@@ -492,18 +492,20 @@ static int n1x_boot_validate_firmware(const struct firmware *firmware)
 /* All secure-loader transactions hold boot_lock, including DSP clients. */
 static bool sroot_client_poisoned;
 
-/* Each published buffer is deliberately retained until reboot. A successful
- * mailbox reply alone does not establish that every DMA read has stopped.
+/* A published DSP lease pins the provider independently of its image buffer.
+ * v1 retains staging; v2 may retire it after a completed upload. Neither
+ * permits NPU shutdown while the DSP can still access shared hardware.
  */
 static struct n1x_sroot_client_buffer {
 	void *cpu;
 	dma_addr_t dma;
 	size_t bytes;
-	bool published;
+	bool published, staging_released;
 } sroot_dsp_buffers[3];
 
-int n1x_sroot_upload_dsp_v1(u32 image_id, const u8 *image, size_t bytes,
-			  struct n1x_sroot_client_result *result)
+static int n1x_sroot_upload_dsp(u32 image_id, const u8 *image, size_t bytes,
+			       struct n1x_sroot_client_result *result,
+			       bool release_staging, bool *staging_released)
 {
 	static const struct {
 		size_t bytes;
@@ -523,6 +525,8 @@ int n1x_sroot_upload_dsp_v1(u32 image_id, const u8 *image, size_t bytes,
 	if (!result)
 		return -EINVAL;
 	memset(result, 0, sizeof(*result));
+	if (staging_released)
+		*staging_released = false;
 	if (image_id < 0xc0303 || image_id > 0xc0305 || !image)
 		return -EINVAL;
 	index = image_id - 0xc0303;
@@ -595,14 +599,24 @@ int n1x_sroot_upload_dsp_v1(u32 image_id, const u8 *image, size_t bytes,
 		result->reply_header = reply.header;
 		if (reply.command != N1X_SROOT_CMD_UPLOAD || reply.status || reply.detail)
 			err = -EREMOTEIO;
+		else if (release_staging && (reply.header != N1X_SROOT_CMD_UPLOAD || reply.count))
+			err = -EPROTO;
 		else
 			result->accepted = 1;
+	}
+	if (!err && release_staging) {
+		/* A completed upload consumes the image, not the DSP lifetime lease. */
+		dma_free_coherent(boot_sroot->dev, buffer->bytes, buffer->cpu, buffer->dma);
+		buffer->cpu = NULL;
+		buffer->dma = 0;
+		buffer->staging_released = true;
+		*staging_released = true;
 	}
 	if (err)
 		sroot_client_poisoned = true;
 	dev_info(boot_sroot->dev,
-		"DSP image %#x: error=%d reply_valid=%u header=%#x; staging DMA retained until reboot\n",
-		image_id, err, result->reply_valid, result->reply_header);
+		"DSP image %#x: error=%d reply_valid=%u header=%#x staging_released=%u; provider lease retained\n",
+		image_id, err, result->reply_valid, result->reply_header, buffer->staging_released);
 	goto unlock;
 free:
 	dma_free_coherent(boot_sroot->dev, buffer->bytes, buffer->cpu, buffer->dma);
@@ -613,7 +627,33 @@ unlock:
 	mutex_unlock(&boot_lock);
 	return err;
 }
+
+int n1x_sroot_upload_dsp_v1(u32 image_id, const u8 *image, size_t bytes,
+			  struct n1x_sroot_client_result *result)
+{
+	return n1x_sroot_upload_dsp(image_id, image, bytes, result, false, NULL);
+}
 EXPORT_SYMBOL_GPL(n1x_sroot_upload_dsp_v1);
+
+int n1x_sroot_upload_dsp_v2(u32 image_id, const u8 *image, size_t bytes,
+			  struct n1x_sroot_client_result_v2 *result)
+{
+	struct n1x_sroot_client_result upload;
+	bool released = false;
+	int err;
+
+	if (!result)
+		return -EINVAL;
+	memset(result, 0, sizeof(*result));
+	err = n1x_sroot_upload_dsp(image_id, image, bytes, &upload, true, &released);
+	result->reply_header = upload.reply_header;
+	result->published = upload.published;
+	result->reply_valid = upload.reply_valid;
+	result->accepted = upload.accepted;
+	result->staging_released = released;
+	return err;
+}
+EXPORT_SYMBOL_GPL(n1x_sroot_upload_dsp_v2);
 
 /* Caller holds boot_lock. */
 static int n1x_boot_upload(void)

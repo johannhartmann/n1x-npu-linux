@@ -12,7 +12,7 @@ def shutdown_harness():
     text = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     state = text[text.index('struct n1x_boot_endpoint {'):text.index('static int n1x_boot_group_member(')]
     dsp_state = text[text.index('static struct n1x_sroot_client_buffer {'):
-                     text.index('int n1x_sroot_upload_dsp_v1(')]
+                     text.index('static int n1x_sroot_upload_dsp(')]
     code = text[text.index('static int n1x_boot_stop_hardware('):text.index('static DEVICE_ATTR_WO(shutdown);')]
     start_fn = text[text.index('static int n1x_boot_start_once('):text.index('static struct attribute *boot_attrs[]')]
     names = set(re.findall(r'\b(n1x_boot_\w+)\(\)', start_fn))-{'n1x_boot_start_once'}
@@ -157,6 +157,7 @@ int main(void)
  assert(n1x_boot_stop_device(&sroot_device)==-ENODEV && !gates);
  for(unsigned i=0;i<ARRAY_SIZE(sroot_dsp_buffers);i++) {
   reset();sroot_dsp_buffers[i].published=true;
+  sroot_dsp_buffers[i].staging_released=true;assert(!sroot_dsp_buffers[i].cpu && !sroot_dsp_buffers[i].dma);
   assert(n1x_boot_stop_device(&device)==-EBUSY);
   assert(!boot_stopping && !boot_shutdown.attempted && !boot_lock && !accel.locked);
   assert(!gates && !accesses && !stops && !dma_frees && !pm_puts && module_refs==2);
