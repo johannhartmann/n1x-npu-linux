@@ -2,6 +2,7 @@
 """Check actual accel-to-bootstrap readiness/serialization boundary offline."""
 import os
 from pathlib import Path
+from boot_test_context import context_harness
 import shlex
 import subprocess
 import tempfile
@@ -10,11 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     text = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
-    function = text[text.index('static int n1x_boot_accel_submit('):text.index('static int n1x_boot_probe(')]
+    function = text[text.index('static int n1x_boot_accel_submit('):text.index('static struct acpi_device *n1x_find_sroot(')]
     prepare = text[text.index('static int n1x_boot_prepare('):text.index('static int n1x_boot_suspend(')]
     assert '.prepare = pm_sleep_ptr(n1x_boot_prepare)' in text
     assert '.complete = pm_sleep_ptr(n1x_boot_complete)' in text
-    shim = r'''
+    shim = context_harness() + r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <errno.h>
@@ -23,26 +24,26 @@ def main():
 #include "n1x_dla_job.h"
 struct n1x_boot_endpoint;
 struct device {struct n1x_boot_endpoint *data;};
-struct n1x_boot_endpoint {struct device *dev;bool sroot;};
+
 static struct device device,foreign;
-static struct n1x_boot_endpoint ep={.dev=&device},*boot_dla,*boot_sroot;
-static bool boot_stopping, boot_sleep_prepared, boot_attempted;
-static struct {bool released;} boot_shutdown;
-static struct {bool published;} sroot_dsp_buffers[3];
+static struct n1x_boot_endpoint ep={.dev=&device} ;
+
+
+
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
 static void *dev_get_drvdata(struct device *dev) {return dev->data;}
-static struct n1x_dla_job boot_task;
-static struct n1x_dla_job_queue boot_queue;
-static struct {bool accepted;} boot_lpwr;
-static struct {bool powered,attempted;struct {bool boot_tables_valid;} policy;} boot_hfrp;
-static int boot_lock,gate_error,drain_error,run_error,gates,drains,runs,cases;
-static void mutex_lock(int *p) {assert(!*p);*p=1;}
-static void mutex_unlock(int *p) {assert(*p);*p=0;}
-static bool n1x_boot_stop_ready(void)
+
+
+
+
+static int gate_error,drain_error,run_error,gates,drains,runs,cases;
+static void mutex_lock(void *test_mutex) {int *p=test_mutex;assert(!*p);*p=1;}
+static void mutex_unlock(void *test_mutex) {int *p=test_mutex;assert(*p);*p=0;}
+static bool n1x_boot_stop_ready(struct n1x_boot_context *boot)
 {assert(boot_lock);return !boot_queue.active && !boot_queue.owner_job && !boot_queue.poisoned;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *p)
 {assert(boot_lock&&p==&ep);gates++;return gate_error;}
-static int n1x_boot_drain_task_idle(struct n1x_dla_job *job)
+static int n1x_boot_drain_task_idle(struct n1x_boot_context *boot, struct n1x_dla_job *job)
 {assert(boot_lock&&!job->attempted);drains++;return drain_error;}
 static int n1x_boot_write(void *p,__u32 a,__u32 b) {(void)p;(void)a;(void)b;assert(0);return 0;}
 static int n1x_boot_read(void *p,__u32 a,__u32 *b) {(void)p;(void)a;(void)b;assert(0);return 0;}
@@ -54,11 +55,11 @@ int n1x_dla_job_execute(struct n1x_dla_job_queue *q,const struct n1x_dla_io *io,
 '''
     tests = r'''
 static void reset(void)
-{boot_stopping=boot_sleep_prepared=false;boot_dla=boot_sroot=&ep;
+{test_context_reset();boot_stopping=boot_sleep_prepared=false;boot_dla=boot_sroot=&ep;
  device.data=&ep;ep.sroot=false;foreign.data=NULL;
  memset(&boot_queue,0,sizeof(boot_queue));memset(sroot_dsp_buffers,0,sizeof(sroot_dsp_buffers));
  boot_attempted=boot_hfrp.attempted=true;boot_shutdown.released=false;
- boot_task.verified=boot_lpwr.accepted=boot_hfrp.powered=boot_hfrp.policy.boot_tables_valid=true;
+ boot_task.verified=boot_lpwr.accepted=boot_hfrp.powered=true;boot_hfrp.policy.boot_tables_valid=1;
  gates=drains=runs=gate_error=drain_error=run_error=0;}
 static void check(struct device *dev,int expected,int g,int d,int r)
 {struct n1x_dla_job job={0};struct n1x_dla_job_ops ops={.context=&job};

@@ -2,6 +2,7 @@
 """Exercise exact Linux config import using real prepare/control/send/ACK code."""
 import os
 from pathlib import Path
+from boot_test_context import context_harness
 import shlex
 import subprocess
 import tempfile
@@ -13,7 +14,7 @@ def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     function = source[source.index('static int n1x_boot_apply_config_once('):
                       source.index('static int n1x_boot_apply_lpwr_once(')]
-    harness = r'''
+    harness = context_harness() + r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -23,17 +24,17 @@ def main():
 #include "n1x_dla_command.h"
 #include "n1x_dla_control.h"
 typedef uint32_t u32;
-typedef uint64_t u64;
+
 #define DMA_BIT_MASK(n) ((1ULL << (n))-1)
 struct device {int unused;};
-struct n1x_boot_endpoint {struct device *dev;};
+
 static struct device device;
-static struct n1x_boot_endpoint endpoint={&device};
-static struct n1x_boot_endpoint *boot_sroot,*boot_dla;
-static struct {bool verified;} boot_ping;
-static struct {bool registered;} boot_region5;
-static struct {void *buffer;u64 dma;bool valid;unsigned char data[252];} boot_config;
-static struct {struct n1x_dla_control_result transaction;bool attempted,accepted;int error;} boot_config_apply;
+static struct n1x_boot_endpoint endpoint={.dev=&device};
+
+
+
+
+
 static bool stale,sent;
 static unsigned char retained_buffer[4096] __attribute__((aligned(256)));
 static unsigned char original[4096];
@@ -65,7 +66,7 @@ static void dma_wmb(void) {barriers++;}
     harness += function
     harness += r'''
 static void reset(void)
-{boot_sroot=boot_dla=&endpoint;boot_ping.verified=boot_region5.registered=true;
+{test_context_reset();boot_sroot=boot_dla=&endpoint;boot_ping.verified=boot_region5.registered=true;
  stale=sent=false;gate_error=barriers=io_calls=0;fail_at=-1;
  for(size_t i=0;i<sizeof(original);i++)original[i]=i&255;
  memcpy(retained_buffer,original,sizeof(original));
@@ -75,11 +76,11 @@ static void reset(void)
  memset(&boot_config_apply,0,sizeof(boot_config_apply));}
 static void check(int expected,bool attempted,bool accepted)
 {void *saved=boot_config.buffer;u64 address=boot_config.dma;
- assert(n1x_boot_apply_config_once()==expected);
+ assert(n1x_boot_apply_config_once(boot)==expected);
  assert(boot_config_apply.attempted==attempted && boot_config_apply.accepted==accepted);
  assert(boot_config.buffer==saved && boot_config.dma==address);
  assert(!memcmp(boot_config.data,original,sizeof(boot_config.data)));
- if(attempted){assert(n1x_boot_apply_config_once()==-EALREADY);}
+ if(attempted){assert(n1x_boot_apply_config_once(boot)==-EALREADY);}
  else assert(!memcmp(retained_buffer,original,sizeof(original)));
  cases++;}
 int main(void)

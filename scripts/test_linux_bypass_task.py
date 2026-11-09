@@ -2,6 +2,7 @@
 """Compile the exact native bypass phase against deterministic device failures."""
 import os
 from pathlib import Path
+from boot_test_context import context_harness
 import shlex
 import subprocess
 import tempfile
@@ -13,7 +14,7 @@ def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     function = source[source.index('static int n1x_boot_drain_task_idle('):
                       source.index('static ssize_t query_power_state_store(')]
-    harness = r'''
+    harness = context_harness() + r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -26,8 +27,8 @@ def main():
 #include "n1x_dla_job.h"
 typedef uint8_t u8;
 typedef uint32_t u32;
-typedef __u64 u64;
-typedef __u64 dma_addr_t;
+
+
 typedef uint32_t __le32;
 #define U32_MAX UINT32_MAX
 #define DMA_BIT_MASK(n) ((1ULL << (n))-1)
@@ -38,15 +39,15 @@ static u32 modeled_read_once(u32 *p);
 #define cpu_to_le32(x) (x)
 #define le32_to_cpu(x) (x)
 struct device {int unused;};
-struct n1x_boot_endpoint {struct device *dev;};
+
 static struct device device;
-static struct n1x_boot_endpoint endpoint={&device};
-static struct n1x_boot_endpoint *boot_sroot,*boot_dla;
-static struct {bool verified;} boot_ping;
-static struct {bool registered;} boot_region5;
-static struct {bool accepted;} boot_config_apply,boot_lpwr;
-static struct n1x_dla_job boot_task;
-static struct n1x_dla_job_queue boot_queue;
+static struct n1x_boot_endpoint endpoint={.dev=&device};
+
+
+
+
+
+
 static bool allocation_fail,sent;
 static unsigned char allocation[4096] __attribute__((aligned(256)));
 static dma_addr_t allocation_address;
@@ -118,7 +119,7 @@ static void dma_rmb(void) {}
     harness += function
     harness += r'''
 static void reset(void)
-{boot_sroot=boot_dla=&endpoint;boot_ping.verified=boot_region5.registered=true;
+{test_context_reset();boot_sroot=boot_dla=&endpoint;boot_ping.verified=boot_region5.registered=true;
  boot_config_apply.accepted=boot_lpwr.accepted=true;
  allocation_fail=sent=false;allocation_address=0x100002000ULL;
  idle_before=idle_during=idle_after=idle_acks=0;idle_flood=false;
@@ -126,12 +127,12 @@ static void reset(void)
  response_word=0x702;response_data=allocation_address>>8;method_data=preexisting=0;behavior=NORMAL;
  memset(&boot_task,0,sizeof(boot_task));memset(&boot_queue,0,sizeof(boot_queue));}
 static void check(int expected,int allocs,int free_count,bool attempted,bool verified)
-{int result=n1x_boot_bypass_task_once();if(result!=expected)fprintf(stderr,"case %d result %d expected %d\n",cases,result,expected);assert(result==expected);assert(allocations==allocs && frees==free_count);
+{int result=n1x_boot_bypass_task_once(boot);if(result!=expected)fprintf(stderr,"case %d result %d expected %d\n",cases,result,expected);assert(result==expected);assert(allocations==allocs && frees==free_count);
  assert(boot_task.attempted==attempted && boot_task.verified==verified);
  if(attempted&&expected)assert(boot_queue.poisoned&&!boot_queue.active);
  if(verified)assert(!boot_queue.poisoned&&!boot_queue.active&&boot_queue.last_fence==boot_task.fence_value);
  assert(!!boot_task.buffer==attempted);
- if(attempted){assert(n1x_boot_bypass_task_once()==-EALREADY);assert(allocations==1);}cases++;}
+ if(attempted){assert(n1x_boot_bypass_task_once(boot)==-EALREADY);assert(allocations==1);}cases++;}
 /* Exercise the shared executor's callback boundary, independently of sysfs. */
 static int publish_error,fence_error_at,fence_reads,fence_error_code;
 static bool presignal;
@@ -185,7 +186,7 @@ int main(void)
  assert(boot_task.response.word==0x702);
  reset();idle_before=idle_during=idle_after=1;check(0,1,0,true,true);assert(idle_acks==3);
  reset();idle_before=100;check(-ELOOP,0,0,false,false);assert(idle_acks==16&&boot_task.idle_blocked);
- int saved=io_calls;assert(n1x_boot_bypass_task_once()==-ENOTRECOVERABLE&&io_calls==saved);
+ int saved=io_calls;assert(n1x_boot_bypass_task_once(boot)==-ENOTRECOVERABLE&&io_calls==saved);
  reset();idle_flood=true;check(-ETIMEDOUT,1,0,true,false);
  assert(!boot_task.accepted&&boot_task.idle_notifications==5001);
  reset();idle_after=1;behavior=EXEC_ERROR;check(-EREMOTEIO,1,0,true,false);
@@ -193,7 +194,7 @@ int main(void)
  for(int at=0;at<10;at++){reset();idle_before=1;fail_at=at;
  check(-EIO,0,0,false,false);assert(io_calls==at+1);
  if(at>=3&&at<=8){assert(boot_task.idle_blocked);saved=io_calls;
- assert(n1x_boot_bypass_task_once()==-ENOTRECOVERABLE&&io_calls==saved);}}
+ assert(n1x_boot_bypass_task_once(boot)==-ENOTRECOVERABLE&&io_calls==saved);}}
  for(int kind=0;kind<4;kind++){reset();preexisting=0x80;response_word=12;response_data=0;
  if(kind<3)response_word|=1U<<(8+8*kind);else response_data=1;
  check(-EBUSY,0,0,false,false);assert(!idle_acks&&!stage&&!boot_task.idle_blocked);}

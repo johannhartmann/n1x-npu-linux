@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compile actual shutdown/lifetime handlers against fault-injected OS edges."""
 from pathlib import Path
+from boot_test_context import context_harness
 import re
 import subprocess
 import tempfile
@@ -10,16 +11,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def shutdown_harness():
     text = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
-    state = text[text.index('struct n1x_boot_endpoint {'):text.index('static int n1x_boot_group_member(')]
-    dsp_state = text[text.index('static struct n1x_sroot_client_buffer {'):
-                     text.index('static int n1x_sroot_upload_dsp(')]
+    state = ""
+    dsp_state = ""
     code = text[text.index('static bool n1x_boot_stop_ready('):text.index('static DEVICE_ATTR_WO(shutdown);')]
+    code += text[text.index('static int n1x_boot_prepare('):text.index('static void n1x_boot_complete(')]
     start_fn = text[text.index('static int n1x_boot_start_once('):text.index('static struct attribute *boot_attrs[]')]
-    names = set(re.findall(r'\b(n1x_boot_\w+)\(\)', start_fn))-{'n1x_boot_start_once'}
+    names = set(re.findall(r'\b(n1x_boot_\w+)\(boot\)', start_fn))-{'n1x_boot_start_once'}
     writer_harness = (
         'static int start_step,start_fail_step;\n'
         + ''.join(
-            'static int '+name+'(void) {assert(start_fail_step>=0);return ++start_step==start_fail_step?-EREMOTEIO:0;}\n'
+            'static int '+name+'(struct n1x_boot_context *boot) {assert(boot==&test_boot && start_fail_step>=0);return ++start_step==start_fail_step?-EREMOTEIO:0;}\n'
             for name in sorted(names))
     )
     writer_harness += start_fn + r'''
@@ -32,14 +33,14 @@ static void check_single_start(void) {
   boot_hfrp.error=boot_error=boot_ping.error=boot_region5.error=0;
   boot_config.error=boot_config_apply.error=boot_lpwr.error=boot_task.error=0;
   start_step=0;start_fail_step=fail;
-  int ret=n1x_boot_start_once();
+  int ret=n1x_boot_start_once(boot);
   assert(ret==(fail?-EREMOTEIO:0) && start_step==(fail?fail:8));
  }
  boot_ping.attempted=true;start_step=0;start_fail_step=0;
- assert(n1x_boot_start_once()==-EALREADY && !start_step);
+ assert(n1x_boot_start_once(boot)==-EALREADY && !start_step);
 }
 '''
-    harness = r'''
+    harness = context_harness() + r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -51,7 +52,7 @@ static void check_single_start(void) {
 #include "n1x_dla_boot.h"
 #include "n1x_dla_control.h"
 #include "n1x_dla_accel.h"
-typedef uint8_t u8;typedef uint32_t u32;typedef uint64_t dma_addr_t;
+typedef uint8_t u8;typedef uint32_t u32;
 typedef size_t resource_size_t;
 #define __iomem
 #define WRITE_ONCE(x, val) ((x) = (val))
@@ -74,14 +75,14 @@ static int dma_frees,module_refs,pm_puts,mask,gates,accesses,drains,stops;
 static int gate_fail,io_fail,drain_error,stop_error;
 static bool mask_stuck,confirm=true;
 static u32 route=0xff;
-static void mutex_lock(int *p) {assert(!*p);*p=1;}
-static void mutex_unlock(int *p) {assert(*p);*p=0;}
+static void mutex_lock(void *test_mutex) {int *p=test_mutex;assert(!*p);*p=1;}
+static void mutex_unlock(void *test_mutex) {int *p=test_mutex;assert(*p);*p=0;}
 static bool capable(int cap) {assert(cap==17);return privileged;}
 static bool sysfs_streq(const char *a,const char *b) {return !strcmp(a,b)||!strcmp(a,"stop\n");}
 static void *dev_get_drvdata(struct device *d) {return d->data;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *e)
 {assert(boot_lock && (e==&dla_ep||e==&sroot_ep));return ++gates==gate_fail?-EIO:0;}
-static int n1x_boot_drain_task_idle(struct n1x_dla_job *j)
+static int n1x_boot_drain_task_idle(struct n1x_boot_context *boot, struct n1x_dla_job *j)
 {assert(boot_lock && j==&boot_task);drains++;return drain_error;}
 static int n1x_boot_read(void *ctx,u32 off,u32 *out)
 {assert(boot_lock && ctx==&dla_ep && !boot_shutdown.hardware_off);accesses++;
@@ -113,7 +114,7 @@ int n1x_dla_accel_stop(struct n1x_dla_accel *a,int (*stop)(struct device *))
  int err=stop(&device);if(!err)a->bytes=0;a->locked=false;return err;}
 ''' + code + writer_harness + r'''
 static void reset(void)
-{
+{test_context_reset();
  assert(!boot_lock && !accel.locked);
  memset(&boot_shutdown,0,sizeof(boot_shutdown));memset(&boot_hfrp,0,sizeof(boot_hfrp));
  memset(&boot_result,0,sizeof(boot_result));memset(&boot_queue,0,sizeof(boot_queue));
@@ -160,6 +161,10 @@ int main(void)
  reset();assert(shutdown_store(&device,NULL,"no",2)==-EPERM && !gates);
  reset();assert(n1x_boot_stop_device(&foreign,false)==-ENODEV);
  assert(n1x_boot_stop_device(&sroot_device,false)==-ENODEV && !gates);
+ reset();boot->client_leases=1;
+ assert(n1x_boot_stop_device(&device,false)==-EBUSY);
+ assert(!boot_stopping && !boot_shutdown.attempted && !gates && !accesses);
+ assert(n1x_boot_prepare(&device)==-EBUSY && !boot_sleep_prepared);
  for(unsigned i=0;i<ARRAY_SIZE(sroot_dsp_buffers);i++) {
   reset();sroot_dsp_buffers[i].published=true;
   sroot_dsp_buffers[i].staging_released=true;assert(!sroot_dsp_buffers[i].cpu && !sroot_dsp_buffers[i].dma);

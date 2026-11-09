@@ -2,6 +2,7 @@
 """Unit tests for the sysfs HFRP power-query handlers with mocked OS/transport."""
 import os
 from pathlib import Path
+from boot_test_context import context_harness
 import shlex
 import subprocess
 import tempfile
@@ -11,13 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     source = (ROOT / 'driver/n1x_npu_boot_linux.c').read_text()
-    state = source[source.index('static struct n1x_boot_hfrp_state {'):
-                   source.index('} boot_hfrp;') + len('} boot_hfrp;')]
+    state = ""
     store = source[source.index('static ssize_t query_power_state_store('):
                    source.index('static DEVICE_ATTR_WO(query_power_state);')]
     show = source[source.index('static ssize_t hfrp_status_show('):
                   source.index('static ssize_t status_show(')]
-    harness = r'''
+    harness = context_harness() + r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -29,18 +29,18 @@ def main():
 typedef uint32_t u32;
 struct device {int id;};
 struct device_attribute {int unused;};
-struct n1x_boot_endpoint {struct device *dev;void *hfrp;};
+
 static struct device dla_dev,other_dev;
-static struct n1x_boot_endpoint ep={&dla_dev,&dla_dev},sroot;
-static struct n1x_boot_endpoint *boot_dla,*boot_sroot;
-static bool privileged,boot_stopping,boot_sleep_prepared;
-static int boot_lock,locks,queries,logs,emits,reply_error,cases;
+static struct n1x_boot_endpoint ep={.dev=&dla_dev,.hfrp=&dla_dev},sroot;
+
+static bool privileged;
+static int locks,queries,logs,emits,reply_error,cases;
 #define CAP_SYS_RAWIO 17
 static bool capable(int cap) {assert(cap==CAP_SYS_RAWIO);return privileged;}
 static bool sysfs_streq(const char *a,const char *b)
 {size_t n=strlen(b);return !strncmp(a,b,n) && (!a[n] || (a[n]=='\n' && !a[n+1]));}
-static void mutex_lock(int *lock) {assert(lock==&boot_lock && !*lock);*lock=1;locks++;}
-static void mutex_unlock(int *lock) {assert(lock==&boot_lock && *lock);*lock=0;}
+static void mutex_lock(void *test_mutex) {int *lock=test_mutex;assert(lock==&boot_lock && !*lock);*lock=1;locks++;}
+static void mutex_unlock(void *test_mutex) {int *lock=test_mutex;assert(lock==&boot_lock && *lock);*lock=0;}
 static int n1x_boot_hfrp_write(void *ctx,u32 off,u32 value)
 {(void)ctx;(void)off;(void)value;assert(0);return -EIO;}
 static int n1x_boot_hfrp_read(void *ctx,u32 off,u32 *value)
@@ -68,7 +68,7 @@ int n1x_hfrp_query_power_state(const struct n1x_dla_io *io,struct n1x_hfrp_chann
  return reply_error;}
 ''' + store + show + r'''
 static void reset(void)
-{boot_stopping=boot_sleep_prepared=false;memset(&boot_hfrp,0,sizeof(boot_hfrp));boot_dla=&ep;boot_sroot=&sroot;ep.hfrp=&dla_dev;
+{test_context_reset();boot_stopping=boot_sleep_prepared=false;memset(&boot_hfrp,0,sizeof(boot_hfrp));boot_dla=&ep;boot_sroot=&sroot;ep.hfrp=&dla_dev;
  privileged=true;locks=queries=logs=emits=reply_error=0;
  assert(!boot_lock);boot_hfrp.attempted=boot_hfrp.powered=true;boot_hfrp.phase=5;
  boot_hfrp.channel.state=N1X_HFRP_READY;boot_hfrp.exchange.reply.header=0x5678;

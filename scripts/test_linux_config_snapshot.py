@@ -2,6 +2,7 @@
 """Test exact Linux snapshot lifecycle with the real C control/response pipeline."""
 import os
 from pathlib import Path
+from boot_test_context import context_harness
 import shlex
 import subprocess
 import tempfile
@@ -13,7 +14,7 @@ def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     function = source[source.index('static int n1x_boot_read_config_once('):
                       source.index('static int n1x_boot_init_region5_once(')]
-    harness = r'''
+    harness = context_harness() + r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -23,18 +24,17 @@ def main():
 #include "n1x_dla_control.h"
 typedef uint8_t u8;
 typedef uint32_t u32;
-typedef uint64_t u64;
-typedef uint64_t dma_addr_t;
+
+
 #define DMA_BIT_MASK(n) ((1ULL << (n))-1)
 #define GFP_KERNEL 0
 struct device {int unused;};
-struct n1x_boot_endpoint {struct device *dev;};
+
 static struct device device;
-static struct n1x_boot_endpoint endpoint={&device};
-static struct n1x_boot_endpoint *boot_sroot,*boot_dla;
-static struct {bool verified;} boot_ping;
-static struct {void *buffer;dma_addr_t dma;struct n1x_dla_control_result transaction;
- u8 data[252];bool attempted,valid;int error;} boot_config;
+static struct n1x_boot_endpoint endpoint={.dev=&device};
+
+
+
 static bool allocation_fail,stale,sent;
 static u8 allocation[4096] __attribute__((aligned(256)));
 static dma_addr_t allocation_address;
@@ -75,17 +75,17 @@ static void dma_rmb(void) {read_barriers++;}
     harness += function
     harness += r'''
 static void reset(void)
-{boot_sroot=boot_dla=&endpoint;boot_ping.verified=true;
+{test_context_reset();boot_sroot=boot_dla=&endpoint;boot_ping.verified=true;
  allocation_fail=stale=sent=false;allocation_address=0x100001000ULL;
  gate_error=mask_error=allocations=frees=barriers=read_barriers=io_calls=0;fail_at=-1;
  response_word=0x1602;response_data=allocation_address>>8;method_data=0;
  memset(&boot_config,0,sizeof(boot_config));}
 static void check(int expected,int allocs,int free_count,bool attempted,bool valid)
-{assert(n1x_boot_read_config_once()==expected);assert(allocations==allocs && frees==free_count);
+{assert(n1x_boot_read_config_once(boot)==expected);assert(allocations==allocs && frees==free_count);
  assert(boot_config.attempted==attempted && boot_config.valid==valid);
  assert(!!boot_config.buffer==attempted && read_barriers==(int)valid);
  for(size_t i=0;i<sizeof(boot_config.data);i++)assert(boot_config.data[i]==(valid?((i*13+2)&255):0));
- if(attempted){assert(n1x_boot_read_config_once()==-EALREADY);assert(allocations==1);}cases++;}
+ if(attempted){assert(n1x_boot_read_config_once(boot)==-EALREADY);assert(allocations==1);}cases++;}
 int main(void)
 {reset();boot_sroot=NULL;check(-ENODEV,0,0,false,false);
  reset();boot_dla=NULL;check(-ENODEV,0,0,false,false);

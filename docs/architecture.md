@@ -11,17 +11,24 @@ The NVIDIA N1X (`t254`) NPU exposes two ACPI platform devices that are bound as 
 
 The driver discovers both `_CRS` MMIO apertures, IORT SMMUv3 mappings, and the live VBIOS policy carveout dynamically without hardcoded DMI board/BIOS checks.
 
-The Linux binding still has singleton boot state and supports one aggregate.
-Duplicate endpoints are rejected. Kconfig/Kbuild integration is provided by
-[`driver/Kconfig`](../driver/Kconfig) (`CONFIG_DRM_ACCEL_N1X`), but this is not
-an upstream-ready, independently instantiable supplier/consumer architecture.
-The bound aggregate owns a stateless device link from the DLA consumer to its
-SROOT supplier. It is created before firmware publication and removed after
-the aggregate's stop/unregister path. Component binding provides driver
-presence; the link orders system suspend, resume and shutdown. Existing
-explicit runtime-PM publication leases remain separate. A failed link creation
-aborts binding before firmware startup. The link is retained across startup
-or DRM-registration failure once the aggregate remains bound.
+Each `NVDA8600` supplier owns a reference-counted boot context containing
+its loader, DMA allocations, HFRP channel, queue, IRQ accounting and PM state.
+The DLA component joins that context through an exact ACPI match. Matching
+requires one SROOT sibling with `_HRV=1` under the same firmware parent;
+missing or ambiguous associations fail closed. No global boot-state instance
+or first-match supplier fallback remains. The global registry contains only
+referenced contexts. The platform-specific VBIOS locator is still fixed to
+this SoC; context isolation does not establish support for other hardware.
+
+A stateless DLA → SROOT device link orders system PM. Device-bound DSP clients
+add DSP → DLA ordering at probe and reserve the shared provider before DSP
+memory publication. Legacy upload ABIs v1/v2 require a unique registered
+context and reject ambiguity. Component unbind drains the DLA IRQ after
+clearing its borrowed context pointer. A context reference acquired before
+removal remains valid, but detached contexts cannot admit hardware work.
+Published DMA keeps its lifetime reference until verified shutdown. Failed
+shutdown remains terminal; a retained context cannot be rebound and retried.
+This is not a claim of general reset/recovery or upstream readiness.
 See [kernel driver architecture](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/blob/main/docs/kernel-driver-architecture.md)
 for subsystem boundaries and remaining upstream requirements.
 
@@ -90,3 +97,12 @@ Implemented in [`runtime/cudla_backend.cpp`](../runtime/cudla_backend.cpp) and [
 
 - Implements the backend driver interface expected by NVIDIA's unmodified Linux `libcudla.so.1` (`13.4.92`), staging registered CUDA device buffers into page-aligned `.nvda` task images and submitting them to `/dev/accel/accel0`.
 - Supports `CUDLA_TASK_STATISTICS` (`DRM_IOCTL_N1X_DLA_STATS`), `CUDLA_DEVICE_VERSION`, `cudlaSetTaskTimeoutInMs`, and compact `REEXEC_IO` staging on repeat submissions (allocating and staging only the dynamic input/output/statistics slices instead of the full `.nvda` weight image).
+
+### Device-specific diagnostics
+
+Each SROOT supplier has a diagnostic directory named after its platform device
+below `/sys/kernel/debug/n1x-npu-bootstrap/`, with `status`, `hfrp_status` and
+`shutdown_status`. Open files retain a device reference and resolve a live
+context for each read. Removed devices return `ENODEV`. The three original
+root-level files remain a compatibility view only when exactly one provider
+is registered; multiple providers return `ENOTUNIQ`.

@@ -2,6 +2,7 @@
 """Exercise the real delay callback without accessing unpowered DLA registers."""
 import os
 from pathlib import Path
+from boot_test_context import context_harness
 import shlex
 import subprocess
 import tempfile
@@ -13,16 +14,16 @@ def main():
     source = (ROOT / 'driver/n1x_npu_boot_linux.c').read_text()
     callback = source[source.index('static void n1x_boot_delay('):
                       source.index('static int n1x_boot_board_policy(')]
-    harness = r'''
+    harness = context_harness() + r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 typedef uint32_t u32;
-static int dla, sroot, boot_waitq, boot_irq_count;
-static void *boot_dla = &dla;
-static bool opt_enable_irq, boot_irq_registered, boot_stopping;
-static struct {bool powered;} boot_hfrp;
+static struct n1x_boot_endpoint dla, sroot;
+
+static bool opt_enable_irq;
+
 static int reads, writes, sleeps, waits, read_error;
 #define READ_ONCE(x) (x)
 #define max(a,b) ((a)>(b)?(a):(b))
@@ -39,7 +40,7 @@ static void usleep_range(u32 minimum,u32 maximum)
 {assert(maximum==minimum+100);sleeps++;}
 ''' + callback + r'''
 static void reset(void)
-{opt_enable_irq=boot_irq_registered=true;boot_hfrp.powered=true;boot_stopping=false;
+{test_context_reset();boot_dla=&dla;dla.boot=sroot.boot=boot;opt_enable_irq=boot_irq_registered=true;boot_hfrp.powered=true;boot_stopping=false;
  reads=writes=sleeps=waits=read_error=0;}
 static void fallback(void *ctx,u32 delay)
 {n1x_boot_delay(ctx,delay);assert(sleeps==1 && !reads && !writes && !waits);}
@@ -61,7 +62,7 @@ int main(void)
         code, binary = Path(temp) / 'test.c', Path(temp) / 'test'
         code.write_text(harness)
         subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
-                       ['-O2', '-Wall', '-Wextra', '-Werror', str(code), '-o', str(binary)], check=True)
+                       ['-I'+str(ROOT/'include'), '-O2', '-Wall', '-Wextra', '-Werror', str(code), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
 
 

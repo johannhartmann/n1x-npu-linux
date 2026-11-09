@@ -34,4 +34,31 @@ struct n1x_sroot_client_result_v2 {
  */
 int n1x_sroot_upload_dsp_v2(__u32 image_id, const __u8 *image, size_t bytes,
 			  struct n1x_sroot_client_result_v2 *result);
+
+struct device;
+struct n1x_sroot_client;
+
+/* ABI v3: acquire at consumer probe, using a unique firmware-parent match.
+ * Keep a symbol_get(n1x_sroot_client_ops_v3) reference until after put().
+ * get() returns ERR_PTR on failure and creates a DSP -> DLA -> SROOT PM link.
+ * Serialize all operations on a handle, including put(), in the client.
+ * prepare() reserves the provider BEFORE allocating/publishing DSP memory.
+ * publish() makes that reservation irrevocable BEFORE the first DSP DMA
+ * address write. cancel() unwinds only an unpublished reservation. put()
+ * cancels and frees an unpublished handle; a published handle returns -EBUSY
+ * and retains its context/device/module/link references until reboot.
+ * upload() has v2 staging semantics and requires publish() first.
+ */
+struct n1x_sroot_client_ops {
+	struct n1x_sroot_client *(*get)(struct device *consumer);
+	int (*put)(struct n1x_sroot_client *client);
+	int (*prepare)(struct n1x_sroot_client *client);
+	int (*publish)(struct n1x_sroot_client *client);
+	int (*cancel)(struct n1x_sroot_client *client);
+	int (*upload)(struct n1x_sroot_client *client, __u32 image_id,
+		      const __u8 *image, size_t bytes,
+		      struct n1x_sroot_client_result_v2 *result);
+};
+
+const struct n1x_sroot_client_ops *n1x_sroot_client_ops_v3(void);
 #endif

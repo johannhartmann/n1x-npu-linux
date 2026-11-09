@@ -2,6 +2,7 @@
 """Compile the exact kernel ping phase with real C method sender and fake OS/MMIO."""
 import os
 from pathlib import Path
+from boot_test_context import context_harness
 import shlex
 import subprocess
 import tempfile
@@ -13,7 +14,7 @@ def main():
     source = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     function = source[source.index('static int n1x_boot_ping_once('):
                       source.index('static int n1x_boot_read_config_once(')]
-    harness = r'''
+    harness = context_harness() + r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -23,22 +24,21 @@ def main():
 #include "n1x_dla_boot.h"
 #include "n1x_dla_command.h"
 typedef uint32_t u32;
-typedef uint64_t u64;
-typedef uint64_t dma_addr_t;
+
+
 #define DMA_BIT_MASK(n) ((1ULL << (n))-1)
 #define GFP_KERNEL 0
 #define cpu_to_le32(x) (x)
 #define le32_to_cpu(x) (x)
 #define WRITE_ONCE(x,v) ((x)=(v))
 struct device {int unused;};
-struct n1x_boot_endpoint {struct device *dev;};
+
 static struct device device;
-static struct n1x_boot_endpoint endpoint={&device};
-static struct n1x_boot_endpoint *boot_dla,*boot_sroot;
-static struct n1x_dla_sroot_load_result boot_result;
-static bool boot_attempted;
-static struct {void *buffer;dma_addr_t dma;u32 owned,mask_before,masked,word;
- bool attempted,verified;int error;} boot_ping;
+static struct n1x_boot_endpoint endpoint={.dev=&device};
+
+
+
+
 static unsigned char allocation[4096];
 static dma_addr_t allocation_address;
 static int allocations,frees,io_calls,fail_at,delays,word_reads,cases;
@@ -84,14 +84,14 @@ static void dma_rmb(void) {read_barriers++;}
     harness += function
     harness += r'''
 static void reset(void)
-{boot_attempted=true;boot_dla=boot_sroot=&endpoint;
+{test_context_reset();boot_attempted=true;boot_dla=boot_sroot=&endpoint;
  memset(&boot_result,0,sizeof(boot_result));boot_result.reply_valid=boot_result.idle_observed=1;
  memset(&boot_ping,0,sizeof(boot_ping));allocation_address=0x100000000ULL;
  allocations=frees=io_calls=delays=word_reads=gate_error=mask_error=0;
  barriers=read_barriers=method_busy=send_count=0;fail_at=-1;complete_after=0;
  allocation_fail=method_sent=false;current_mask=0x1f85;owned_mask=0x1d0;}
 static void check(int expected,int allocs,int free_count,bool attempted,bool verified)
-{assert(n1x_boot_ping_once()==expected);assert(allocations==allocs && frees==free_count);
+{assert(n1x_boot_ping_once(boot)==expected);assert(allocations==allocs && frees==free_count);
  assert(boot_ping.attempted==attempted && boot_ping.verified==verified);
  assert(!!boot_ping.buffer==attempted);assert(read_barriers==(int)verified);cases++;}
 int main(void)
@@ -109,11 +109,11 @@ int main(void)
  allocation_address=kind==0?0:kind==1?0x100000001ULL:kind==2?DMA_BIT_MASK(36)+1:DMA_BIT_MASK(36)-255;
  check(-ERANGE,1,1,false,false);}
  for(int at=0;at<6;at++){reset();fail_at=at;check(-EIO,1,at<2,at>=2,false);
- assert(io_calls==at+1);if(at>=2){assert(n1x_boot_ping_once()==-EALREADY);assert(allocations==1);}}
+ assert(io_calls==at+1);if(at>=2){assert(n1x_boot_ping_once(boot)==-EALREADY);assert(allocations==1);}}
  for(int delay=0;delay<4;delay++){reset();complete_after=delay==0?0:delay==1?1:delay==2?4999:5000;
  check(0,1,0,true,true);assert(delays==complete_after && word_reads==complete_after+1);
  assert(send_count==1 && boot_ping.masked==0x180 && boot_ping.word==0x44444444);
- assert(n1x_boot_ping_once()==-EALREADY && allocations==1);}
+ assert(n1x_boot_ping_once(boot)==-EALREADY && allocations==1);}
  reset();complete_after=5001;check(-ETIMEDOUT,1,0,true,false);
  assert(delays==5000 && word_reads==5001 && boot_ping.word==0x11111111);
  reset();method_busy=5001;check(-ETIMEDOUT,1,0,true,false);assert(!method_sent && !word_reads);

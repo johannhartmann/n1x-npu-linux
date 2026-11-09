@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the actual DSP SROOT broker with fault-injected kernel edges."""
 from pathlib import Path
+from boot_test_context import context_harness
 import subprocess
 import tempfile
 
@@ -9,9 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     source = (ROOT / 'driver/n1x_npu_boot_linux.c').read_text()
-    broker = source[source.index('static bool sroot_client_poisoned;'):
+    broker = source[source.index('static int n1x_sroot_upload_dsp('):
                     source.index('EXPORT_SYMBOL_GPL(n1x_sroot_upload_dsp_v2);')]
-    harness = r'''
+    harness = context_harness() + r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -25,7 +26,7 @@ def main():
 #include "n1x_sroot_firmware.h"
 typedef uint8_t u8;
 typedef uint32_t u32;
-typedef uint64_t dma_addr_t;
+
 #define SHA256_DIGEST_SIZE 32
 #define THIS_MODULE ((void *)1)
 #define DMA_BIT_MASK(n) ((1ULL<<(n))-1)
@@ -33,19 +34,19 @@ typedef uint64_t dma_addr_t;
 #define dev_info(...) ((void)0)
 #define EXPORT_SYMBOL_GPL(name)
 struct device { int unused; } dev;
-struct n1x_boot_endpoint { struct device *dev; } endpoint = {&dev};
-static struct n1x_boot_endpoint *boot_sroot = &endpoint, *boot_dla = &endpoint;
-static bool boot_attempted = true, boot_stopping, boot_sleep_prepared;
-static int boot_error, boot_lock;
-static struct { bool reply_valid; struct n1x_sroot_reply reply; } boot_result;
+struct n1x_boot_endpoint endpoint = {.dev=&dev};
+
+
+
+
 static int fault, exchanges, frees, pm_refs, module_refs, stage_calls, hash_index;
 static pthread_mutex_t boot_mutex=PTHREAD_MUTEX_INITIALIZER;
 static _Thread_local unsigned lock_depth;
 static bool allocation_published;
 static unsigned leases(void);
 static void *allocation;
-static void mutex_lock(int *lock) {assert(lock==&boot_lock && !lock_depth);assert(!pthread_mutex_lock(&boot_mutex));assert(!*lock);*lock=1;lock_depth=1;}
-static void mutex_unlock(int *lock) {assert(lock==&boot_lock && *lock && lock_depth);*lock=0;lock_depth=0;assert(!pthread_mutex_unlock(&boot_mutex));}
+static void mutex_lock(void *test_mutex) {int *lock=test_mutex;assert(lock==&boot_lock && !lock_depth);assert(!pthread_mutex_lock(&boot_mutex));assert(!*lock);*lock=1;lock_depth=1;}
+static void mutex_unlock(void *test_mutex) {int *lock=test_mutex;assert(lock==&boot_lock && *lock && lock_depth);*lock=0;lock_depth=0;assert(!pthread_mutex_unlock(&boot_mutex));}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *e) {
  assert(boot_lock && e==boot_sroot);return fault==1?-EIO:0;
 }
@@ -107,7 +108,7 @@ static void make_image(u8 *p,size_t bytes,u32 id)
  image_put32(n+44,0xefbeadde);image_put32(n+48,id);image_put32(n+56,80);
  image_put32(n+64,bytes-83);image_put32(n+76,0xefbeadde);
 }
-static void reset(void) {
+static void reset(void) {test_context_reset();
  free(allocation);allocation=NULL;memset(sroot_dsp_buffers,0,sizeof(sroot_dsp_buffers));
  sroot_client_poisoned=false;allocation_published=false;fault=exchanges=frees=pm_refs=module_refs=stage_calls=0;
  hash_index=1;make_image(image,sizeof(image),0xc0304);boot_sroot=boot_dla=&endpoint;boot_attempted=true;boot_error=0;boot_stopping=boot_sleep_prepared=false;
@@ -204,7 +205,7 @@ int main(void) {
         source = Path(temporary) / 'broker-test.c'
         binary = Path(temporary) / 'broker-test'
         source.write_text(harness)
-        subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
+        subprocess.run(['cc', '-I'+str(ROOT/'include'), '-std=gnu11', '-Wall', '-Wextra', '-Werror',
                         '-Wno-misleading-indentation', '-fsanitize=address,undefined',
                         '-pthread', '-g', '-I' + str(ROOT / 'include'), str(source), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
