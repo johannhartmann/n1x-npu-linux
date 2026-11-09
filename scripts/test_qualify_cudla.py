@@ -16,7 +16,7 @@ import qualify_cudla as q
 
 def main():
     read_text = Path.read_text
-    for mode in ('single', 'reuse', 'no-capability', 'growth', 'mismatch', 'process-error'):
+    for mode in ('single', 'reuse', 'no-capability', 'growth', 'mismatch', 'process-error', 'module-mismatch', 'kernel-mismatch'):
         with tempfile.TemporaryDirectory(prefix='n1x-qualifier-') as tmp:
             out = Path(tmp)/'out'
             calls = []
@@ -57,11 +57,21 @@ def main():
                     Path(argv[i+2]).write_bytes(b'bad' if mode == 'mismatch' else Path(argv[i+1]).read_bytes())
                 return SimpleNamespace(returncode=int(mode == 'process-error'), stdout=b'modeled', stderr=b'')
 
-            argv = ['qualify_cudla.py', '--output-dir', str(out)]
+            module = Path(tmp)/'candidate.ko'
+            module.write_bytes(b'modeled module')
+
+            def module_info(argv, **kwargs):
+                assert argv[:2] == ['modinfo', '-F'] and argv[-1] == str(module)
+                if argv[2] == 'srcversion':
+                    return 'different' if mode == 'module-mismatch' else 'reviewed'
+                assert argv[2] == 'vermagic'
+                return 'different' if mode == 'kernel-mismatch' else q.os.uname().release+' SMP'
+
+            argv = ['qualify_cudla.py', '--output-dir', str(out), '--module', str(module)]
             if mode != 'single':
                 argv.append('--reuse')
             with patch.object(q.sys, 'argv', argv), patch.object(q.os, 'geteuid', return_value=0), \
-                 patch.object(q.subprocess, 'check_output', return_value='reviewed'), \
+                 patch.object(q.subprocess, 'check_output', side_effect=module_info), \
                  patch.object(q.subprocess, 'run', side_effect=run), \
                  patch.object(Path, 'read_text', cached), patch.object(q, 'Device', Device), \
                  contextlib.redirect_stdout(io.StringIO()):
@@ -78,9 +88,9 @@ def main():
                 assert len(calls) == (3 if mode == 'reuse' else 8)
                 assert json.loads((out/'preflight.json').read_text())['platform_profile'] == 'quiet'
             else:
-                assert len(calls) == (0 if mode == 'no-capability' else 1)
+                assert len(calls) == (0 if mode in ('no-capability', 'module-mismatch', 'kernel-mismatch') else 1)
                 assert not (out/'complete.json').exists()
-    print('6 cuDLA qualifier sequence/capability/allocation/error cases passed; no CUDA or NPU access')
+    print('8 cuDLA qualifier sequence/capability/allocation/error cases passed; no CUDA or NPU access')
 
 
 if __name__ == '__main__':
