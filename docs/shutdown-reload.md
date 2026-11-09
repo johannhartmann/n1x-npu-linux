@@ -47,6 +47,14 @@ number. Active client file descriptors can still prevent module removal.
 
 ## System Sleep
 
+The aggregate's DLA-to-SROOT device link makes DLA suspend before SROOT and
+SROOT resume before DLA restarts firmware. Component matching alone provides
+no such PM ordering; see the kernel's [component helper documentation](https://docs.kernel.org/driver-api/component.html)
+and [device links](https://docs.kernel.org/driver-api/device_link.html).
+The stateless link is explicitly owned by the aggregate, not by devres, and
+is deleted when its bound components are released. It does not replace the
+published firmware's runtime-PM references or the DSP lease guard.
+
 PM `prepare` checks known unsafe stop conditions and published DSP leases
 before any device is suspended. It serializes with submissions and secure DSP
 uploads. New hardware operations return `EBUSY` until `complete`, including
