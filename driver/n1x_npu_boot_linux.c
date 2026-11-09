@@ -751,11 +751,11 @@ unlock:
 int n1x_sroot_upload_dsp_v1(u32 image_id, const u8 *image, size_t bytes,
 			  struct n1x_sroot_client_result *result)
 {
-	struct n1x_boot_context *boot __free(n1x_boot_put) =
-		n1x_boot_get_unique();
+	struct n1x_boot_context *boot __free(n1x_boot_put) = NULL;
 
 	if (!result)
 		return -EINVAL;
+	boot = n1x_boot_get_unique();
 	if (IS_ERR(boot)) {
 		memset(result, 0, sizeof(*result));
 		return PTR_ERR(boot);
@@ -768,20 +768,17 @@ EXPORT_SYMBOL_GPL(n1x_sroot_upload_dsp_v1);
 int n1x_sroot_upload_dsp_v2(u32 image_id, const u8 *image, size_t bytes,
 			  struct n1x_sroot_client_result_v2 *result)
 {
-	struct n1x_boot_context *boot __free(n1x_boot_put) =
-		n1x_boot_get_unique();
+	struct n1x_boot_context *boot __free(n1x_boot_put) = NULL;
 	struct n1x_sroot_client_result upload;
 	bool released = false;
 	int err;
 
-	if (IS_ERR(boot)) {
-		if (result)
-			memset(result, 0, sizeof(*result));
-		return PTR_ERR(boot);
-	}
 	if (!result)
 		return -EINVAL;
 	memset(result, 0, sizeof(*result));
+	boot = n1x_boot_get_unique();
+	if (IS_ERR(boot))
+		return PTR_ERR(boot);
 	err = n1x_sroot_upload_dsp(boot, image_id, image, bytes, &upload, true,
 				   &released);
 	result->reply_header = upload.reply_header;
@@ -900,6 +897,8 @@ static int n1x_sroot_client_prepare(struct n1x_sroot_client *client)
 
 	mutex_lock(&boot->lock);
 	err = n1x_sroot_client_ready(boot);
+	if (!err && boot->dla->dev != client->supplier)
+		err = -ENODEV;
 	if (!err && client->reserved)
 		err = -EALREADY;
 	if (!err) {
@@ -917,6 +916,8 @@ static int n1x_sroot_client_publish(struct n1x_sroot_client *client)
 
 	mutex_lock(&boot->lock);
 	err = n1x_sroot_client_ready(boot);
+	if (!err && boot->dla->dev != client->supplier)
+		err = -ENODEV;
 	if (!err && !client->reserved)
 		err = -EINVAL;
 	if (!err && client->published)
@@ -2231,7 +2232,7 @@ out:
 
 static struct acpi_device *n1x_find_sroot(struct acpi_device *consumer)
 {
-	struct acpi_device *candidate, *found = NULL;
+	struct acpi_device *candidate = NULL, *found = NULL;
 	struct acpi_device *parent = acpi_dev_parent(consumer);
 
 	if (!parent)

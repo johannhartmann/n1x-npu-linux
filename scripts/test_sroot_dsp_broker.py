@@ -120,6 +120,16 @@ static void *upload_thread(void *ptr) {struct thread_result *r=ptr;r->error=n1x_
 int main(void) {
  struct n1x_sroot_client_result result;
  struct n1x_sroot_client_result_v2 result2;
+ reset();test_boot_lookup_error=-ENOTUNIQ;
+ assert(n1x_sroot_upload_dsp_v1(0xc0304,image,sizeof(image),NULL)==-EINVAL);
+ assert(n1x_sroot_upload_dsp_v2(0xc0304,image,sizeof(image),NULL)==-EINVAL);
+ assert(!test_boot_lookups && boot->refs.value==1 && !exchanges);
+ memset(&result,0xa5,sizeof(result));memset(&result2,0xa5,sizeof(result2));
+ assert(n1x_sroot_upload_dsp_v1(0xc0304,image,sizeof(image),&result)==-ENOTUNIQ);
+ assert(n1x_sroot_upload_dsp_v2(0xc0304,image,sizeof(image),&result2)==-ENOTUNIQ);
+ assert(test_boot_lookups==2 && boot->refs.value==1 && !exchanges);
+ assert(!memcmp(&result,&(struct n1x_sroot_client_result){0},sizeof(result)));
+ assert(!memcmp(&result2,&(struct n1x_sroot_client_result_v2){0},sizeof(result2)));
  reset();boot_sleep_prepared=true;
  assert(n1x_sroot_upload_dsp_v2(0xc0304,image,sizeof(image),&result2)==-EBUSY);
  assert(!result2.published && !pm_refs && !module_refs && !allocation && !exchanges);

@@ -163,9 +163,11 @@ int main(void)
  c=ops->get(&cdev);c2=ops->get(&cdev2);assert(!IS_ERR(c) && !IS_ERR(c2));
  assert(c->boot==b && c2->boot==b2 && c->supplier==&ddev && c2->supplier==&ddev2);
  assert(ops->publish(c)==-EINVAL && !b->client_leases);
+ d.dev=&ddev2;assert(ops->prepare(c)==-ENODEV && !b->client_leases);d.dev=&ddev;
  assert(ops->upload(c,0xc0304,image,4,&result)==-EPERM && !uploads);
  assert(!ops->prepare(c) && b->client_leases==1 && !b2->client_leases);
  assert(ops->prepare(c)==-EALREADY && b->client_leases==1);
+ d.dev=&ddev2;assert(ops->publish(c)==-ENODEV && b->client_leases==1);d.dev=&ddev;
  assert(!ops->prepare(c2) && b2->client_leases==1);
  b->sleep_prepared=true;assert(ops->publish(c)==-EBUSY);b->sleep_prepared=false;
  assert(!ops->cancel(c) && !b->client_leases);assert(!ops->cancel(c));

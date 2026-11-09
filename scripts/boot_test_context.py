@@ -55,6 +55,8 @@ def context_harness():
     aliases = ''.join(f'#define {name} (boot->{field})\n' for name, field in FIELDS.items())
     return context_layout() + r'''
 static struct mutex n1x_contexts_lock __attribute__((unused));
+static int test_boot_lookup_error;
+static _Atomic unsigned test_boot_lookups;
 static struct n1x_boot_context test_boot;
 static struct n1x_boot_context *boot = &test_boot;
 #define IS_ERR(p) ((uintptr_t)(p)>=(uintptr_t)-4095)
@@ -67,13 +69,14 @@ static inline void test_boot_cleanup(struct n1x_boot_context **value)
 static inline struct n1x_boot_context *n1x_boot_get(struct device *dev)
 {(void)dev;boot->refs.value++;return boot;}
 static inline struct n1x_boot_context *n1x_boot_get_unique(void)
-{boot->refs.value++;return boot;}
+{test_boot_lookups++;if(test_boot_lookup_error)return (void *)(intptr_t)test_boot_lookup_error;
+ boot->refs.value++;return boot;}
 static inline void n1x_boot_hold_publication(struct n1x_boot_context *value)
 {if(!value->lifetime_held){value->refs.value++;value->lifetime_held=true;}}
 static inline void n1x_boot_drop_publication(struct n1x_boot_context *value)
 {if(value->lifetime_held){value->lifetime_held=false;n1x_boot_put_ref(value);}}
 static inline void test_context_reset(void)
-{assert(!boot->lock.value);
+{test_boot_lookup_error=0;test_boot_lookups=0;assert(!boot->lock.value);
  assert(!boot->refs.value || boot->refs.value==1+(unsigned)boot->lifetime_held);
  memset(boot,0,sizeof(*boot));boot->refs.value=1;}
 ''' + aliases
