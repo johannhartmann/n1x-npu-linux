@@ -11,7 +11,7 @@ PACKAGING = ROOT / 'packaging/arch'
 OUTPUT = ROOT / 'results/arch-module-package'
 SOURCES = ('driver', 'include', 'runtime', 'README.md',
            'packaging/udev/99-n1x-npu.rules',
-           'packaging/systemd/n1x-npu.service')
+           'packaging/systemd')
 
 
 def run(*args, **kwargs):
@@ -19,8 +19,12 @@ def run(*args, **kwargs):
 
 
 def main():
-    for tree in ('driver', 'include', 'runtime'):
-        run('git', 'diff', '--quiet', 'HEAD', '--', tree)
+    run('git', 'diff', '--quiet', 'HEAD', '--', *SOURCES, 'packaging/arch')
+    untracked = subprocess.check_output(
+        ['git', 'ls-files', '--others', '--exclude-standard', '--', *SOURCES],
+        cwd=ROOT, text=True)
+    if untracked.strip():
+        raise SystemExit('Commit all package inputs before building:\n' + untracked)
     revision = subprocess.check_output(
         ['git', 'rev-parse', '--short=8', 'HEAD'], cwd=ROOT, text=True).strip()
     if OUTPUT.exists():

@@ -33,4 +33,23 @@ pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_npu_reload.py" \
   --cycles 2 --output-dir "$PWD/results/NEW-reload"
 ```
 
-`sudo modprobe -r n1x_npu_bootstrap` (or `sudo systemctl stop n1x-npu.service`) executes `n1x_boot_stop_device()` automatically during module unload.
+Published firmware retains module/runtime-PM leases after successful startup
+and resume. Request checked shutdown **before** unloading; `remove()` cannot
+cancel a module unload after a failed hardware stop. Manual sysfs bind/unbind
+attributes are suppressed for the same reason. A failed stop retains its
+leases and must not be followed by forced module removal.
+
+The packaged `n1x-npu.service` uses
+[`n1x-npu-stop`](../packaging/systemd/n1x-npu-stop), which locates the bound DLA
+shutdown attribute, writes `stop`, and attempts `modprobe -r` only after that
+write succeeds. It requires neither debugfs nor a particular ACPI instance
+number. Active client file descriptors can still prevent module removal.
+
+## System Sleep
+
+PM `prepare` checks known unsafe stop conditions and published DSP leases
+before any device is suspended. It serializes with submissions and secure DSP
+uploads. New hardware operations return `EBUSY` until `complete`, including
+after an aborted sleep transition. The existing checked stop/start path runs
+during suspend/resume. This admission gate does not make a failed firmware
+shutdown recoverable or establish physical suspend/resume qualification.

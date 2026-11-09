@@ -89,7 +89,9 @@ static void *boot_buffer;
 static dma_addr_t boot_dma;
 static int boot_error;
 static bool boot_attempted;
-static bool boot_stopping, boot_hfrp_held, boot_upload_held, boot_unpinned;
+static bool boot_stopping, boot_hfrp_held, boot_upload_held;
+/* boot_lock serializes all public hardware requests with system sleep. */
+static bool boot_sleep_prepared;
 static struct n1x_boot_shutdown_state {
 	struct n1x_hfrp_stop_result transport;
 	const char *stage;
@@ -495,6 +497,10 @@ static int n1x_sroot_upload_dsp(u32 image_id, const u8 *image, size_t bytes,
 	buffer = &sroot_dsp_buffers[index];
 	if (!boot_sroot || !boot_dla) {
 		err = -ENODEV;
+		goto unlock;
+	}
+	if (boot_sleep_prepared) {
+		err = -EBUSY;
 		goto unlock;
 	}
 	if (boot_stopping) {
@@ -1124,7 +1130,9 @@ static ssize_t query_power_state_store(struct device *dev, struct device_attribu
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "query"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
-	if (boot_stopping)
+	if (boot_sleep_prepared)
+		err = -EBUSY;
+	else if (boot_stopping)
 		err = -ESHUTDOWN;
 	else if (!boot_dla || boot_dla->dev != dev || !boot_dla->hfrp || !boot_sroot)
 		err = -ENODEV;
@@ -1215,6 +1223,25 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	return size;
 }
 
+/* Called with boot_lock held. This permits an attempt, not DMA reclamation. */
+static bool n1x_boot_stop_ready(void)
+{
+	return boot_hfrp.powered && !boot_hfrp.error &&
+	       boot_hfrp.channel.state == N1X_HFRP_READY &&
+	       boot_hfrp.channel.pending_sequence == N1X_HFRP_NO_SEQUENCE &&
+	       (boot_hfrp.gating.request_mask & 0x70) == 0x70 &&
+	       !boot_queue.poisoned && !boot_queue.active && !boot_queue.owner_job &&
+	       (!boot_attempted || (!boot_error && boot_result.reply_valid &&
+				   boot_result.idle_observed && !boot_result.reply.status &&
+				   !boot_result.reply.detail)) &&
+	       (!boot_ping.attempted || boot_ping.verified) &&
+	       (!boot_config.attempted || boot_config.valid) &&
+	       (!boot_region5.attempted || boot_region5.registered) &&
+	       (!boot_config_apply.attempted || boot_config_apply.accepted) &&
+	       (!boot_lpwr.attempted || boot_lpwr.accepted) &&
+	       (!boot_task.attempted || boot_task.verified);
+}
+
 /* accel->lock (if present) -> boot_lock, matching submission. Stop is terminal
  * for this module instance. A fresh load constructs a fresh channel/queue.
  * No speculative reset or rollback is attempted after any stop failure.
@@ -1243,17 +1270,7 @@ static int n1x_boot_stop_hardware(struct device *dev)
 	/* Shutdown requires a healthy, retired queue and complete setup. Retain
 	 * mappings, PM and module references after any queue or setup failure.
 	 */
-	if (!boot_hfrp.powered || boot_hfrp.error ||
-		(boot_hfrp.gating.request_mask & 0x70) != 0x70 ||
-		boot_queue.poisoned || boot_queue.active || boot_queue.owner_job ||
-		(boot_attempted && (boot_error || !boot_result.reply_valid ||
-		!boot_result.idle_observed || boot_result.reply.status || boot_result.reply.detail)) ||
-		(boot_ping.attempted && !boot_ping.verified) ||
-		(boot_config.attempted && !boot_config.valid) ||
-		(boot_region5.attempted && !boot_region5.registered) ||
-		(boot_config_apply.attempted && !boot_config_apply.accepted) ||
-		(boot_lpwr.attempted && !boot_lpwr.accepted) ||
-		(boot_task.attempted && !boot_task.verified)) {
+	if (!n1x_boot_stop_ready()) {
 		err = -ENOTRECOVERABLE;
 		goto done;
 	}
@@ -1334,7 +1351,7 @@ out:
 	return err;
 }
 
-static int n1x_boot_stop_device(struct device *dev)
+static int n1x_boot_stop_device(struct device *dev, bool for_sleep)
 {
 	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
 	unsigned int i;
@@ -1347,6 +1364,10 @@ static int n1x_boot_stop_device(struct device *dev)
 	 * Refuse before stopping the accelerator or changing its lifetime state.
 	 */
 	mutex_lock(&boot_lock);
+	if (boot_sleep_prepared && !for_sleep) {
+		mutex_unlock(&boot_lock);
+		return -EBUSY;
+	}
 	for (i = 0; i < ARRAY_SIZE(sroot_dsp_buffers); i++) {
 		if (sroot_dsp_buffers[i].published) {
 			mutex_unlock(&boot_lock);
@@ -1370,16 +1391,13 @@ static int n1x_boot_stop_device(struct device *dev)
 			pm_runtime_put_noidle(boot_sroot->dev);
 			pm_runtime_put_noidle(boot_dla->dev);
 			boot_upload_held = false;
-			if (!boot_unpinned)
-				module_put(THIS_MODULE);
+			module_put(THIS_MODULE);
 		}
 		if (boot_hfrp_held) {
 			pm_runtime_put_noidle(boot_dla->dev);
 			boot_hfrp_held = false;
-			if (!boot_unpinned)
-				module_put(THIS_MODULE);
+			module_put(THIS_MODULE);
 		}
-		boot_unpinned = false;
 	}
 	mutex_unlock(&boot_lock);
 	return 0;
@@ -1392,7 +1410,7 @@ static ssize_t shutdown_store(struct device *dev, struct device_attribute *attr,
 
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "stop"))
 		return -EPERM;
-	err = n1x_boot_stop_device(dev);
+	err = n1x_boot_stop_device(dev, false);
 	return err ? err : (ssize_t)count;
 }
 static DEVICE_ATTR_WO(shutdown);
@@ -1547,6 +1565,8 @@ out:
 
 static int n1x_boot_accel_ready(struct device *dev)
 {
+	if (boot_sleep_prepared)
+		return -EBUSY;
 	if (boot_stopping || !enable_preempt || !boot_dla || boot_dla->dev != dev ||
 		!boot_sroot || !boot_task.verified || !boot_lpwr.accepted ||
 		!boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid)
@@ -1629,7 +1649,9 @@ static int n1x_boot_accel_fail(struct device *dev, struct n1x_dla_job *job, int 
 	int err;
 
 	mutex_lock(&boot_lock);
-	if (!boot_dla || boot_dla->dev != dev)
+	if (boot_sleep_prepared)
+		err = -EBUSY;
+	else if (!boot_dla || boot_dla->dev != dev)
 		err = -ENODEV;
 	else
 		err = n1x_dla_job_fail(&boot_queue, job, error);
@@ -1657,6 +1679,10 @@ static int n1x_boot_accel_submit(struct device *dev, struct n1x_dla_job *job,
 	int err;
 
 	mutex_lock(&boot_lock);
+	if (boot_sleep_prepared) {
+		err = -EBUSY;
+		goto out;
+	}
 	if (boot_stopping || !boot_dla || boot_dla->dev != dev ||
 		!boot_sroot || !boot_task.verified || !boot_lpwr.accepted ||
 		!boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid) {
@@ -1727,6 +1753,8 @@ static int n1x_boot_probe(struct platform_device *pdev)
 		if (opt_enable_irq) {
 			int irq = platform_get_irq_optional(pdev, 0);
 
+			if (irq == -EPROBE_DEFER)
+				return irq;
 			if (irq > 0) {
 				int irq_err = devm_request_irq(dev, irq, n1x_boot_irq_handler,
 									IRQF_SHARED, dev_name(dev), endpoint);
@@ -1799,7 +1827,6 @@ static void n1x_boot_reset_state(void)
 	WRITE_ONCE(boot_stopping, false);
 	boot_hfrp_held = false;
 	boot_upload_held = false;
-	boot_unpinned = false;
 	memset(&boot_shutdown, 0, sizeof(boot_shutdown));
 	memset(&boot_hfrp, 0, sizeof(boot_hfrp));
 	memset(&boot_ping, 0, sizeof(boot_ping));
@@ -1861,11 +1888,9 @@ static int n1x_master_bind(struct device *master)
 					"automatic startup failed (%d); device remains fail-closed\n",
 					start_err);
 			} else {
-				if (boot_upload_held)
-					module_put(THIS_MODULE);
-				if (boot_hfrp_held)
-					module_put(THIS_MODULE);
-				boot_unpinned = true;
+				/* Keep publication leases until explicit checked shutdown.
+				 * remove() cannot abort module unloading if a later stop fails.
+				 */
 				dev_info(boot_dla->dev,
 					"N1X NPU initialized in-kernel (HFRP v%u.%u, %u kHz)\n",
 					boot_hfrp.version.major, boot_hfrp.version.minor,
@@ -1881,8 +1906,14 @@ static int n1x_master_bind(struct device *master)
 
 		accel = n1x_dla_accel_register(dla_for_accel->dev, n1x_boot_accel_submit);
 		if (IS_ERR(accel)) {
-			component_unbind_all(master, NULL);
-			return PTR_ERR(accel);
+			/* Firmware already owns DMA. Returning a bind/probe failure
+			 * would release devm mappings underneath that live firmware.
+			 * Keep both components bound for checked shutdown and reload.
+			 */
+			dev_err(master,
+				"accelerator registration failed (%ld); retaining bound hardware\n",
+				PTR_ERR(accel));
+			return 0;
 		}
 		if (enable_preempt)
 			n1x_dla_accel_set_control(accel, &n1x_boot_control_ops);
@@ -1905,7 +1936,7 @@ static void n1x_master_unbind(struct device *master)
 		do_stop = true;
 	mutex_unlock(&boot_lock);
 	if (do_stop) {
-		int err = n1x_boot_stop_device(master);
+		int err = n1x_boot_stop_device(master, false);
 
 		if (err)
 			dev_err(master,
@@ -1952,6 +1983,47 @@ static void n1x_boot_remove(struct platform_device *pdev)
 	mutex_unlock(&boot_lock);
 }
 
+static int n1x_boot_prepare(struct device *dev)
+{
+	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
+	bool active_boot;
+	unsigned int i;
+	int err = 0;
+
+	if (!endpoint || endpoint->sroot)
+		return 0;
+	/* No device has suspended yet. Refuse conditions that cannot be resolved
+	 * by our checked stop path, and prevent new public work until complete.
+	 */
+	mutex_lock(&boot_lock);
+	active_boot = (boot_attempted || boot_hfrp.attempted) && !boot_shutdown.released;
+	if (active_boot && (boot_stopping || !n1x_boot_stop_ready())) {
+		err = -EBUSY;
+		goto unlock;
+	}
+	for (i = 0; i < ARRAY_SIZE(sroot_dsp_buffers); i++) {
+		if (sroot_dsp_buffers[i].published) {
+			err = -EBUSY;
+			goto unlock;
+		}
+	}
+	boot_sleep_prepared = true;
+unlock:
+	mutex_unlock(&boot_lock);
+	return err;
+}
+
+static void n1x_boot_complete(struct device *dev)
+{
+	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
+
+	if (!endpoint || endpoint->sroot)
+		return;
+	mutex_lock(&boot_lock);
+	boot_sleep_prepared = false;
+	mutex_unlock(&boot_lock);
+}
+
 static int n1x_boot_suspend(struct device *dev)
 {
 	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
@@ -1967,7 +2039,7 @@ static int n1x_boot_suspend(struct device *dev)
 	mutex_unlock(&boot_lock);
 	if (err || !active_boot)
 		return err;
-	err = n1x_boot_stop_device(dev);
+	err = n1x_boot_stop_device(dev, true);
 	if (err)
 		return err;
 	mutex_lock(&boot_lock);
@@ -1992,12 +2064,6 @@ static int n1x_boot_resume(struct device *dev)
 			dev_err(dev,
 				"resume startup failed (%d); device remains fail-closed\n",
 				err);
-		} else {
-			if (boot_upload_held)
-				module_put(THIS_MODULE);
-			if (boot_hfrp_held)
-				module_put(THIS_MODULE);
-			boot_unpinned = true;
 		}
 	}
 	mutex_unlock(&boot_lock);
@@ -2023,12 +2089,14 @@ static void n1x_boot_system_shutdown(struct platform_device *pdev)
 	 */
 	if (!endpoint || endpoint->sroot)
 		return;
-	err = n1x_boot_stop_device(&pdev->dev);
+	err = n1x_boot_stop_device(&pdev->dev, false);
 	if (err)
 		dev_err(&pdev->dev, "shutdown failed (%d); retaining DMA, no forced reset\n", err);
 }
 
 static const struct dev_pm_ops n1x_boot_pm = {
+	.prepare = pm_sleep_ptr(n1x_boot_prepare),
+	.complete = pm_sleep_ptr(n1x_boot_complete),
 	.runtime_suspend = n1x_boot_runtime_suspend,
 	.suspend = n1x_boot_suspend,
 	.resume = n1x_boot_resume,
@@ -2048,6 +2116,8 @@ static struct platform_driver n1x_boot_driver = {
 		.acpi_match_table = n1x_boot_ids,
 		.dev_groups = boot_groups,
 		.pm = &n1x_boot_pm,
+		/* A failed hardware stop cannot be undone from remove(). */
+		.suppress_bind_attrs = true,
 	},
 };
 

@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     text = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     function = text[text.index('static int n1x_boot_accel_submit('):text.index('static int n1x_boot_probe(')]
+    prepare = text[text.index('static int n1x_boot_prepare('):text.index('static int n1x_boot_suspend(')]
+    assert '.prepare = pm_sleep_ptr(n1x_boot_prepare)' in text
+    assert '.complete = pm_sleep_ptr(n1x_boot_complete)' in text
     shim = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -18,18 +21,25 @@ def main():
 #include <stdio.h>
 #include <string.h>
 #include "n1x_dla_job.h"
-struct device {int unused;};
-struct n1x_boot_endpoint {struct device *dev;};
+struct n1x_boot_endpoint;
+struct device {struct n1x_boot_endpoint *data;};
+struct n1x_boot_endpoint {struct device *dev;bool sroot;};
 static struct device device,foreign;
-static struct n1x_boot_endpoint ep={&device},*boot_dla,*boot_sroot;
-static bool boot_stopping;
+static struct n1x_boot_endpoint ep={.dev=&device},*boot_dla,*boot_sroot;
+static bool boot_stopping, boot_sleep_prepared, boot_attempted;
+static struct {bool released;} boot_shutdown;
+static struct {bool published;} sroot_dsp_buffers[3];
+#define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
+static void *dev_get_drvdata(struct device *dev) {return dev->data;}
 static struct n1x_dla_job boot_task;
 static struct n1x_dla_job_queue boot_queue;
 static struct {bool accepted;} boot_lpwr;
-static struct {bool powered;struct {bool boot_tables_valid;} policy;} boot_hfrp;
+static struct {bool powered,attempted;struct {bool boot_tables_valid;} policy;} boot_hfrp;
 static int boot_lock,gate_error,drain_error,run_error,gates,drains,runs,cases;
 static void mutex_lock(int *p) {assert(!*p);*p=1;}
 static void mutex_unlock(int *p) {assert(*p);*p=0;}
+static bool n1x_boot_stop_ready(void)
+{assert(boot_lock);return !boot_queue.active && !boot_queue.owner_job && !boot_queue.poisoned;}
 static int n1x_boot_dma_gate(struct n1x_boot_endpoint *p)
 {assert(boot_lock&&p==&ep);gates++;return gate_error;}
 static int n1x_boot_drain_task_idle(struct n1x_dla_job *job)
@@ -44,7 +54,10 @@ int n1x_dla_job_execute(struct n1x_dla_job_queue *q,const struct n1x_dla_io *io,
 '''
     tests = r'''
 static void reset(void)
-{boot_stopping=false;boot_dla=boot_sroot=&ep;
+{boot_stopping=boot_sleep_prepared=false;boot_dla=boot_sroot=&ep;
+ device.data=&ep;ep.sroot=false;foreign.data=NULL;
+ memset(&boot_queue,0,sizeof(boot_queue));memset(sroot_dsp_buffers,0,sizeof(sroot_dsp_buffers));
+ boot_attempted=boot_hfrp.attempted=true;boot_shutdown.released=false;
  boot_task.verified=boot_lpwr.accepted=boot_hfrp.powered=boot_hfrp.policy.boot_tables_valid=true;
  gates=drains=runs=gate_error=drain_error=run_error=0;}
 static void check(struct device *dev,int expected,int g,int d,int r)
@@ -53,6 +66,27 @@ static void check(struct device *dev,int expected,int g,int d,int r)
  assert(!boot_lock&&gates==g&&drains==d&&runs==r&&job.attempted==(r!=0));cases++;}
 int main(void)
 {
+ reset();assert(!n1x_boot_prepare(&foreign) && !boot_sleep_prepared);
+ ep.sroot=true;assert(!n1x_boot_prepare(&device) && !boot_sleep_prepared);
+ for(unsigned condition=0;condition<7;condition++) {
+  reset();
+  switch(condition) {
+  case 0:boot_stopping=true;break;
+  case 1:boot_queue.active=true;break;
+  case 2:boot_queue.owner_job=&boot_task;break;
+  case 3:boot_queue.poisoned=true;break;
+  default:sroot_dsp_buffers[condition-4].published=true;break;
+  }
+  assert(n1x_boot_prepare(&device)==-EBUSY && !boot_sleep_prepared && !boot_lock);
+  assert(!gates && !drains && !runs);
+ }
+ reset();assert(!n1x_boot_prepare(&device) && boot_sleep_prepared && !boot_lock);
+ check(&device,-EBUSY,0,0,0);
+ ep.sroot=true;n1x_boot_complete(&device);assert(boot_sleep_prepared);
+ ep.sroot=false;n1x_boot_complete(&device);assert(!boot_sleep_prepared && !boot_lock);
+ check(&device,0,1,1,1); /* Another device aborted prepare; submissions recover. */
+ reset();boot_shutdown.released=true;boot_queue.poisoned=true;
+ assert(!n1x_boot_prepare(&device));n1x_boot_complete(&device);
  for(int mode=0;mode<7;mode++){
   reset();
   switch(mode){case 0:boot_dla=NULL;break;case 1:boot_sroot=NULL;break;
@@ -71,7 +105,7 @@ int main(void)
 '''
     with tempfile.TemporaryDirectory(prefix='n1x-accel-backend-') as tmp:
         source, binary = Path(tmp)/'test.c', Path(tmp)/'test'
-        source.write_text(shim+function+tests)
+        source.write_text(shim+prepare+function+tests)
         subprocess.run(shlex.split(os.environ.get('CC', 'cc'))+[
             '-O2', '-Wall', '-Wextra', '-Werror', '-I'+str(ROOT/'include'),
             str(source), '-o', str(binary)], check=True)

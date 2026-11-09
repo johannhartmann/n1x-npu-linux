@@ -1,0 +1,13 @@
+#!/bin/bash
+# Stop while the driver can still refuse an unsafe power transition.
+set -euo pipefail
+
+[[ -d /sys/module/n1x_npu_bootstrap ]] || exit 0
+shopt -s nullglob
+stop_files=(/sys/bus/platform/drivers/n1x-npu-bootstrap/*/shutdown)
+if ((${#stop_files[@]} != 1)); then
+  echo 'Expected one bound N1X DLA shutdown endpoint; refusing unload.' >&2
+  exit 1
+fi
+printf 'stop\n' > "${stop_files[0]}"
+exec /usr/bin/modprobe -r n1x_npu_bootstrap

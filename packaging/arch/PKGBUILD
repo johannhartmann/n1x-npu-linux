@@ -50,6 +50,8 @@ package() {
     "${pkgdir}/usr/lib/udev/rules.d/99-n1x-npu.rules"
   install -Dm644 "${srcdir}/npu-source/packaging/systemd/n1x-npu.service" \
     "${pkgdir}/usr/lib/systemd/system/n1x-npu.service"
+  install -Dm755 "${srcdir}/npu-source/packaging/systemd/n1x-npu-stop" \
+    "${pkgdir}/usr/lib/n1x-npu/stop"
   install -Dm755 "${srcdir}/npu-source/runtime/libn1x_dla.so" \
     "${pkgdir}/usr/lib/libn1x_dla.so"
   install -Dm755 "${srcdir}/npu-source/runtime/libn1x_compiler.so" \

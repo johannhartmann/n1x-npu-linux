@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config DRM_ACCEL_N1X
+	tristate "NVIDIA N1X DLA compute accelerator"
+	depends on DRM_ACCEL && ARM64 && ACPI && HAS_IOMEM && IOMMU_DMA && PM
+	select FW_LOADER
+	help
+	  Support the NVDA200A DLA and NVDA8600 SROOT endpoints using the
+	  DRM compute-accelerator interface. Requires the original signed
+	  NVIDIA firmware, suitable IOMMU mappings, and the platform's
+	  supported HFRP/SROOT firmware protocols.
+
+	  The driver retains memory after an uncertain hardware failure.
+	  Published DSP leases prevent shutdown and system sleep until reboot.
+	  This build integration does not establish upstream readiness or
+	  hardware qualification on other N1X systems.

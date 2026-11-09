@@ -35,7 +35,7 @@ typedef uint64_t dma_addr_t;
 struct device { int unused; } dev;
 struct n1x_boot_endpoint { struct device *dev; } endpoint = {&dev};
 static struct n1x_boot_endpoint *boot_sroot = &endpoint, *boot_dla = &endpoint;
-static bool boot_attempted = true, boot_stopping;
+static bool boot_attempted = true, boot_stopping, boot_sleep_prepared;
 static int boot_error, boot_lock;
 static struct { bool reply_valid; struct n1x_sroot_reply reply; } boot_result;
 static int fault, exchanges, frees, pm_refs, module_refs, stage_calls, hash_index;
@@ -110,7 +110,7 @@ static void make_image(u8 *p,size_t bytes,u32 id)
 static void reset(void) {
  free(allocation);allocation=NULL;memset(sroot_dsp_buffers,0,sizeof(sroot_dsp_buffers));
  sroot_client_poisoned=false;allocation_published=false;fault=exchanges=frees=pm_refs=module_refs=stage_calls=0;
- hash_index=1;make_image(image,sizeof(image),0xc0304);boot_sroot=boot_dla=&endpoint;boot_attempted=true;boot_error=0;boot_stopping=false;
+ hash_index=1;make_image(image,sizeof(image),0xc0304);boot_sroot=boot_dla=&endpoint;boot_attempted=true;boot_error=0;boot_stopping=boot_sleep_prepared=false;
  boot_result.reply_valid=true;memset(&boot_result.reply,0,sizeof(boot_result.reply));
  assert(!boot_lock);
 }
@@ -119,6 +119,9 @@ static void *upload_thread(void *ptr) {struct thread_result *r=ptr;r->error=n1x_
 int main(void) {
  struct n1x_sroot_client_result result;
  struct n1x_sroot_client_result_v2 result2;
+ reset();boot_sleep_prepared=true;
+ assert(n1x_sroot_upload_dsp_v2(0xc0304,image,sizeof(image),&result2)==-EBUSY);
+ assert(!result2.published && !pm_refs && !module_refs && !allocation && !exchanges);
  for(int failure=1;failure<=10;failure++) {
   reset();fault=failure;
   int err=n1x_sroot_upload_dsp_v1(0xc0304,image,sizeof(image),&result);assert(err<0);
