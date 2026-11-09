@@ -78,6 +78,7 @@ struct n1x_boot_endpoint {
 	resource_size_t bytes;
 	u32 first;
 	bool sroot;
+	struct device_link *sroot_link;
 	struct n1x_dla_accel *accel;
 };
 
@@ -1842,18 +1843,38 @@ static void n1x_boot_reset_state(void)
 static int n1x_sroot_component_bind(struct device *comp, struct device *master,
 				    void *data)
 {
-	(void)comp;
-	(void)master;
-	(void)data;
-	return 0;
+	struct n1x_boot_endpoint *dla = data;
+	struct n1x_boot_endpoint *sroot;
+
+	if (!master->driver || comp->driver != master->driver)
+		return -ENODEV;
+	sroot = dev_get_drvdata(comp);
+
+	if (!dla || dla->dev != master || dla->sroot || !sroot ||
+	    sroot->dev != comp || !sroot->sroot)
+		return -EINVAL;
+	if (dla->sroot_link)
+		return -EBUSY;
+	/*
+	 * Components handle binding, not PM ordering. Keep SROOT available
+	 * until DLA suspends, and resume it before DLA can restart firmware.
+	 * Existing publication leases separately own runtime-PM references.
+	 */
+	dla->sroot_link = device_link_add(master, comp, DL_FLAG_STATELESS);
+	return dla->sroot_link ? 0 : -ENOMEM;
 }
 
 static void n1x_sroot_component_unbind(struct device *comp, struct device *master,
 				       void *data)
 {
+	struct n1x_boot_endpoint *dla = data;
+
 	(void)comp;
 	(void)master;
-	(void)data;
+	if (dla->sroot_link) {
+		device_link_del(dla->sroot_link);
+		dla->sroot_link = NULL;
+	}
 }
 
 static const struct component_ops n1x_sroot_component_ops = {
@@ -1874,7 +1895,7 @@ static int n1x_master_bind(struct device *master)
 	struct n1x_boot_endpoint *dla_for_accel = NULL;
 	int err;
 
-	err = component_bind_all(master, NULL);
+	err = component_bind_all(master, dev_get_drvdata(master));
 	if (err)
 		return err;
 	mutex_lock(&boot_lock);
@@ -1957,7 +1978,7 @@ static void n1x_master_unbind(struct device *master)
 		boot_suspended = false;
 	}
 	mutex_unlock(&boot_lock);
-	component_unbind_all(master, NULL);
+	component_unbind_all(master, dev_get_drvdata(master));
 }
 
 static const struct component_master_ops n1x_master_ops = {

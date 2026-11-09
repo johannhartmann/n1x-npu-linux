@@ -15,6 +15,13 @@ The Linux binding still has singleton boot state and supports one aggregate.
 Duplicate endpoints are rejected. Kconfig/Kbuild integration is provided by
 [`driver/Kconfig`](../driver/Kconfig) (`CONFIG_DRM_ACCEL_N1X`), but this is not
 an upstream-ready, independently instantiable supplier/consumer architecture.
+The bound aggregate owns a stateless device link from the DLA consumer to its
+SROOT supplier. It is created before firmware publication and removed after
+the aggregate's stop/unregister path. Component binding provides driver
+presence; the link orders system suspend, resume and shutdown. Existing
+explicit runtime-PM publication leases remain separate. A failed link creation
+aborts binding before firmware startup. The link is retained across startup
+or DRM-registration failure once the aggregate remains bound.
 See [kernel driver architecture](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/blob/main/docs/kernel-driver-architecture.md)
 for subsystem boundaries and remaining upstream requirements.
 
