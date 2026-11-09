@@ -169,7 +169,7 @@ struct n1x_sroot_client {
 struct n1x_boot_context {
 	struct kref refs;
 	struct list_head entry;
-	struct device *dev, *consumer;
+	struct device *dev, *consumer, *dma_dev;
 	struct fwnode_handle *scope;
 	struct mutex
 		lock; /* Serializes this provider's boot, DMA, queue and PM state. */
@@ -207,6 +207,7 @@ static void n1x_boot_release(struct kref *refs)
 		container_of(refs, struct n1x_boot_context, refs);
 
 	put_device(boot->consumer);
+	put_device(boot->dma_dev);
 	fwnode_handle_put(boot->scope);
 	put_device(boot->dev);
 	kfree(boot);
@@ -261,7 +262,19 @@ static void n1x_boot_hold_publication(struct n1x_boot_context *boot)
 {
 	if (!boot->lifetime_held) {
 		kref_get(&boot->refs);
+		boot->dma_dev = get_device(boot->dla->dev);
 		boot->lifetime_held = true;
+	}
+}
+
+/* Caller holds boot->lock and has established complete DMA quiescence. */
+static void n1x_boot_drop_publication(struct n1x_boot_context *boot)
+{
+	if (boot->lifetime_held) {
+		put_device(boot->dma_dev);
+		boot->dma_dev = NULL;
+		boot->lifetime_held = false;
+		n1x_boot_put_ref(boot);
 	}
 }
 
@@ -1870,10 +1883,7 @@ static int n1x_boot_stop_device(struct device *dev, bool for_sleep)
 			module_put(THIS_MODULE);
 		}
 	}
-	if (boot->lifetime_held) {
-		boot->lifetime_held = false;
-		n1x_boot_put_ref(boot);
-	}
+	n1x_boot_drop_publication(boot);
 	mutex_unlock(&boot->lock);
 	return 0;
 }

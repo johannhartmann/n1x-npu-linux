@@ -26,7 +26,8 @@ memory publication. Legacy upload ABIs v1/v2 require a unique registered
 context and reject ambiguity. Component unbind drains the DLA IRQ after
 clearing its borrowed context pointer. A context reference acquired before
 removal remains valid, but detached contexts cannot admit hardware work.
-Published DMA keeps its lifetime reference until verified shutdown. Failed
+Published DMA keeps both its context and DLA-device references until verified
+shutdown. Failed
 shutdown remains terminal; a retained context cannot be rebound and retried.
 This is not a claim of general reset/recovery or upstream readiness.
 See [kernel driver architecture](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/blob/main/docs/kernel-driver-architecture.md)

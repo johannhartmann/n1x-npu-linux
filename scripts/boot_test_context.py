@@ -70,6 +70,8 @@ static inline struct n1x_boot_context *n1x_boot_get_unique(void)
 {boot->refs.value++;return boot;}
 static inline void n1x_boot_hold_publication(struct n1x_boot_context *value)
 {if(!value->lifetime_held){value->refs.value++;value->lifetime_held=true;}}
+static inline void n1x_boot_drop_publication(struct n1x_boot_context *value)
+{if(value->lifetime_held){value->lifetime_held=false;n1x_boot_put_ref(value);}}
 static inline void test_context_reset(void)
 {assert(!boot->lock.value);
  assert(!boot->refs.value || boot->refs.value==1+(unsigned)boot->lifetime_held);

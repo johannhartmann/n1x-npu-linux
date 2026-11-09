@@ -205,8 +205,12 @@ int main(void)
  assert(scope.refs==1 && other.refs==1 && sdev.refs==1 && ddev.refs==1 && cdev.refs==1);
  assert(sdev2.refs==1 && ddev2.refs==1 && cdev2.refs==1);
  b=make_boot(&s,&d);n1x_boot_hold_publication(b);n1x_boot_hold_publication(b);
- assert(b->refs.value==2);n1x_boot_owner_put(b);assert(b->refs.value==1 && b->removing);
- n1x_boot_put_ref(b);assert(!allocations);
+ assert(b->refs.value==2 && b->dma_dev==&ddev && ddev.refs==3);
+ /* A failed-stop component detach drops its bound-consumer reference only. */
+ put_device(b->consumer);b->consumer=NULL;
+ n1x_boot_owner_put(b);assert(b->refs.value==1 && b->removing && ddev.refs==2);
+ /* Teardown model only: this test has no DMA; production requires a checked stop. */
+ n1x_boot_drop_publication(b);assert(!allocations && ddev.refs==1 && sdev.refs==1);
  puts("Production NPU contexts: scoped isolation, ambiguity, client admission/publication, probe unwinding, detach and reference lifetime: PASS");
 }
 '''
