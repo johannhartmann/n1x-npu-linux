@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 ccflags-y += -I$(src)/../include
 
-obj-m += n1x_npu_bootstrap.o
+ifeq ($(KBUILD_EXTMOD),$(abspath $(src)))
+CONFIG_DRM_ACCEL_N1X ?= m
+endif
+obj-$(CONFIG_DRM_ACCEL_N1X) += n1x_npu_bootstrap.o
 n1x_npu_bootstrap-y := \
 	n1x_dla_accel.o \
 	n1x_dla_boot.o \

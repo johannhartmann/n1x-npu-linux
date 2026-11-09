@@ -11,7 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def shutdown_harness():
     text = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     state = text[text.index('struct n1x_boot_endpoint {'):text.index('static int n1x_boot_group_member(')]
-    code = text[text.index('static int n1x_boot_stop_hardware('):text.index('static DEVICE_ATTR_WO(shutdown);')]
+    dsp_state = text[text.index('static struct n1x_sroot_client_buffer {'):
+                     text.index('static int n1x_sroot_upload_dsp(')]
+    code = text[text.index('static bool n1x_boot_stop_ready('):text.index('static DEVICE_ATTR_WO(shutdown);')]
     start_fn = text[text.index('static int n1x_boot_start_once('):text.index('static struct attribute *boot_attrs[]')]
     names = set(re.findall(r'\b(n1x_boot_\w+)\(\)', start_fn))-{'n1x_boot_start_once'}
     writer_harness = (
@@ -53,8 +55,8 @@ typedef uint8_t u8;typedef uint32_t u32;typedef uint64_t dma_addr_t;
 typedef size_t resource_size_t;
 #define __iomem
 #define WRITE_ONCE(x, val) ((x) = (val))
+#define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
 #define SHA256_DIGEST_SIZE 32
-#define N1X_BOOT_BYTES 67508
 #define N1X_REGION5_ALLOC (1U<<20)
 #define DEFINE_MUTEX(name) int name
 #define THIS_MODULE ((void *)1)
@@ -63,7 +65,7 @@ typedef size_t resource_size_t;
 struct device {int refs,id;void *data;};
 struct device_attribute {int unused;};
 struct n1x_dla_accel {bool locked;int bytes;};
-''' + state + r'''
+''' + state + dsp_state + r'''
 static struct device device={0,0,NULL},sroot_device={0,1,NULL},foreign={0,2,NULL};
 static struct n1x_boot_endpoint dla_ep,sroot_ep;
 static struct n1x_dla_accel accel;
@@ -118,17 +120,20 @@ static void reset(void)
  memset(&boot_ping,0,sizeof(boot_ping));memset(&boot_config,0,sizeof(boot_config));
  memset(&boot_region5,0,sizeof(boot_region5));memset(&boot_config_apply,0,sizeof(boot_config_apply));
  memset(&boot_lpwr,0,sizeof(boot_lpwr));memset(&boot_task,0,sizeof(boot_task));
- boot_stopping=false;boot_hfrp_held=boot_upload_held=true;boot_unpinned=false;boot_attempted=true;boot_error=0;
+ memset(sroot_dsp_buffers,0,sizeof(sroot_dsp_buffers));
+ boot_stopping=boot_sleep_prepared=false;boot_hfrp_held=boot_upload_held=true;boot_attempted=true;boot_error=0;
  device.refs=2;sroot_device.refs=1;module_refs=2;accel.bytes=4096;
  dla_ep=(struct n1x_boot_endpoint){.dev=&device,.accel=&accel};
  sroot_ep=(struct n1x_boot_endpoint){.dev=&sroot_device,.sroot=true};
  boot_dla=&dla_ep;boot_sroot=&sroot_ep;device.data=&dla_ep;sroot_device.data=&sroot_ep;
  boot_hfrp.powered=boot_hfrp.attempted=true;boot_result.reply_valid=boot_result.idle_observed=1;
+ boot_hfrp.channel.state=N1X_HFRP_READY;
+ boot_hfrp.channel.pending_sequence=N1X_HFRP_NO_SEQUENCE;
  boot_hfrp.gating.request_mask=0x777;
  boot_ping.attempted=boot_ping.verified=true;boot_config.attempted=boot_config.valid=true;
  boot_region5.attempted=boot_region5.registered=true;boot_config_apply.attempted=boot_config_apply.accepted=true;
  boot_lpwr.attempted=boot_lpwr.accepted=true;boot_task.attempted=boot_task.verified=true;
- boot_buffer=(void *)1;boot_dma=1;
+ boot_buffer=(void *)1;boot_dma=1;boot_bytes=67508;
  boot_ping.buffer=boot_config.buffer=boot_region5.buffer=boot_lpwr.buffer=(void *)1;
  boot_ping.dma=boot_config.dma=boot_region5.dma=boot_lpwr.dma=1;
  boot_task.buffer=(void *)1;boot_task.dma=1;
@@ -138,20 +143,32 @@ static void reset(void)
 }
 static void failed(void)
 {
- assert(n1x_boot_stop_device(&device)<0 && boot_stopping);
+ assert(n1x_boot_stop_device(&device,false)<0 && boot_stopping);
  assert(!boot_lock && !accel.locked && !dma_frees && !pm_puts && module_refs==2);
  assert(device.refs==2 && sroot_device.refs==1 && accel.bytes==4096);
  assert(boot_buffer && boot_ping.buffer && boot_task.buffer && !boot_shutdown.released);
  int old_accesses=accesses,old_stops=stops;
- assert(n1x_boot_stop_device(&device)<0 && accesses==old_accesses && stops==old_stops);
+ assert(n1x_boot_stop_device(&device,false)<0 && accesses==old_accesses && stops==old_stops);
 }
 int main(void)
 {
+ reset();boot_sleep_prepared=true;
+ assert(shutdown_store(&device,NULL,"stop",4)==-EBUSY);
+ assert(!boot_stopping && !gates && !accesses && !stops && !dma_frees);
+ boot_sleep_prepared=false;
  reset();privileged=false;assert(shutdown_store(&device,NULL,"stop",4)==-EPERM && !gates);
  reset();assert(shutdown_store(&device,NULL,"no",2)==-EPERM && !gates);
- reset();assert(n1x_boot_stop_device(&foreign)==-ENODEV);
- assert(n1x_boot_stop_device(&sroot_device)==-ENODEV && !gates);
- for(int i=0;i<14;i++){
+ reset();assert(n1x_boot_stop_device(&foreign,false)==-ENODEV);
+ assert(n1x_boot_stop_device(&sroot_device,false)==-ENODEV && !gates);
+ for(unsigned i=0;i<ARRAY_SIZE(sroot_dsp_buffers);i++) {
+  reset();sroot_dsp_buffers[i].published=true;
+  sroot_dsp_buffers[i].staging_released=true;assert(!sroot_dsp_buffers[i].cpu && !sroot_dsp_buffers[i].dma);
+  assert(n1x_boot_stop_device(&device,false)==-EBUSY);
+  assert(!boot_stopping && !boot_shutdown.attempted && !boot_lock && !accel.locked);
+  assert(!gates && !accesses && !stops && !dma_frees && !pm_puts && module_refs==2);
+  assert(accel.bytes==4096 && boot_buffer && boot_task.buffer);
+ }
+ for(int i=0;i<16;i++){
   reset();switch(i){
   case 0:boot_hfrp.powered=false;break;
   case 1:boot_hfrp.error=-EIO;break;case 2:boot_queue.poisoned=true;break;
@@ -160,7 +177,9 @@ int main(void)
   case 7:boot_result.reply.status=1;break;case 8:boot_result.reply.detail=1;break;
   case 9:boot_ping.verified=false;break;case 10:boot_config.valid=false;break;
   case 11:boot_region5.registered=false;break;case 12:boot_config_apply.accepted=false;break;
-  case 13:boot_task.verified=false;break;}
+  case 13:boot_task.verified=false;break;
+  case 14:boot_hfrp.channel.state=N1X_HFRP_FAILED;break;
+  case 15:boot_hfrp.channel.pending_sequence=1;break;}
   failed();assert(!gates && !accesses && !stops);
  }
  for(int i=1;i<=2;i++){reset();gate_fail=i;failed();assert(!accesses);}
@@ -171,7 +190,7 @@ int main(void)
  /* Match the physical raw readback: bit 24 persists. No Linux IRQ handler
   * is registered; this must reach the independent HFRP shutdown checks. */
  reset();route=0x010801d0;mask=0x01001e05;
- assert(!n1x_boot_stop_device(&device) && stops==1 && dma_frees==6);
+ assert(!n1x_boot_stop_device(&device,false) && stops==1 && dma_frees==6);
  assert(boot_shutdown.irq_owned==route && boot_shutdown.irq_mask_before==0x01001e05);
  assert(boot_shutdown.irq_mask_after==0x01001e05 && boot_shutdown.irq_readback_valid);
  reset();mask_stuck=true;stop_error=-ETIMEDOUT;failed();assert(stops==1);
@@ -183,7 +202,7 @@ int main(void)
  assert(dma_frees==6 && pm_puts==3 && !module_refs && !device.refs && !sroot_device.refs);
  assert(!boot_buffer && !boot_task.buffer && !boot_ping.buffer && !accel.bytes);
  assert(!boot_hfrp_held && !boot_upload_held && !boot_lock && !accel.locked);
- assert(!n1x_boot_stop_device(&device) && stops==1 && dma_frees==6 && pm_puts==3);
+ assert(!n1x_boot_stop_device(&device,false) && stops==1 && dma_frees==6 && pm_puts==3);
  assert(stops==1 && accesses==4 && dma_frees==6);
  check_single_start();
  reset();boot_attempted=boot_upload_held=false;boot_hfrp_held=true;
@@ -192,14 +211,12 @@ int main(void)
  boot_buffer=boot_ping.buffer=boot_config.buffer=boot_region5.buffer=NULL;
  boot_lpwr.buffer=boot_task.buffer=NULL;
  device.refs=1;sroot_device.refs=0;module_refs=1;accel.bytes=0;
- assert(!n1x_boot_stop_device(&device) && !dma_frees && stops==1 && !drains);
+ assert(!n1x_boot_stop_device(&device,false) && !dma_frees && stops==1 && !drains);
  assert(pm_puts==1 && !device.refs && !module_refs);
  reset();boot_hfrp.attempted=boot_hfrp.powered=boot_attempted=false;
  boot_hfrp_held=boot_upload_held=false;module_refs=device.refs=sroot_device.refs=accel.bytes=0;
- assert(!n1x_boot_stop_device(&device) && !gates && !accesses && !stops && !dma_frees && !pm_puts);
+ assert(!n1x_boot_stop_device(&device,false) && !gates && !accesses && !stops && !dma_frees && !pm_puts);
  assert(boot_shutdown.released);
- reset();boot_unpinned=true;module_refs=0;
- assert(!n1x_boot_stop_device(&device) && stops==1 && dma_frees==6 && pm_puts==3 && !module_refs && !boot_unpinned);
  puts("shutdown: healthy/unused/HFRP-only release, raw-mask readback regression, failure cases, all sysfs writer gates, ownership and no double free passed; no hardware");
  return 0;
 }

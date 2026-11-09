@@ -61,7 +61,7 @@ sudo install -Dm600 sources/sroot-v1.bin /usr/lib/firmware/nvidia/n1x/sroot-v1.b
 make module
 ```
 
-`n1x_npu_bootstrap.ko` locates and parses the VBIOS policy directly from the live hardware carveout (`NVDA3000` locator `0x1182bc80` $\rightarrow$ `0xe5b81800`), so no `.rom` file is needed in `/usr/lib/firmware`.
+`n1x_npu_bootstrap.ko` locates and parses the VBIOS policy directly from the live hardware carveout (GB10/T264 display locator `0x1182bc80` $\rightarrow$ `0xe5b81800`), so no `.rom` file is needed in `/usr/lib/firmware`.
 
 ## 6. Hardware Qualification
 

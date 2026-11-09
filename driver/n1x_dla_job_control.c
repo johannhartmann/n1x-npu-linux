@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
+#ifdef __KERNEL__
+#include <linux/stddef.h>
+#else
+#include <stddef.h>
+#endif
 #include "n1x_dla_job_control.h"
 #include "n1x_dla_command.h"
 
@@ -118,7 +123,7 @@ int n1x_dla_job_preempt(struct n1x_dla_job_queue *queue,
 	job->preempt_completed = job->verified = true;
 	job->error = 0;
 	queue->active = false;
-	queue->owner_job = 0;
+	queue->owner_job = NULL;
 	return 0;
 }
 

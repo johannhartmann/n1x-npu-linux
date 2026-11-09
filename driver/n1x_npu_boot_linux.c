@@ -4,7 +4,6 @@
  * initialization, and exposes the /dev/accel/accel* DRM compute accelerator node.
  * Retains DMA allocations across uncertain hardware faults (fail-closed).
  */
-#include <crypto/sha2.h>
 #include <linux/acpi.h>
 #include <linux/capability.h>
 #include <linux/component.h>
@@ -21,6 +20,7 @@
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/wait.h>
@@ -33,17 +33,19 @@
 #include "n1x_dla_job_control.h"
 #include "n1x_dla_accel.h"
 #include "n1x_hfrp_setup.h"
+#include "n1x_sroot_client.h"
+#include "n1x_sroot_firmware.h"
 
 #define N1X_BOOT_FIRMWARE "nvidia/n1x/sroot-v0.bin"
 #define N1X_BOOT_FALLBACK_FIRMWARE "nvidia/n1x/sroot-v1.bin"
-#define N1X_BOOT_BYTES 67508
 #define N1X_REGION5_ALLOC (1U << 20)
 #define N1X_REGION5_OFFSET 16U
 #define N1X_REGION5_STRIDE 52U
 #define N1X_REGION5_BYTES (((N1X_REGION5_ALLOC - N1X_REGION5_OFFSET - 8U) / \
 				N1X_REGION5_STRIDE) * N1X_REGION5_STRIDE + 8U)
-/* GB10/T264 SVP0 (NVDA3000) register offset holding the 4 KiB-shifted VBIOS carveout offset. */
-#define N1X_SVP0_VBIOS_LOCATOR_OFFSET 0x82bc80ULL
+/* GB10/T264 display register holding the 4 KiB-shifted VBIOS carveout.
+ * NVDA3000 describes SVP registers, not this display aperture.
+ */
 #define N1X_DISP_VBIOS_LOCATOR_PHYS 0x1182bc80ULL
 #define N1X_VBIOS_CARVEOUT_BASE 0x80000600ULL
 #define N1X_VBIOS_CARVEOUT_SIZE 0x110000U
@@ -82,11 +84,14 @@ struct n1x_boot_endpoint {
 static DEFINE_MUTEX(boot_lock);
 static struct n1x_boot_endpoint *boot_dla, *boot_sroot;
 static struct n1x_dla_sroot_load_result boot_result;
+static size_t boot_bytes;
 static void *boot_buffer;
 static dma_addr_t boot_dma;
 static int boot_error;
 static bool boot_attempted;
-static bool boot_stopping, boot_hfrp_held, boot_upload_held, boot_unpinned;
+static bool boot_stopping, boot_hfrp_held, boot_upload_held;
+/* boot_lock serializes all public hardware requests with system sleep. */
+static bool boot_sleep_prepared;
 static struct n1x_boot_shutdown_state {
 	struct n1x_hfrp_stop_result transport;
 	const char *stage;
@@ -273,6 +278,7 @@ static irqreturn_t n1x_boot_irq_handler(int irq, void *data)
 static void n1x_boot_delay(void *context, u32 interval_us)
 {
 	if (opt_enable_irq && boot_irq_registered && context == boot_dla &&
+		READ_ONCE(boot_hfrp.powered) && !READ_ONCE(boot_stopping) &&
 		interval_us >= 1000) {
 		int before = atomic_read(&boot_irq_count);
 		u32 owned = 0, saved = 0;
@@ -285,6 +291,9 @@ static void n1x_boot_delay(void *context, u32 interval_us)
 					max(1UL, usecs_to_jiffies(interval_us)));
 		return;
 	}
+	/* HFRP establishes DLA power. Its early polls must not access the DLA
+	 * interrupt registers, and shutdown must not re-enable those interrupts.
+	 */
 	usleep_range(interval_us, interval_us + 100);
 }
 
@@ -305,27 +314,6 @@ static int n1x_boot_board_policy(const void *data, size_t size)
 	return n1x_dla_prepare_gating(&boot_hfrp.policy, &boot_hfrp.gating);
 }
 
-static resource_size_t n1x_boot_vbios_locator_phys(void)
-{
-	resource_size_t phys = N1X_DISP_VBIOS_LOCATOR_PHYS;
-	struct acpi_device *adev;
-
-	adev = acpi_dev_get_first_match_dev("NVDA3000", NULL, -1);
-	if (adev) {
-		struct device *phys_dev = acpi_get_first_physical_node(adev);
-
-		if (phys_dev && dev_is_platform(phys_dev)) {
-			struct platform_device *pdev = to_platform_device(phys_dev);
-			struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-
-			if (res && resource_size(res) >= N1X_SVP0_VBIOS_LOCATOR_OFFSET + sizeof(u32))
-				phys = res->start + N1X_SVP0_VBIOS_LOCATOR_OFFSET;
-		}
-		acpi_dev_put(adev);
-	}
-	return phys;
-}
-
 static int n1x_boot_live_board_policy(void)
 {
 	void __iomem *locator_io;
@@ -334,7 +322,7 @@ static int n1x_boot_live_board_policy(void)
 	void *rom;
 	int err;
 
-	locator_io = ioremap(n1x_boot_vbios_locator_phys(), sizeof(u32));
+	locator_io = ioremap(N1X_DISP_VBIOS_LOCATOR_PHYS, sizeof(u32));
 	if (!locator_io)
 		return -ENOMEM;
 	locator = readl(locator_io);
@@ -462,28 +450,173 @@ put:
 
 static int n1x_boot_validate_firmware(const struct firmware *firmware)
 {
-	static const u8 expected[2][SHA256_DIGEST_SIZE] = {{
-		0x0f, 0x16, 0x91, 0x1c, 0xce, 0xd7, 0xbb, 0x95,
-		0x77, 0x3d, 0xa5, 0xaf, 0xf9, 0xd9, 0xa4, 0x4d,
-		0xfd, 0x1b, 0x1a, 0x11, 0xf3, 0xc5, 0x60, 0xee,
-		0x69, 0x8a, 0x5c, 0x99, 0x31, 0x0f, 0xf2, 0xc4,
-	}, {
-		0x6b, 0x1e, 0x81, 0x92, 0xfc, 0x1e, 0x61, 0x94,
-		0x4e, 0x9b, 0x2a, 0x84, 0x25, 0x1b, 0x7d, 0x18,
-		0xf3, 0x05, 0x02, 0x5f, 0xfb, 0x2c, 0xfa, 0x1d,
-		0xe8, 0x67, 0x7f, 0x8f, 0x98, 0xb5, 0x9a, 0xd4,
-	}};
-	u8 digest[SHA256_DIGEST_SIZE];
-
 	if (firmware_variant > 1)
 		return -EINVAL;
-	if (!firmware || !firmware->data || firmware->size != N1X_BOOT_BYTES)
+	if (!firmware || !firmware->data || firmware->size < 4 ||
+	    n1x_sroot_image_u32(firmware->data) != 0xc0302)
 		return -EBADMSG;
-	sha256(firmware->data, firmware->size, digest);
-	return memcmp(digest, expected[firmware_variant], sizeof(digest)) ? -EBADMSG : 0;
+	return n1x_sroot_validate_image(firmware->data + 4, firmware->size - 4, 0xc0302);
 }
 
-/* Caller holds boot_lock. This function is the only upload entry point. */
+/* All secure-loader transactions hold boot_lock, including DSP clients. */
+static bool sroot_client_poisoned;
+
+/* A published DSP lease pins the provider independently of its image buffer.
+ * v1 retains staging; v2 may retire it after a completed upload. Neither
+ * permits NPU shutdown while the DSP can still access shared hardware.
+ */
+static struct n1x_sroot_client_buffer {
+	void *cpu;
+	dma_addr_t dma;
+	size_t bytes;
+	bool published, staging_released;
+} sroot_dsp_buffers[3];
+
+static int n1x_sroot_upload_dsp(u32 image_id, const u8 *image, size_t bytes,
+			       struct n1x_sroot_client_result *result,
+			       bool release_staging, bool *staging_released)
+{
+	struct n1x_sroot_client_buffer *buffer;
+	struct n1x_sroot_reply reply = {};
+	struct n1x_dla_io io;
+	u32 words[3], index;
+	int err;
+
+	if (!result)
+		return -EINVAL;
+	memset(result, 0, sizeof(*result));
+	if (staging_released)
+		*staging_released = false;
+	if (image_id < 0xc0303 || image_id > 0xc0305 || !image)
+		return -EINVAL;
+	index = image_id - 0xc0303;
+	err = n1x_sroot_validate_image(image, bytes, image_id);
+	if (err)
+		return err;
+	mutex_lock(&boot_lock);
+	buffer = &sroot_dsp_buffers[index];
+	if (!boot_sroot || !boot_dla) {
+		err = -ENODEV;
+		goto unlock;
+	}
+	if (boot_sleep_prepared) {
+		err = -EBUSY;
+		goto unlock;
+	}
+	if (boot_stopping) {
+		err = -ESHUTDOWN;
+		goto unlock;
+	}
+	if (sroot_client_poisoned) {
+		err = -ENOTRECOVERABLE;
+		goto unlock;
+	}
+	if (buffer->published) {
+		err = -EALREADY;
+		goto unlock;
+	}
+	/* Do not begin on a failed or incomplete NPU secure-loader exchange. */
+	if (!boot_attempted || boot_error || !boot_result.reply_valid ||
+	    boot_result.reply.status || boot_result.reply.detail) {
+		err = -EHOSTDOWN;
+		goto unlock;
+	}
+	err = n1x_boot_dma_gate(boot_sroot);
+	if (err)
+		goto unlock;
+	err = dma_set_mask_and_coherent(boot_sroot->dev, DMA_BIT_MASK(32));
+	if (err)
+		goto unlock;
+	err = pm_runtime_resume_and_get(boot_sroot->dev);
+	if (err < 0)
+		goto unlock;
+	buffer->bytes = bytes + 4;
+	buffer->cpu = dma_alloc_coherent(boot_sroot->dev, buffer->bytes,
+					&buffer->dma, GFP_KERNEL);
+	if (!buffer->cpu) {
+		err = -ENOMEM;
+		goto put;
+	}
+	memcpy(buffer->cpu + 4, image, bytes);
+	for (index = 0; index < 4; index++)
+		((u8 *)buffer->cpu)[index] = image_id >> (index * 8);
+	err = buffer->dma & 255 ? -ERANGE : n1x_sroot_stage_image(buffer->cpu,
+		buffer->bytes, buffer->cpu, buffer->bytes, buffer->dma,
+		0xe0000000, 0xffffffff, words);
+	if (err)
+		goto free;
+	if (!try_module_get(THIS_MODULE)) {
+		err = -ENODEV;
+		goto free;
+	}
+	io = (struct n1x_dla_io){boot_sroot, n1x_boot_write, n1x_boot_read, n1x_boot_delay};
+	dma_wmb();
+	buffer->published = true;
+	result->published = 1;
+	err = n1x_sroot_exchange(&io, 16, N1X_SROOT_CMD_UPLOAD, words, 3,
+				 &reply, 5001, 1000);
+	if (!err) {
+		result->reply_valid = 1;
+		result->reply_header = reply.header;
+		if (reply.command != N1X_SROOT_CMD_UPLOAD || reply.status || reply.detail)
+			err = -EREMOTEIO;
+		else if (release_staging && (reply.header != N1X_SROOT_CMD_UPLOAD || reply.count))
+			err = -EPROTO;
+		else
+			result->accepted = 1;
+	}
+	if (!err && release_staging) {
+		/* A completed upload consumes the image, not the DSP lifetime lease. */
+		dma_free_coherent(boot_sroot->dev, buffer->bytes, buffer->cpu, buffer->dma);
+		buffer->cpu = NULL;
+		buffer->dma = 0;
+		buffer->staging_released = true;
+		*staging_released = true;
+	}
+	if (err)
+		sroot_client_poisoned = true;
+	dev_info(boot_sroot->dev,
+		"DSP image %#x: error=%d reply_valid=%u header=%#x staging_released=%u; provider lease retained\n",
+		image_id, err, result->reply_valid, result->reply_header, buffer->staging_released);
+	goto unlock;
+free:
+	dma_free_coherent(boot_sroot->dev, buffer->bytes, buffer->cpu, buffer->dma);
+	memset(buffer, 0, sizeof(*buffer));
+put:
+	pm_runtime_put(boot_sroot->dev);
+unlock:
+	mutex_unlock(&boot_lock);
+	return err;
+}
+
+int n1x_sroot_upload_dsp_v1(u32 image_id, const u8 *image, size_t bytes,
+			  struct n1x_sroot_client_result *result)
+{
+	return n1x_sroot_upload_dsp(image_id, image, bytes, result, false, NULL);
+}
+EXPORT_SYMBOL_GPL(n1x_sroot_upload_dsp_v1);
+
+int n1x_sroot_upload_dsp_v2(u32 image_id, const u8 *image, size_t bytes,
+			  struct n1x_sroot_client_result_v2 *result)
+{
+	struct n1x_sroot_client_result upload;
+	bool released = false;
+	int err;
+
+	if (!result)
+		return -EINVAL;
+	memset(result, 0, sizeof(*result));
+	err = n1x_sroot_upload_dsp(image_id, image, bytes, &upload, true, &released);
+	result->reply_header = upload.reply_header;
+	result->published = upload.published;
+	result->reply_valid = upload.reply_valid;
+	result->accepted = upload.accepted;
+	result->staging_released = released;
+	return err;
+}
+EXPORT_SYMBOL_GPL(n1x_sroot_upload_dsp_v2);
+
+/* Caller holds boot_lock. */
 static int n1x_boot_upload(void)
 {
 	const struct firmware *firmware;
@@ -493,6 +626,8 @@ static int n1x_boot_upload(void)
 
 	if (!boot_sroot || !boot_dla)
 		return -ENODEV;
+	if (sroot_client_poisoned)
+		return -ENOTRECOVERABLE;
 	if (boot_attempted)
 		return -EALREADY;
 	if (!boot_hfrp.powered)
@@ -504,9 +639,12 @@ static int n1x_boot_upload(void)
 		err = n1x_boot_dma_gate(boot_dla);
 	if (err)
 		return err;
-	err = request_firmware_direct(&firmware, firmware_variant ?
-						N1X_BOOT_FALLBACK_FIRMWARE : N1X_BOOT_FIRMWARE,
-						boot_sroot->dev);
+	{
+		const char *name = firmware_variant ? N1X_BOOT_FALLBACK_FIRMWARE : N1X_BOOT_FIRMWARE;
+
+		device_property_read_string(boot_sroot->dev, "firmware-name", &name);
+		err = request_firmware_direct(&firmware, name, boot_sroot->dev);
+	}
 	if (err)
 		return err;
 	err = n1x_boot_validate_firmware(firmware);
@@ -525,7 +663,8 @@ static int n1x_boot_upload(void)
 		dev_err(boot_dla->dev, "runtime resume before upload failed: %d\n", err);
 		goto put_sroot;
 	}
-	boot_buffer = dma_alloc_coherent(boot_sroot->dev, N1X_BOOT_BYTES,
+	boot_bytes = firmware->size;
+	boot_buffer = dma_alloc_coherent(boot_sroot->dev, boot_bytes,
 					&boot_dma, GFP_KERNEL);
 	if (!boot_buffer) {
 		err = -ENOMEM;
@@ -535,14 +674,13 @@ static int n1x_boot_upload(void)
 		err = -ERANGE;
 		goto free;
 	}
-	err = n1x_sroot_stage_image(boot_buffer, N1X_BOOT_BYTES,
+	err = n1x_sroot_stage_image(boot_buffer, boot_bytes,
 					firmware->data, firmware->size, boot_dma,
 					0xe0000000, 0xffffffff, words);
 	if (err)
 		goto free;
-	/* Reference acquired BEFORE publication. Only checked explicit shutdown
-	 * may release it. Timeout/rejection/idle failure stays pinned; no guessed
-	 * DMA quiescence or forced unload.
+	/* Acquire the lifetime reference before publication and release it only
+	 * after checked shutdown. Retain it on timeout, rejection or idle failure.
 	 */
 	if (!try_module_get(THIS_MODULE)) {
 		err = -ENODEV;
@@ -562,7 +700,7 @@ static int n1x_boot_upload(void)
 	release_firmware(firmware);
 	return err;
 free:
-	dma_free_coherent(boot_sroot->dev, N1X_BOOT_BYTES, boot_buffer, boot_dma);
+	dma_free_coherent(boot_sroot->dev, boot_bytes, boot_buffer, boot_dma);
 	boot_buffer = NULL;
 	boot_dma = 0;
 put_dla:
@@ -992,7 +1130,9 @@ static ssize_t query_power_state_store(struct device *dev, struct device_attribu
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "query"))
 		return -EPERM;
 	mutex_lock(&boot_lock);
-	if (boot_stopping)
+	if (boot_sleep_prepared)
+		err = -EBUSY;
+	else if (boot_stopping)
 		err = -ESHUTDOWN;
 	else if (!boot_dla || boot_dla->dev != dev || !boot_dla->hfrp || !boot_sroot)
 		err = -ENODEV;
@@ -1083,6 +1223,25 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	return size;
 }
 
+/* Called with boot_lock held. This permits an attempt, not DMA reclamation. */
+static bool n1x_boot_stop_ready(void)
+{
+	return boot_hfrp.powered && !boot_hfrp.error &&
+	       boot_hfrp.channel.state == N1X_HFRP_READY &&
+	       boot_hfrp.channel.pending_sequence == N1X_HFRP_NO_SEQUENCE &&
+	       (boot_hfrp.gating.request_mask & 0x70) == 0x70 &&
+	       !boot_queue.poisoned && !boot_queue.active && !boot_queue.owner_job &&
+	       (!boot_attempted || (!boot_error && boot_result.reply_valid &&
+				   boot_result.idle_observed && !boot_result.reply.status &&
+				   !boot_result.reply.detail)) &&
+	       (!boot_ping.attempted || boot_ping.verified) &&
+	       (!boot_config.attempted || boot_config.valid) &&
+	       (!boot_region5.attempted || boot_region5.registered) &&
+	       (!boot_config_apply.attempted || boot_config_apply.accepted) &&
+	       (!boot_lpwr.attempted || boot_lpwr.accepted) &&
+	       (!boot_task.attempted || boot_task.verified);
+}
+
 /* accel->lock (if present) -> boot_lock, matching submission. Stop is terminal
  * for this module instance. A fresh load constructs a fresh channel/queue.
  * No speculative reset or rollback is attempted after any stop failure.
@@ -1108,21 +1267,10 @@ static int n1x_boot_stop_hardware(struct device *dev)
 		boot_shutdown.hardware_off = true; /* No write/DMA publisher existed. */
 		goto done;
 	}
-	/* Only the healthy, retired protocol has a recovered shutdown contract.
-	 * In particular a poisoned queue, failed upload or incomplete HFRP setup
-	 * must keep ALL mappings, PM and module references. No forced recovery.
+	/* Shutdown requires a healthy, retired queue and complete setup. Retain
+	 * mappings, PM and module references after any queue or setup failure.
 	 */
-	if (!boot_hfrp.powered || boot_hfrp.error ||
-		(boot_hfrp.gating.request_mask & 0x70) != 0x70 ||
-		boot_queue.poisoned || boot_queue.active || boot_queue.owner_job ||
-		(boot_attempted && (boot_error || !boot_result.reply_valid ||
-		!boot_result.idle_observed || boot_result.reply.status || boot_result.reply.detail)) ||
-		(boot_ping.attempted && !boot_ping.verified) ||
-		(boot_config.attempted && !boot_config.valid) ||
-		(boot_region5.attempted && !boot_region5.registered) ||
-		(boot_config_apply.attempted && !boot_config_apply.accepted) ||
-		(boot_lpwr.attempted && !boot_lpwr.accepted) ||
-		(boot_task.attempted && !boot_task.verified)) {
+	if (!n1x_boot_stop_ready()) {
 		err = -ENOTRECOVERABLE;
 		goto done;
 	}
@@ -1186,7 +1334,7 @@ static int n1x_boot_stop_hardware(struct device *dev)
 	FREE_DLA_BUFFER(boot_ping, 4096);
 #undef FREE_DLA_BUFFER
 	if (boot_buffer) {
-		dma_free_coherent(boot_sroot->dev, N1X_BOOT_BYTES, boot_buffer, boot_dma);
+		dma_free_coherent(boot_sroot->dev, boot_bytes, boot_buffer, boot_dma);
 		boot_buffer = NULL;
 		boot_dma = 0;
 	}
@@ -1203,13 +1351,31 @@ out:
 	return err;
 }
 
-static int n1x_boot_stop_device(struct device *dev)
+static int n1x_boot_stop_device(struct device *dev, bool for_sleep)
 {
 	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
+	unsigned int i;
 	int err;
 
 	if (!endpoint || endpoint->sroot)
 		return -ENODEV;
+	/* Serialize shutdown against DSP publication. The DSP loader has no
+	 * verified release operation yet, so its published buffers must survive.
+	 * Refuse before stopping the accelerator or changing its lifetime state.
+	 */
+	mutex_lock(&boot_lock);
+	if (boot_sleep_prepared && !for_sleep) {
+		mutex_unlock(&boot_lock);
+		return -EBUSY;
+	}
+	for (i = 0; i < ARRAY_SIZE(sroot_dsp_buffers); i++) {
+		if (sroot_dsp_buffers[i].published) {
+			mutex_unlock(&boot_lock);
+			return -EBUSY;
+		}
+	}
+	WRITE_ONCE(boot_stopping, true);
+	mutex_unlock(&boot_lock);
 	/* Keep the same lock order for shutdown and EXEC; never call this while
 	 * holding boot_lock. accel_stop frees its list only after hardware success.
 	 */
@@ -1225,16 +1391,13 @@ static int n1x_boot_stop_device(struct device *dev)
 			pm_runtime_put_noidle(boot_sroot->dev);
 			pm_runtime_put_noidle(boot_dla->dev);
 			boot_upload_held = false;
-			if (!boot_unpinned)
-				module_put(THIS_MODULE);
+			module_put(THIS_MODULE);
 		}
 		if (boot_hfrp_held) {
 			pm_runtime_put_noidle(boot_dla->dev);
 			boot_hfrp_held = false;
-			if (!boot_unpinned)
-				module_put(THIS_MODULE);
+			module_put(THIS_MODULE);
 		}
-		boot_unpinned = false;
 	}
 	mutex_unlock(&boot_lock);
 	return 0;
@@ -1247,7 +1410,7 @@ static ssize_t shutdown_store(struct device *dev, struct device_attribute *attr,
 
 	if (!capable(CAP_SYS_RAWIO) || !sysfs_streq(buf, "stop"))
 		return -EPERM;
-	err = n1x_boot_stop_device(dev);
+	err = n1x_boot_stop_device(dev, false);
 	return err ? err : (ssize_t)count;
 }
 static DEVICE_ATTR_WO(shutdown);
@@ -1402,6 +1565,8 @@ out:
 
 static int n1x_boot_accel_ready(struct device *dev)
 {
+	if (boot_sleep_prepared)
+		return -EBUSY;
 	if (boot_stopping || !enable_preempt || !boot_dla || boot_dla->dev != dev ||
 		!boot_sroot || !boot_task.verified || !boot_lpwr.accepted ||
 		!boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid)
@@ -1484,7 +1649,9 @@ static int n1x_boot_accel_fail(struct device *dev, struct n1x_dla_job *job, int 
 	int err;
 
 	mutex_lock(&boot_lock);
-	if (!boot_dla || boot_dla->dev != dev)
+	if (boot_sleep_prepared)
+		err = -EBUSY;
+	else if (!boot_dla || boot_dla->dev != dev)
 		err = -ENODEV;
 	else
 		err = n1x_dla_job_fail(&boot_queue, job, error);
@@ -1512,6 +1679,10 @@ static int n1x_boot_accel_submit(struct device *dev, struct n1x_dla_job *job,
 	int err;
 
 	mutex_lock(&boot_lock);
+	if (boot_sleep_prepared) {
+		err = -EBUSY;
+		goto out;
+	}
 	if (boot_stopping || !boot_dla || boot_dla->dev != dev ||
 		!boot_sroot || !boot_task.verified || !boot_lpwr.accepted ||
 		!boot_hfrp.powered || !boot_hfrp.policy.boot_tables_valid) {
@@ -1582,6 +1753,8 @@ static int n1x_boot_probe(struct platform_device *pdev)
 		if (opt_enable_irq) {
 			int irq = platform_get_irq_optional(pdev, 0);
 
+			if (irq == -EPROBE_DEFER)
+				return irq;
 			if (irq > 0) {
 				int irq_err = devm_request_irq(dev, irq, n1x_boot_irq_handler,
 									IRQF_SHARED, dev_name(dev), endpoint);
@@ -1654,7 +1827,6 @@ static void n1x_boot_reset_state(void)
 	WRITE_ONCE(boot_stopping, false);
 	boot_hfrp_held = false;
 	boot_upload_held = false;
-	boot_unpinned = false;
 	memset(&boot_shutdown, 0, sizeof(boot_shutdown));
 	memset(&boot_hfrp, 0, sizeof(boot_hfrp));
 	memset(&boot_ping, 0, sizeof(boot_ping));
@@ -1716,11 +1888,9 @@ static int n1x_master_bind(struct device *master)
 					"automatic startup failed (%d); device remains fail-closed\n",
 					start_err);
 			} else {
-				if (boot_upload_held)
-					module_put(THIS_MODULE);
-				if (boot_hfrp_held)
-					module_put(THIS_MODULE);
-				boot_unpinned = true;
+				/* Keep publication leases until explicit checked shutdown.
+				 * remove() cannot abort module unloading if a later stop fails.
+				 */
 				dev_info(boot_dla->dev,
 					"N1X NPU initialized in-kernel (HFRP v%u.%u, %u kHz)\n",
 					boot_hfrp.version.major, boot_hfrp.version.minor,
@@ -1736,8 +1906,14 @@ static int n1x_master_bind(struct device *master)
 
 		accel = n1x_dla_accel_register(dla_for_accel->dev, n1x_boot_accel_submit);
 		if (IS_ERR(accel)) {
-			component_unbind_all(master, NULL);
-			return PTR_ERR(accel);
+			/* Firmware already owns DMA. Returning a bind/probe failure
+			 * would release devm mappings underneath that live firmware.
+			 * Keep both components bound for checked shutdown and reload.
+			 */
+			dev_err(master,
+				"accelerator registration failed (%ld); retaining bound hardware\n",
+				PTR_ERR(accel));
+			return 0;
 		}
 		if (enable_preempt)
 			n1x_dla_accel_set_control(accel, &n1x_boot_control_ops);
@@ -1760,7 +1936,7 @@ static void n1x_master_unbind(struct device *master)
 		do_stop = true;
 	mutex_unlock(&boot_lock);
 	if (do_stop) {
-		int err = n1x_boot_stop_device(master);
+		int err = n1x_boot_stop_device(master, false);
 
 		if (err)
 			dev_err(master,
@@ -1807,6 +1983,47 @@ static void n1x_boot_remove(struct platform_device *pdev)
 	mutex_unlock(&boot_lock);
 }
 
+static int n1x_boot_prepare(struct device *dev)
+{
+	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
+	bool active_boot;
+	unsigned int i;
+	int err = 0;
+
+	if (!endpoint || endpoint->sroot)
+		return 0;
+	/* No device has suspended yet. Refuse conditions that cannot be resolved
+	 * by our checked stop path, and prevent new public work until complete.
+	 */
+	mutex_lock(&boot_lock);
+	active_boot = (boot_attempted || boot_hfrp.attempted) && !boot_shutdown.released;
+	if (active_boot && (boot_stopping || !n1x_boot_stop_ready())) {
+		err = -EBUSY;
+		goto unlock;
+	}
+	for (i = 0; i < ARRAY_SIZE(sroot_dsp_buffers); i++) {
+		if (sroot_dsp_buffers[i].published) {
+			err = -EBUSY;
+			goto unlock;
+		}
+	}
+	boot_sleep_prepared = true;
+unlock:
+	mutex_unlock(&boot_lock);
+	return err;
+}
+
+static void n1x_boot_complete(struct device *dev)
+{
+	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
+
+	if (!endpoint || endpoint->sroot)
+		return;
+	mutex_lock(&boot_lock);
+	boot_sleep_prepared = false;
+	mutex_unlock(&boot_lock);
+}
+
 static int n1x_boot_suspend(struct device *dev)
 {
 	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
@@ -1822,7 +2039,7 @@ static int n1x_boot_suspend(struct device *dev)
 	mutex_unlock(&boot_lock);
 	if (err || !active_boot)
 		return err;
-	err = n1x_boot_stop_device(dev);
+	err = n1x_boot_stop_device(dev, true);
 	if (err)
 		return err;
 	mutex_lock(&boot_lock);
@@ -1847,12 +2064,6 @@ static int n1x_boot_resume(struct device *dev)
 			dev_err(dev,
 				"resume startup failed (%d); device remains fail-closed\n",
 				err);
-		} else {
-			if (boot_upload_held)
-				module_put(THIS_MODULE);
-			if (boot_hfrp_held)
-				module_put(THIS_MODULE);
-			boot_unpinned = true;
 		}
 	}
 	mutex_unlock(&boot_lock);
@@ -1878,12 +2089,14 @@ static void n1x_boot_system_shutdown(struct platform_device *pdev)
 	 */
 	if (!endpoint || endpoint->sroot)
 		return;
-	err = n1x_boot_stop_device(&pdev->dev);
+	err = n1x_boot_stop_device(&pdev->dev, false);
 	if (err)
 		dev_err(&pdev->dev, "shutdown failed (%d); retaining DMA, no forced reset\n", err);
 }
 
 static const struct dev_pm_ops n1x_boot_pm = {
+	.prepare = pm_sleep_ptr(n1x_boot_prepare),
+	.complete = pm_sleep_ptr(n1x_boot_complete),
 	.runtime_suspend = n1x_boot_runtime_suspend,
 	.suspend = n1x_boot_suspend,
 	.resume = n1x_boot_resume,
@@ -1903,6 +2116,8 @@ static struct platform_driver n1x_boot_driver = {
 		.acpi_match_table = n1x_boot_ids,
 		.dev_groups = boot_groups,
 		.pm = &n1x_boot_pm,
+		/* A failed hardware stop cannot be undone from remove(). */
+		.suppress_bind_attrs = true,
 	},
 };
 

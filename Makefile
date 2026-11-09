@@ -29,6 +29,7 @@ test-portable:
 	$(PYTHON) scripts/test_prepare_inputs.py
 	$(PYTHON) scripts/test_hfrp_channel.py
 	$(PYTHON) scripts/test_linux_bootstrap_guards.py
+	$(PYTHON) scripts/test_linux_boot_delay.py
 	$(PYTHON) scripts/test_linux_bootstrap_ping.py
 	$(PYTHON) scripts/test_linux_hfrp_state.py
 	$(PYTHON) scripts/test_linux_config_snapshot.py
@@ -38,10 +39,12 @@ test-portable:
 	$(PYTHON) scripts/test_linux_accel.py
 	$(PYTHON) scripts/test_linux_accel_backend.py
 	$(PYTHON) scripts/test_linux_shutdown.py
+	$(PYTHON) scripts/test_linux_binding.py
 	$(PYTHON) scripts/test_shutdown_transport.py
 	$(PYTHON) scripts/test_dla_runtime.py
 	$(PYTHON) scripts/test_npu_reload.py
 	$(PYTHON) scripts/test_sroot_cca_quirk.py
+	$(PYTHON) scripts/test_sroot_dsp_broker.py
 
 module:
 	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" modules

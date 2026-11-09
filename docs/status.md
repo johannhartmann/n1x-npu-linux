@@ -7,7 +7,7 @@
 - **Kernel**: ARM64 Linux kernel (`>= 6.12`) with the [`NVDA8600` noncoherent DMA quirk](../patches/arm64-acpi-iort-nvda8600-noncoherent-dma.patch).
 - **Vendor Inputs**: Windows ARM64 driver `617.42` (`nvlddmkm.sys`), TensorRT `11.4` (`libnvdla_compiler.so`, `nvdla_compiler.dll`), and Linux cuDLA `13.4.92` (`libcudla.so.1`).
 
-`n1x_npu_bootstrap.ko` dynamically discovers the ACPI endpoints, `_CRS` MMIO apertures, IORT SMMUv3 mappings, and live VBIOS policy (`NVDA3000` locator `0x1182bc80` $\rightarrow$ carveout `0xe5b81800`), brings up firmware in C on probe, and exposes `/dev/accel/accel0`.
+`n1x_npu_bootstrap.ko` dynamically discovers the ACPI endpoints, `_CRS` MMIO apertures, IORT SMMUv3 mappings, and live VBIOS policy (GB10/T264 display locator `0x1182bc80` $\rightarrow$ carveout `0xe5b81800`), brings up firmware in C on probe, and exposes `/dev/accel/accel0`.
 
 ## Hardware Qualification Summary
 

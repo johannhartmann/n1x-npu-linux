@@ -49,9 +49,9 @@ int joined_stop(const struct n1x_dla_io *io)
  boot_hfrp.channel.next_sequence=9;
  boot_hfrp.channel.pending_sequence=N1X_HFRP_NO_SEQUENCE;
  boot_hfrp.version=(struct n1x_hfrp_version){.valid=1,.major=1,.minor=5};
- return n1x_boot_stop_device(&device);
+ return n1x_boot_stop_device(&device,false);
 }
-int repeat_stop(void) {return n1x_boot_stop_device(&device);}
+int repeat_stop(void) {return n1x_boot_stop_device(&device,false);}
 int released(void)
 {
  if(boot_shutdown.released) {

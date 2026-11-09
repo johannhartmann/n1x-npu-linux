@@ -11,10 +11,17 @@ The NVIDIA N1X (`t254`) NPU exposes two ACPI platform devices that are bound as 
 
 The driver discovers both `_CRS` MMIO apertures, IORT SMMUv3 mappings, and the live VBIOS policy carveout dynamically without hardcoded DMI board/BIOS checks.
 
+The Linux binding still has singleton boot state and supports one aggregate.
+Duplicate endpoints are rejected. Kconfig/Kbuild integration is provided by
+[`driver/Kconfig`](../driver/Kconfig) (`CONFIG_DRM_ACCEL_N1X`), but this is not
+an upstream-ready, independently instantiable supplier/consumer architecture.
+See [kernel driver architecture](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/blob/main/docs/kernel-driver-architecture.md)
+for subsystem boundaries and remaining upstream requirements.
+
 ## 2. VBIOS Policy & HFRP Bring-Up
 
-### Live VBIOS Carveout (`NVDA3000` / `0x1182bc80`)
-[`n1x_boot_live_board_policy()`](../driver/n1x_npu_boot_linux.c) resolves the `NVDA3000` (`\_SB_.SVP0`) locator register (`0x1182bc80`), computes the 32-bit physical carveout base (`(((u64)locator << 12) + N1X_VBIOS_CARVEOUT_BASE) & 0xffffffffULL`, yielding `0xe5b81800` for locator `0xffe5b812`), and parses the BIT `0x6c` table ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)) to extract the board's clock/power/gating policy (`892.8 MHz` nominal, gating mask `0x70`).
+### Live VBIOS Carveout (GB10/T264 display / `0x1182bc80`)
+[`n1x_boot_live_board_policy()`](../driver/n1x_npu_boot_linux.c) reads the GB10/T264 display locator register (`0x1182bc80`), computes the 32-bit physical carveout base (`(((u64)locator << 12) + N1X_VBIOS_CARVEOUT_BASE) & 0xffffffffULL`, yielding `0xe5b81800` for locator `0xffe5b812`), and parses the BIT `0x6c` table ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)) to extract the board's clock/power/gating policy (`892.8 MHz` nominal, gating mask `0x70`).
 
 ### 8-Stage In-Kernel Bring-Up
 When both endpoints bind, [`n1x_master_bind()`](../driver/n1x_npu_boot_linux.c) runs the 8-stage initialization sequence in C:
@@ -46,6 +53,9 @@ Defined in [`include/uapi/n1x_dla_accel.h`](../include/uapi/n1x_dla_accel.h) and
 | `mmap()` (`job_id << PAGE_SHIFT`) | Zero-copy read-only (`VM_READ`, `!VM_MAYWRITE`) userspace mapping of a completed job's DMA buffer via `dma_mmap_coherent()` |
 
 **Lifetime & Fail-Closed Retention**:
+- Firmware publication retains module/runtime-PM leases until verified shutdown.
+  A DRM registration failure after startup keeps the components bound so devres
+  cannot unmap live hardware. Checked shutdown remains available for reload.
 - Completed jobs owned by an open `/dev/accel/accel0` file descriptor are freed automatically in [`postclose()`](../driver/n1x_dla_accel.c) when the FD closes (or in [`n1x_accel_vm_close()`](../driver/n1x_dla_accel.c) when the last `mmap` VMA unmaps).
 - While `job->mmap_count > 0`, `REEXEC` returns `-EBUSY` so DMA never races with userspace reads.
 - Any job that fails or times out—or any device instance where a hardware power-down attempt failed (`accel->stop_failed`)—retains its DMA pages until confirmed hardware shutdown or reboot.

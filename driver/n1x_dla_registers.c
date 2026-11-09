@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #ifdef __KERNEL__
 #include <linux/array_size.h>
+#include <linux/stddef.h>
 #endif
 #include <linux/errno.h>
 #include "n1x_dla_registers.h"
@@ -28,7 +29,7 @@ static const struct register_range mode2[] = {
 int n1x_dla_register_offset(enum n1x_dla_register_map map, __u32 logical,
 			    size_t resource_size, __u32 *mapped)
 {
-	const struct register_range *ranges = 0;
+	const struct register_range *ranges = NULL;
 	size_t count = 0, index;
 	__u32 offset = logical;
 	int found = 0;

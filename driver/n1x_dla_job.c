@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <linux/errno.h>
+#ifdef __KERNEL__
+#include <linux/stddef.h>
+#else
+#include <stddef.h>
+#endif
 #include "n1x_dla_job.h"
 #include "n1x_dla_command.h"
 
@@ -11,7 +16,7 @@ static int finish(struct n1x_dla_job_queue *queue, struct n1x_dla_job *job, int 
 	if (err && job->attempted)
 		queue->poisoned = true;
 	queue->active = false;
-	queue->owner_job = 0;
+	queue->owner_job = NULL;
 	return err;
 }
 
