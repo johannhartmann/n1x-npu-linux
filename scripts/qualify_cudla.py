@@ -101,6 +101,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--device', default='/dev/accel/accel0')
+    parser.add_argument('--module', type=Path, default=ROOT / 'driver/n1x_npu_bootstrap.ko',
+                        help='exact module artifact whose loaded source version must match')
     parser.add_argument('--prepare-only', action='store_true', help='create inputs/references; no CUDA or device access')
     parser.add_argument(
         '--reuse',
@@ -200,11 +202,15 @@ def main():
         raise RuntimeError('requires root')
     profile = Path('/sys/firmware/acpi/platform_profile').read_text().strip()
     built = subprocess.check_output(
-        ['modinfo', '-F', 'srcversion', str(ROOT / 'driver/n1x_npu_bootstrap.ko')],
+        ['modinfo', '-F', 'srcversion', str(args.module)],
         text=True,
     ).strip()
     if Path('/sys/module/n1x_npu_bootstrap/srcversion').read_text().strip() != built:
         raise RuntimeError('loaded module differs from reviewed build')
+    vermagic = subprocess.check_output(['modinfo', '-F', 'vermagic', str(args.module)],
+                                      text=True).split()[0]
+    if vermagic != os.uname().release:
+        raise RuntimeError('module artifact targets a different kernel')
     debugfs = Path('/sys/kernel/debug/n1x-npu-bootstrap')
     status = fields((debugfs / 'status').read_text())
     hfrp = fields((debugfs / 'hfrp_status').read_text()) if (debugfs / 'hfrp_status').exists() else {}
@@ -228,6 +234,8 @@ def main():
         'preflight.json',
         boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
         module_srcversion=built,
+        module_artifact=str(args.module.resolve()),
+        module_sha256=hashlib.sha256(args.module.read_bytes()).hexdigest(),
         platform_profile=profile,
         info=info,
         status=status,

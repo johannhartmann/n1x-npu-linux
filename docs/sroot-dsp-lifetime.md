@@ -2,7 +2,7 @@
 
 The kernel-only interface in
 [`n1x_sroot_client.h`](../include/n1x_sroot_client.h) serializes DSP image
-uploads with NPU bootstrap under `boot_lock`. It accepts MT8901 signed containers with supported image IDs and valid section
+uploads with NPU bootstrap under the selected provider context mutex. It accepts MT8901 signed containers with supported image IDs and valid section
 bounds, and permits one published attempt per image ID. SROOT authenticates the
 original certificate/signatures; the host does not pin firmware file hashes.
 It does not expose raw SROOT MMIO or a userspace upload interface.
@@ -40,3 +40,26 @@ that a published lease with no CPU/DMA allocation still prevents shutdown.
 ABI v2 is an uninstalled candidate and has no hardware release qualification.
 Verified DSP core shutdown, operating-memory/provider-lease release and a
 fresh-boot hardware trial remain required.
+
+## Device-bound ABI v3
+
+`n1x_sroot_client_ops_v3()` supplies a probe-time referenced handle. The caller
+holds the exported symbol while using its operation table and serializes each
+handle. `get()` matches the consumer's firmware parent against registered
+SROOT contexts and rejects ambiguity. It references the context, consumer,
+DLA supplier and module and creates a stateless DSP → DLA PM link. Unavailable
+or uninitialized providers defer probe; no firmware is started by lookup.
+
+`prepare()` checks loader health and reserves the provider before DSP power or
+DRAM allocation. Reserved clients block checked NPU stop and system-PM prepare.
+`publish()` makes the reservation irrevocable before the consumer writes a DSP
+DMA address. `cancel()` unwinds only an unpublished reservation. `put()` frees
+an unpublished handle and its link/references, or returns `EBUSY` while retaining
+a published handle. `upload()` uses the handle's exact context and ABI v2's
+staging rules. A failed upload cannot undo an earlier DSP address publication.
+
+The captured firmware has no `_DEP`/`_DSD` association for these devices. Unique
+siblings are therefore a checked platform fallback, not a universal firmware
+binding. Whole-core DSP shutdown remains unverified. ABI v3 does not make
+published DSPs removable or suspendable, and has not yet been loaded for a
+fresh-boot hardware trial.

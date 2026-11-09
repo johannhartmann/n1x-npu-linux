@@ -61,3 +61,10 @@ uploads. New hardware operations return `EBUSY` until `complete`, including
 after an aborted sleep transition. The existing checked stop/start path runs
 during suspend/resume. This admission gate does not make a failed firmware
 shutdown recoverable or establish physical suspend/resume qualification.
+
+Device-bound DSP clients also reserve the provider **before** publishing their
+own DRAM address. Stop and PM preparation reject even this pre-upload
+reservation. It can be canceled only before DSP publication. Unpublished DSP
+modules must be removed before unloading the NPU provider, because their
+probe-time handles hold its module and device references. A published DSP
+still requires a reboot; force unload is not a qualification procedure.

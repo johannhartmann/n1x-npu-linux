@@ -40,6 +40,7 @@ test-portable:
 	$(PYTHON) scripts/test_linux_accel_backend.py
 	$(PYTHON) scripts/test_linux_shutdown.py
 	$(PYTHON) scripts/test_linux_binding.py
+	$(PYTHON) scripts/test_linux_context.py
 	$(PYTHON) scripts/test_shutdown_transport.py
 	$(PYTHON) scripts/test_dla_runtime.py
 	$(PYTHON) scripts/test_npu_reload.py
