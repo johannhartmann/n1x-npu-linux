@@ -113,6 +113,14 @@ struct n1x_boot_hfrp_state {
 	int error;
 };
 
+/* Validated immutable VBIOS data, independent of the live HFRP channel. */
+struct n1x_boot_board_policy {
+	struct n1x_dla_vbios_policy policy;
+	struct n1x_dla_gating_policy gating;
+	struct n1x_dla_vbios_location location;
+	bool valid;
+};
+
 struct n1x_boot_ping_state {
 	void *buffer;
 	dma_addr_t dma;
@@ -188,6 +196,7 @@ struct n1x_boot_context {
 	bool sleep_prepared, suspended, loader_poisoned;
 	struct n1x_boot_shutdown_state shutdown;
 	struct n1x_boot_hfrp_state hfrp;
+	struct n1x_boot_board_policy board_policy;
 	struct n1x_boot_ping_state ping;
 	struct n1x_boot_config_state config;
 	struct n1x_boot_region5_state region5;
@@ -475,12 +484,25 @@ static int n1x_boot_board_policy(struct n1x_boot_context *boot,
 
 static int n1x_boot_live_board_policy(struct n1x_boot_context *boot)
 {
+	struct n1x_boot_board_policy *cached = &boot->board_policy;
 	void __iomem *locator_io;
 	resource_size_t rom_phys;
 	u32 locator;
 	void *rom;
 	int err;
 
+	/* Resume must not touch display MMIO before the GPU has resumed. The
+	 * board ROM policy does not change during this provider's lifetime.
+	 * Only parsed, PCIR-verified data is retained; HFRP state is rebuilt.
+	 */
+	if (cached->valid) {
+		boot->hfrp.policy = cached->policy;
+		boot->hfrp.gating = cached->gating;
+		boot->hfrp.location = cached->location;
+		return 0;
+	}
+	if (boot->sleep_prepared)
+		return -EHOSTDOWN;
 	locator_io = ioremap(N1X_DISP_VBIOS_LOCATOR_PHYS, sizeof(u32));
 	if (!locator_io)
 		return -ENOMEM;
@@ -496,6 +518,12 @@ static int n1x_boot_live_board_policy(struct n1x_boot_context *boot)
 		return -ENOMEM;
 	err = n1x_boot_board_policy(boot, rom, N1X_VBIOS_CARVEOUT_SIZE);
 	memunmap(rom);
+	if (!err) {
+		cached->policy = boot->hfrp.policy;
+		cached->gating = boot->hfrp.gating;
+		cached->location = boot->hfrp.location;
+		cached->valid = true;
+	}
 	return err;
 }
 

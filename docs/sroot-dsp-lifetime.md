@@ -91,6 +91,14 @@ working supplier. After acknowledged D0 and retained-state checks, each calls
 DLA suspension can use the same vote restoration. No operation here releases
 DSP operating memory, repairs poisoned firmware, or allows image reload.
 
+Resume reuses the provider's validated CPU firmware image and immutable parsed
+VBIOS policy. The VBIOS cache is populated only after parsing, PCIR verification
+and gating validation succeed. It survives checked shutdown/state reset; the
+HFRP channel, version, power state and transactions do not. This avoids
+filesystem firmware requests and display-locator MMIO while those independent
+devices may still be suspended. A missing cache during system sleep fails
+closed instead of attempting either access.
+
 The matching platform DSP driver limits this to ASoC-ordered DSP s2idle with retained AFE SRAM and defaults
 its experimental `enable_retention_sleep` option off. Legacy active clients without ASoC ordering, Hibernate and deep sleep remain
 unsupported. Runtime autosuspend and full DSP release are still unavailable. SET acknowledgement and
