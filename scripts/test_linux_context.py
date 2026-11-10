@@ -196,12 +196,14 @@ int main(void)
  assert(!r->cancel(c) && !b->retention_leases && !b->client_leases);
  assert(!r->prepare(c) && !r->publish(c));
  assert(sleep->suspend(c)==-EINVAL && !b->sleeping_clients);
+ expected_upload=b;assert(!r->upload(c,0xc0304,image,4,&result) && b->ready_clients==1);
  b->sleep_prepared=true;
  d.dev=&ddev2;assert(sleep->suspend(c)==-ENODEV);d.dev=&ddev;
  b->loader_poisoned=true;assert(sleep->suspend(c)==-ENOTRECOVERABLE);b->loader_poisoned=false;
  b->stopping=true;assert(sleep->suspend(c)==-ENOTRECOVERABLE);b->stopping=false;
  assert(!sleep->suspend(c) && c->asleep && b->sleeping_clients==1);
  assert(sleep->suspend(c)==-EALREADY && b->sleeping_clients==1);
+ assert(r->upload(c,0xc0304,image,4,&result)==-EBUSY);
  assert(r->put(c)==-EBUSY && links==1 && modules==1 && b->retention_leases==1);
  b->suspended=true;assert(sleep->resume(c)==-EHOSTDOWN && c->asleep);b->suspended=false;
  b->stopping=true;assert(sleep->resume(c)==-EHOSTDOWN && c->asleep);b->stopping=false;
@@ -212,7 +214,7 @@ int main(void)
  assert(!r->upload(c,0xc0304,image,4,&result) && b->dsp_buffers[1].sleep_retained);
  b->sleep_prepared=true;assert(!sleep->suspend(c) && !sleep->resume(c));b->sleep_prepared=false;
  /* Test teardown only; no production operation releases a published handle. */
- c->published=false;assert(!r->put(c) && !b->client_leases && !b->retention_leases);
+ c->published=false;b->ready_clients=0;assert(!r->put(c) && !b->client_leases && !b->retention_leases);
  /* Ambiguous siblings fail, even when the second DLA is unbound. */
  fwnode_handle_put(b2->scope);b2->scope=&scope;scope.refs++;
  put_device(b2->consumer);b2->consumer=NULL;

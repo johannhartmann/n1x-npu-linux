@@ -75,7 +75,9 @@ continue to block system sleep in `prepare`.
 
 Consumers freeze new work in PM `prepare`. After an acknowledged DSP D3
 transition, IRQ synchronization and power-worker draining, each calls
-`suspend()`. Duplicate votes fail. The provider's suspend requires every
+`suspend()`. Duplicate votes fail. The provider's prepare also requires a canonical completed upload for every
+reservation, so in-flight boot/publication cannot be admitted as retained idle.
+The provider's suspend requires every
 reservation to have voted, then uses checked DLA stop without dropping the
 shared publication reference or DSP buffers/leases. Ordinary shutdown/unload
 still returns `EBUSY`, including while all clients are asleep.
@@ -89,9 +91,9 @@ working supplier. After acknowledged D0 and retained-state checks, each calls
 DLA suspension can use the same vote restoration. No operation here releases
 DSP operating memory, repairs poisoned firmware, or allows image reload.
 
-The matching platform DSP driver limits this to idle-DSP s2idle and defaults
-its experimental `enable_retention_sleep` option off. Active audio-task/SRAM
-ownership, Hibernate and deep sleep remain unsupported. SET acknowledgement and
+The matching platform DSP driver limits this to ASoC-ordered DSP s2idle with retained AFE SRAM and defaults
+its experimental `enable_retention_sleep` option off. Legacy active clients without ASoC ordering, Hibernate and deep sleep remain
+unsupported. Runtime autosuspend and full DSP release are still unavailable. SET acknowledgement and
 matching SRAM descriptors alone do not prove firmware liveness or safe DMA
 reclamation. Hardware sleep/audio/NPU qualification is still pending; this is
 not a claim that published DSP suspend now works on the running machine.

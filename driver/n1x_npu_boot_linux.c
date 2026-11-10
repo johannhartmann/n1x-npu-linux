@@ -163,7 +163,7 @@ struct n1x_sroot_client {
 	struct n1x_boot_context *boot;
 	struct device *supplier, *consumer;
 	struct device_link *link;
-	bool reserved, published, retention, asleep;
+	bool reserved, published, retention, ready, asleep;
 };
 
 struct n1x_boot_context {
@@ -177,7 +177,7 @@ struct n1x_boot_context {
 	atomic_t irq_count;
 	struct n1x_boot_endpoint *dla, *sroot;
 	bool irq_registered, registered, removing, lifetime_held;
-	unsigned int client_leases, retention_leases, sleeping_clients;
+	unsigned int client_leases, retention_leases, ready_clients, sleeping_clients;
 	struct n1x_dla_sroot_load_result upload_result;
 	const struct firmware *firmware;
 	size_t image_bytes;
@@ -981,6 +981,10 @@ static int n1x_sroot_client_upload(struct n1x_sroot_client *client,
 		return -EINVAL;
 	memset(result, 0, sizeof(*result));
 	mutex_lock(&boot->lock);
+	if (client->asleep) {
+		mutex_unlock(&boot->lock);
+		return -EBUSY;
+	}
 	published = client->published;
 	mutex_unlock(&boot->lock);
 	if (!published)
@@ -995,6 +999,10 @@ static int n1x_sroot_client_upload(struct n1x_sroot_client *client,
 	if (!err && released && client->retention) {
 		mutex_lock(&boot->lock);
 		boot->dsp_buffers[image_id - 0xc0303].sleep_retained = true;
+		if (!client->ready) {
+			client->ready = true;
+			boot->ready_clients++;
+		}
 		mutex_unlock(&boot->lock);
 	}
 	return err;
@@ -1030,7 +1038,7 @@ static int n1x_sroot_client_suspend(struct n1x_sroot_client *client)
 	int err = 0;
 
 	mutex_lock(&boot->lock);
-	if (!client->retention || !client->published || !boot->sleep_prepared) {
+	if (!client->retention || !client->published || !client->ready || !boot->sleep_prepared) {
 		err = -EINVAL;
 	} else if (boot->removing || !boot->dla || !boot->sroot ||
 		   boot->dla->dev != client->supplier) {
@@ -1942,6 +1950,7 @@ static bool n1x_boot_clients_allow_sleep(struct n1x_boot_context *boot, bool req
 	unsigned int i;
 
 	if (boot->loader_poisoned || boot->client_leases != boot->retention_leases ||
+	    boot->client_leases != boot->ready_clients ||
 	    (require_votes && boot->sleeping_clients != boot->client_leases))
 		return false;
 	for (i = 0; i < ARRAY_SIZE(boot->dsp_buffers); i++) {

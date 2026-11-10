@@ -168,7 +168,10 @@ int main(void)
  assert(!boot_stopping && !boot_shutdown.attempted && !gates && !accesses);
  assert(n1x_boot_prepare(&device)==-EBUSY && !boot_sleep_prepared);
 
- reset();n1x_boot_hold_publication(boot);boot->client_leases=boot->retention_leases=3;
+ reset();boot->client_leases=boot->retention_leases=1;
+ assert(n1x_boot_prepare(&device)==-EBUSY && !boot_sleep_prepared && !stops);
+ boot->ready_clients=1;assert(!n1x_boot_prepare(&device));n1x_boot_complete(&device);
+ reset();n1x_boot_hold_publication(boot);boot->client_leases=boot->retention_leases=boot->ready_clients=3;
  for(unsigned i=0;i<3;i++) {
   sroot_dsp_buffers[i].published=sroot_dsp_buffers[i].staging_released=true;
   sroot_dsp_buffers[i].sleep_retained=true;
@@ -186,7 +189,7 @@ int main(void)
 
  for(unsigned fail=0;fail<=8;fail++) {
   reset();dla_ep.hfrp=(void *)1;n1x_boot_hold_publication(boot);
-  boot->client_leases=boot->retention_leases=boot->sleeping_clients=1;
+  boot->client_leases=boot->retention_leases=boot->ready_clients=boot->sleeping_clients=1;
   sroot_dsp_buffers[0].published=sroot_dsp_buffers[0].staging_released=true;
   sroot_dsp_buffers[0].sleep_retained=true;
   assert(!n1x_boot_prepare(&device) && !n1x_boot_suspend(&device));
