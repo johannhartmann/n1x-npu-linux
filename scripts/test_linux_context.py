@@ -14,7 +14,7 @@ def main():
     registry = source[source.index('static void n1x_boot_release('):
                       source.index('static int n1x_boot_group_member(')]
     clients = source[source.index('static int n1x_sroot_client_ready('):
-                     source.index('EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v3);')]
+                     source.index('EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v4);') + len('EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v4);')]
     matcher = source[source.index('static struct acpi_device *n1x_find_sroot('):source.index('static void n1x_match_put(')]
     diagnostics = source[source.index('static int n1x_debugfs_emit_attr('):source.index('static int n1x_debugfs_status_show(')]
     code = context_layout() + r'''
@@ -75,6 +75,8 @@ static int n1x_sroot_upload_dsp(struct n1x_boot_context *b,u32 id,const u8 *imag
 {assert(b==expected_upload && id==0xc0304 && image && bytes==4 && release);
  uploads++;*r=(struct n1x_sroot_client_result){.reply_header=0x18,.published=1,.reply_valid=1,.accepted=1};
  *released=true;return 0;}
+static unsigned firmware_releases;
+static void release_firmware(const struct firmware *f){if(f){assert(f==(void *)1);firmware_releases++;}}
 ''' + registry + clients + r'''
 #include <sys/types.h>
 #define PAGE_SIZE 4096
@@ -185,6 +187,32 @@ int main(void)
  /* Test teardown only: the production API deliberately has no such release. */
  c->published=false;assert(!ops->put(c));
  assert(!ops->put(c2) && !b2->client_leases);
+
+ /* v4 votes retain all references and reject legacy/missing/duplicate votes. */
+ const struct n1x_sroot_client_sleep_ops *sleep=n1x_sroot_client_ops_v4();
+ const struct n1x_sroot_client_ops *r=sleep->client;
+ c=r->get(&cdev);assert(!IS_ERR(c) && c->retention);
+ assert(!r->prepare(c) && b->retention_leases==1 && b->client_leases==1);
+ assert(!r->cancel(c) && !b->retention_leases && !b->client_leases);
+ assert(!r->prepare(c) && !r->publish(c));
+ assert(sleep->suspend(c)==-EINVAL && !b->sleeping_clients);
+ b->sleep_prepared=true;
+ d.dev=&ddev2;assert(sleep->suspend(c)==-ENODEV);d.dev=&ddev;
+ b->loader_poisoned=true;assert(sleep->suspend(c)==-ENOTRECOVERABLE);b->loader_poisoned=false;
+ b->stopping=true;assert(sleep->suspend(c)==-ENOTRECOVERABLE);b->stopping=false;
+ assert(!sleep->suspend(c) && c->asleep && b->sleeping_clients==1);
+ assert(sleep->suspend(c)==-EALREADY && b->sleeping_clients==1);
+ assert(r->put(c)==-EBUSY && links==1 && modules==1 && b->retention_leases==1);
+ b->suspended=true;assert(sleep->resume(c)==-EHOSTDOWN && c->asleep);b->suspended=false;
+ b->stopping=true;assert(sleep->resume(c)==-EHOSTDOWN && c->asleep);b->stopping=false;
+ b->upload_error=-EIO;assert(sleep->resume(c)==-EHOSTDOWN && c->asleep);b->upload_error=0;
+ assert(!sleep->resume(c) && !c->asleep && !b->sleeping_clients);
+ assert(sleep->resume(c)==-EINVAL);
+ b->sleep_prepared=false;expected_upload=b;
+ assert(!r->upload(c,0xc0304,image,4,&result) && b->dsp_buffers[1].sleep_retained);
+ b->sleep_prepared=true;assert(!sleep->suspend(c) && !sleep->resume(c));b->sleep_prepared=false;
+ /* Test teardown only; no production operation releases a published handle. */
+ c->published=false;assert(!r->put(c) && !b->client_leases && !b->retention_leases);
  /* Ambiguous siblings fail, even when the second DLA is unbound. */
  fwnode_handle_put(b2->scope);b2->scope=&scope;scope.refs++;
  put_device(b2->consumer);b2->consumer=NULL;
@@ -198,12 +226,12 @@ int main(void)
  assert(!n1x_debugfs_open(&inode,&file,NULL) && sdev.refs==device_refs+1);
  struct seq_file *diagnostic=file.private_data;
  assert(!n1x_debugfs_emit_attr(diagnostic,show_attr) && !strcmp(diagnostic->output,"live"));
- n1x_boot_owner_put(b);
+ b->firmware=(void *)1;n1x_boot_owner_put(b);assert(!firmware_releases);
  assert(n1x_debugfs_emit_attr(diagnostic,show_attr)==-ENODEV);
  assert(!n1x_debugfs_release(&inode,&file));
  assert(b->refs.value==1 && ops->prepare(c)==-ENODEV);
  assert(PTR_ERR(ops->get(&cdev))==-EPROBE_DEFER);
- assert(!ops->put(c) && !allocations && !links && !modules);
+ assert(!ops->put(c) && !allocations && !links && !modules && firmware_releases==1);
  assert(scope.refs==1 && other.refs==1 && sdev.refs==1 && ddev.refs==1 && cdev.refs==1);
  assert(sdev2.refs==1 && ddev2.refs==1 && cdev2.refs==1);
  b=make_boot(&s,&d);n1x_boot_hold_publication(b);n1x_boot_hold_publication(b);

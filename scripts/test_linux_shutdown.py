@@ -14,7 +14,7 @@ def shutdown_harness():
     state = ""
     dsp_state = ""
     code = text[text.index('static bool n1x_boot_stop_ready('):text.index('static DEVICE_ATTR_WO(shutdown);')]
-    code += text[text.index('static int n1x_boot_prepare('):text.index('static void n1x_boot_complete(')]
+    code += text[text.index('static void n1x_boot_reset_state('):text.index('static int n1x_sroot_component_bind(')]
     start_fn = text[text.index('static int n1x_boot_start_once('):text.index('static struct attribute *boot_attrs[]')]
     names = set(re.findall(r'\b(n1x_boot_\w+)\(boot\)', start_fn))-{'n1x_boot_start_once'}
     writer_harness = (
@@ -109,10 +109,12 @@ static void pm_runtime_put_noidle(struct device *d)
 {assert(boot_lock && !accel.locked && !accel.bytes && boot_shutdown.hardware_off);
  assert(d->refs>0 && (d==&device||d==&sroot_device));d->refs--;pm_puts++;}
 static void module_put(void *p) {assert(p==THIS_MODULE && module_refs>0);module_refs--;}
+void n1x_dla_accel_resume(struct n1x_dla_accel *a) {assert(a==&accel && !boot_lock && !boot_suspended);}
+#define dev_err(...) ((void)0)
 int n1x_dla_accel_stop(struct n1x_dla_accel *a,int (*stop)(struct device *))
 {assert(a==&accel && !boot_lock && !a->locked);a->locked=true;
  int err=stop(&device);if(!err)a->bytes=0;a->locked=false;return err;}
-''' + code + writer_harness + r'''
+''' + code + writer_harness + text[text.index('static int n1x_boot_prepare('):text.index('static int n1x_boot_runtime_suspend(')] + r'''
 static void reset(void)
 {test_context_reset();
  assert(!boot_lock && !accel.locked);
@@ -165,6 +167,38 @@ int main(void)
  assert(n1x_boot_stop_device(&device,false)==-EBUSY);
  assert(!boot_stopping && !boot_shutdown.attempted && !gates && !accesses);
  assert(n1x_boot_prepare(&device)==-EBUSY && !boot_sleep_prepared);
+
+ reset();n1x_boot_hold_publication(boot);boot->client_leases=boot->retention_leases=3;
+ for(unsigned i=0;i<3;i++) {
+  sroot_dsp_buffers[i].published=sroot_dsp_buffers[i].staging_released=true;
+  sroot_dsp_buffers[i].sleep_retained=true;
+ }
+ assert(!n1x_boot_prepare(&device) && boot_sleep_prepared);
+ for(unsigned i=0;i<3;i++) {
+  boot->sleeping_clients=i;
+  assert(n1x_boot_stop_device(&device,true)==-EBUSY && !stops && !dma_frees);
+ }
+ boot->sleeping_clients=3;
+ assert(n1x_boot_stop_device(&device,false)==-EBUSY && !stops);
+ assert(!n1x_boot_stop_device(&device,true) && stops==1 && dma_frees==6);
+ assert(boot->lifetime_held && boot->client_leases==3 && boot->retention_leases==3);
+ for(unsigned i=0;i<3;i++) assert(sroot_dsp_buffers[i].published);
+
+ for(unsigned fail=0;fail<=8;fail++) {
+  reset();dla_ep.hfrp=(void *)1;n1x_boot_hold_publication(boot);
+  boot->client_leases=boot->retention_leases=boot->sleeping_clients=1;
+  sroot_dsp_buffers[0].published=sroot_dsp_buffers[0].staging_released=true;
+  sroot_dsp_buffers[0].sleep_retained=true;
+  assert(!n1x_boot_prepare(&device) && !n1x_boot_suspend(&device));
+  assert(boot_suspended && boot->lifetime_held && boot->client_leases==1);
+  assert(sroot_dsp_buffers[0].published && boot->sleeping_clients==1);
+  start_step=0;start_fail_step=fail;
+  int resumed=n1x_boot_resume(&device);
+  if(resumed!=(fail?-EREMOTEIO:0))fprintf(stderr,"resume fail=%u error=%d step=%d suspended=%d\n",fail,resumed,start_step,boot_suspended);
+  assert(resumed==(fail?-EREMOTEIO:0));
+  assert(boot_suspended==(fail!=0) && boot->client_leases==1 && boot->lifetime_held);
+  n1x_boot_complete(&device);assert(!boot_sleep_prepared);
+ }
  for(unsigned i=0;i<ARRAY_SIZE(sroot_dsp_buffers);i++) {
   reset();sroot_dsp_buffers[i].published=true;
   sroot_dsp_buffers[i].staging_released=true;assert(!sroot_dsp_buffers[i].cpu && !sroot_dsp_buffers[i].dma);

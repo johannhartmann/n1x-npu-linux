@@ -10,12 +10,14 @@
 4. **HFRP Immediate Power-Off**: [`n1x_hfrp_stop()`](../driver/n1x_hfrp.c) sends HFRP command `400` (`0x190`) with payload `43 00` (clock, power domain, and rail OFF), verifies the synchronous `43 00` reply, and queries power state `0x1af` (`431`) to confirm `(state.raw & 0x07) == 0x07`.
 5. **DMA & Reference Release**: Frees bootstrap DMA allocations and unmapped accel job buffers, marks `accel->stopped = true` (`accel->stop_failed = false`), orphans any VMA-mapped job (`job->owner = NULL`, freed when the last VMA closes in `n1x_accel_vm_close()`), and drops runtime PM and module references.
 
-If any shutdown step fails, `accel->stop_failed` is set to `true` (and `boot_shutdown.error` latches the error) so DMA allocations, runtime PM, and module references remain pinned until reboot. The same checked stop/start sequence is used by `.remove()`, `.shutdown()`, and system sleep `.suspend()` / `.resume()`.
+If any shutdown step fails, `accel->stop_failed` is set to `true` (and `boot_shutdown.error` latches the error) so DMA allocations, runtime PM, and module references remain pinned until reboot. The same checked stop/start sequence is used by `.remove()`, `.shutdown()`, and system sleep `.suspend()` / `.resume()`. The opt-in ABI v4 idle-DSP retention candidate preserves DSP allocations and shared provider leases across system sleep; it does not permit ordinary shutdown or unload of published DSP clients.
 
 ## Build and Qualify
 
-Published [DSP client leases](sroot-dsp-lifetime.md) prevent this shutdown
-sequence with `EBUSY`, before accelerator or power changes. Their guard is
+Published legacy [DSP client leases](sroot-dsp-lifetime.md) prevent this shutdown
+sequence with `EBUSY`, before accelerator or power changes. Retention-aware v4
+clients permit only system sleep after all DSP D3 votes, while retaining every
+DSP/provider lease; ordinary shutdown remains prohibited. Their guard is
 independent of whether temporary image staging remains allocated. A verified
 DSP core shutdown and provider-lease release contract is still required before
 the shared NPU/SROOT provider may shut down in that state.

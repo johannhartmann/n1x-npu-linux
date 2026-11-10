@@ -63,3 +63,35 @@ siblings are therefore a checked platform fallback, not a universal firmware
 binding. Whole-core DSP shutdown remains unverified. ABI v3 does not make
 published DSPs removable or suspendable, and has not yet been loaded for a
 fresh-boot hardware trial.
+
+## Retained system sleep (ABI v4 candidate)
+
+`n1x_sroot_client_ops_v4()` adds a separate sleep operation table; v1/v2/v3
+interfaces and their fail-closed stop behavior remain intact. Its client
+`get()` marks a retention-aware handle. Reservations count both total and
+retention-aware clients. Successful v4 uploads mark only canonically completed,
+staging-released images as retention-capable. Legacy or uncertain publications
+continue to block system sleep in `prepare`.
+
+Consumers freeze new work in PM `prepare`. After an acknowledged DSP D3
+transition, IRQ synchronization and power-worker draining, each calls
+`suspend()`. Duplicate votes fail. The provider's suspend requires every
+reservation to have voted, then uses checked DLA stop without dropping the
+shared publication reference or DSP buffers/leases. Ordinary shutdown/unload
+still returns `EBUSY`, including while all clients are asleep.
+
+DLA restarts before consumers resume through their device links. Its validated
+CPU firmware image is retained in the device context until final release, so
+resume never needs to read a firmware file from the suspended filesystem. Startup failure
+leaves the provider suspended; consumers cannot clear their votes or report a
+working supplier. After acknowledged D0 and retained-state checks, each calls
+`resume()`, which clears its vote without releasing references. An abort before
+DLA suspension can use the same vote restoration. No operation here releases
+DSP operating memory, repairs poisoned firmware, or allows image reload.
+
+The matching platform DSP driver limits this to idle-DSP s2idle and defaults
+its experimental `enable_retention_sleep` option off. Active audio-task/SRAM
+ownership, Hibernate and deep sleep remain unsupported. SET acknowledgement and
+matching SRAM descriptors alone do not prove firmware liveness or safe DMA
+reclamation. Hardware sleep/audio/NPU qualification is still pending; this is
+not a claim that published DSP suspend now works on the running machine.

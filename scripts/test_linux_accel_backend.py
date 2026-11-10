@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     text = (ROOT/'driver/n1x_npu_boot_linux.c').read_text()
     function = text[text.index('static int n1x_boot_accel_submit('):text.index('static struct acpi_device *n1x_find_sroot(')]
-    prepare = text[text.index('static int n1x_boot_prepare('):text.index('static int n1x_boot_suspend(')]
+    prepare = text[text.index('static bool n1x_boot_clients_allow_sleep('):text.index('static int n1x_boot_stop_device(')]
+    prepare += text[text.index('static int n1x_boot_prepare('):text.index('static int n1x_boot_suspend(')]
     assert '.prepare = pm_sleep_ptr(n1x_boot_prepare)' in text
     assert '.complete = pm_sleep_ptr(n1x_boot_complete)' in text
     shim = context_harness() + r'''

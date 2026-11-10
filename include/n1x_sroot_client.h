@@ -61,4 +61,21 @@ struct n1x_sroot_client_ops {
 };
 
 const struct n1x_sroot_client_ops *n1x_sroot_client_ops_v3(void);
+
+/* ABI v4 adds system-sleep retention, NOT lease release or core shutdown.
+ * Use the returned client ops, including get(), for retention-aware handles.
+ * All public work must be frozen by the consumer's PM prepare callback.
+ * suspend() is called only AFTER acknowledged DSP D3, IRQ synchronization and
+ * draining its power worker. resume() follows acknowledged D0. PM device links
+ * order these votes around the provider's checked DLA stop/restart. No DMA or
+ * provider/module/power references are released by either vote. Legacy handles,
+ * uncertain uploads and missing votes still block the provider's system sleep.
+ */
+struct n1x_sroot_client_sleep_ops {
+	const struct n1x_sroot_client_ops *client;
+	int (*suspend)(struct n1x_sroot_client *client);
+	int (*resume)(struct n1x_sroot_client *client);
+};
+
+const struct n1x_sroot_client_sleep_ops *n1x_sroot_client_ops_v4(void);
 #endif

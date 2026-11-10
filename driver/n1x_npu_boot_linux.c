@@ -156,14 +156,14 @@ struct n1x_sroot_client_buffer {
 	void *cpu;
 	dma_addr_t dma;
 	size_t bytes;
-	bool published, staging_released;
+	bool published, staging_released, sleep_retained;
 };
 
 struct n1x_sroot_client {
 	struct n1x_boot_context *boot;
 	struct device *supplier, *consumer;
 	struct device_link *link;
-	bool reserved, published;
+	bool reserved, published, retention, asleep;
 };
 
 struct n1x_boot_context {
@@ -177,8 +177,9 @@ struct n1x_boot_context {
 	atomic_t irq_count;
 	struct n1x_boot_endpoint *dla, *sroot;
 	bool irq_registered, registered, removing, lifetime_held;
-	unsigned int client_leases;
+	unsigned int client_leases, retention_leases, sleeping_clients;
 	struct n1x_dla_sroot_load_result upload_result;
+	const struct firmware *firmware;
 	size_t image_bytes;
 	void *image;
 	dma_addr_t image_dma;
@@ -208,6 +209,7 @@ static void n1x_boot_release(struct kref *refs)
 
 	put_device(boot->consumer);
 	put_device(boot->dma_dev);
+	release_firmware(boot->firmware);
 	fwnode_handle_put(boot->scope);
 	put_device(boot->dev);
 	kfree(boot);
@@ -904,6 +906,8 @@ static int n1x_sroot_client_prepare(struct n1x_sroot_client *client)
 	if (!err) {
 		client->reserved = true;
 		boot->client_leases++;
+		if (client->retention)
+			boot->retention_leases++;
 	}
 	mutex_unlock(&boot->lock);
 	return err;
@@ -939,6 +943,8 @@ static int n1x_sroot_client_cancel(struct n1x_sroot_client *client)
 	} else if (client->reserved) {
 		client->reserved = false;
 		boot->client_leases--;
+		if (client->retention)
+			boot->retention_leases--;
 	}
 	mutex_unlock(&boot->lock);
 	return err;
@@ -986,6 +992,11 @@ static int n1x_sroot_client_upload(struct n1x_sroot_client *client,
 	result->reply_valid = upload.reply_valid;
 	result->accepted = upload.accepted;
 	result->staging_released = released;
+	if (!err && released && client->retention) {
+		mutex_lock(&boot->lock);
+		boot->dsp_buffers[image_id - 0xc0303].sleep_retained = true;
+		mutex_unlock(&boot->lock);
+	}
 	return err;
 }
 
@@ -1003,6 +1014,107 @@ const struct n1x_sroot_client_ops *n1x_sroot_client_ops_v3(void)
 	return &n1x_sroot_ops;
 }
 EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v3);
+
+static struct n1x_sroot_client *n1x_sroot_client_get_v4(struct device *dev)
+{
+	struct n1x_sroot_client *client = n1x_sroot_client_get(dev);
+
+	if (!IS_ERR(client))
+		client->retention = true;
+	return client;
+}
+
+static int n1x_sroot_client_suspend(struct n1x_sroot_client *client)
+{
+	struct n1x_boot_context *boot = client->boot;
+	int err = 0;
+
+	mutex_lock(&boot->lock);
+	if (!client->retention || !client->published || !boot->sleep_prepared) {
+		err = -EINVAL;
+	} else if (boot->removing || !boot->dla || !boot->sroot ||
+		   boot->dla->dev != client->supplier) {
+		err = -ENODEV;
+	} else if (boot->stopping || boot->loader_poisoned) {
+		err = -ENOTRECOVERABLE;
+	} else if (client->asleep) {
+		err = -EALREADY;
+	} else {
+		client->asleep = true;
+		boot->sleeping_clients++;
+	}
+	mutex_unlock(&boot->lock);
+	return err;
+}
+
+static int n1x_sroot_client_resume(struct n1x_sroot_client *client)
+{
+	struct n1x_boot_context *boot = client->boot;
+	int err = 0;
+
+	mutex_lock(&boot->lock);
+	if (!client->asleep) {
+		err = -EINVAL;
+	} else if (boot->removing || !boot->dla || !boot->sroot ||
+		   boot->dla->dev != client->supplier) {
+		err = -ENODEV;
+	} else if (boot->suspended || boot->stopping || boot->loader_poisoned ||
+		   boot->upload_error) {
+		err = -EHOSTDOWN;
+	} else {
+		client->asleep = false;
+		boot->sleeping_clients--;
+	}
+	mutex_unlock(&boot->lock);
+	return err;
+}
+
+static const struct n1x_sroot_client_ops n1x_sroot_retention_client_ops = {
+	.get = n1x_sroot_client_get_v4,
+	.put = n1x_sroot_client_put,
+	.prepare = n1x_sroot_client_prepare,
+	.publish = n1x_sroot_client_publish,
+	.cancel = n1x_sroot_client_cancel,
+	.upload = n1x_sroot_client_upload,
+};
+
+static const struct n1x_sroot_client_sleep_ops n1x_sroot_sleep_ops = {
+	.client = &n1x_sroot_retention_client_ops,
+	.suspend = n1x_sroot_client_suspend,
+	.resume = n1x_sroot_client_resume,
+};
+
+const struct n1x_sroot_client_sleep_ops *n1x_sroot_client_ops_v4(void)
+{
+	return &n1x_sroot_sleep_ops;
+}
+EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v4);
+
+/* Caller holds boot->lock. Keep the validated CPU image independent of DMA
+ * staging so resume never depends on filesystem I/O or a userspace fallback.
+ */
+static int n1x_boot_cache_firmware(struct n1x_boot_context *boot)
+{
+	const char *name = firmware_variant ? N1X_BOOT_FALLBACK_FIRMWARE : N1X_BOOT_FIRMWARE;
+	const struct firmware *firmware;
+	int err;
+
+	if (boot->firmware)
+		return 0;
+	if (boot->sleep_prepared)
+		return -EHOSTDOWN;
+	device_property_read_string(boot->sroot->dev, "firmware-name", &name);
+	err = request_firmware_direct(&firmware, name, boot->sroot->dev);
+	if (err)
+		return err;
+	err = n1x_boot_validate_firmware(firmware);
+	if (err) {
+		release_firmware(firmware);
+		return err;
+	}
+	boot->firmware = firmware;
+	return 0;
+}
 
 /* Caller holds boot->lock. */
 static int n1x_boot_upload(struct n1x_boot_context *boot)
@@ -1027,19 +1139,10 @@ static int n1x_boot_upload(struct n1x_boot_context *boot)
 		err = n1x_boot_dma_gate(boot->dla);
 	if (err)
 		return err;
-	{
-		const char *name = firmware_variant ? N1X_BOOT_FALLBACK_FIRMWARE : N1X_BOOT_FIRMWARE;
-
-		device_property_read_string(boot->sroot->dev, "firmware-name",
-					    &name);
-		err = request_firmware_direct(&firmware, name,
-					      boot->sroot->dev);
-	}
+	err = n1x_boot_cache_firmware(boot);
 	if (err)
 		return err;
-	err = n1x_boot_validate_firmware(firmware);
-	if (err)
-		goto release;
+	firmware = boot->firmware;
 	err = dma_set_mask_and_coherent(boot->sroot->dev, DMA_BIT_MASK(32));
 	if (err)
 		goto release;
@@ -1093,8 +1196,7 @@ static int n1x_boot_upload(struct n1x_boot_context *boot)
 		firmware_variant, err, boot->upload_result.reply_valid,
 		boot->upload_result.reply.header,
 		boot->upload_result.idle_observed, &boot->image_dma);
-	/* The original firmware file is independent of its staged DMA copy. */
-	release_firmware(firmware);
+	/* The validated CPU image remains available for system resume. */
 	return err;
 free:
 	dma_free_coherent(boot->sroot->dev, boot->image_bytes, boot->image,
@@ -1106,7 +1208,6 @@ put_dla:
 put_sroot:
 	pm_runtime_put(boot->sroot->dev);
 release:
-	release_firmware(firmware);
 	return err;
 }
 
@@ -1833,6 +1934,27 @@ out:
 	return err;
 }
 
+/* The caller holds boot->lock. This authorizes retained system sleep only;
+ * it never establishes DSP shutdown or permits reclaiming any DSP memory.
+ */
+static bool n1x_boot_clients_allow_sleep(struct n1x_boot_context *boot, bool require_votes)
+{
+	unsigned int i;
+
+	if (boot->loader_poisoned || boot->client_leases != boot->retention_leases ||
+	    (require_votes && boot->sleeping_clients != boot->client_leases))
+		return false;
+	for (i = 0; i < ARRAY_SIZE(boot->dsp_buffers); i++) {
+		struct n1x_sroot_client_buffer *buffer = &boot->dsp_buffers[i];
+
+		if (buffer->published &&
+		    (!boot->retention_leases || !buffer->sleep_retained ||
+		     !buffer->staging_released || buffer->cpu))
+			return false;
+	}
+	return true;
+}
+
 static int n1x_boot_stop_device(struct device *dev, bool for_sleep)
 {
 	struct n1x_boot_context *boot __free(n1x_boot_put) = n1x_boot_get(dev);
@@ -1844,17 +1966,20 @@ static int n1x_boot_stop_device(struct device *dev, bool for_sleep)
 		return -ENODEV;
 	if (!endpoint || endpoint->sroot)
 		return -ENODEV;
-	/* Serialize shutdown against DSP publication. The DSP loader has no
-	 * verified release operation yet, so its published buffers must survive.
-	 * Refuse before stopping the accelerator or changing its lifetime state.
+	/* Legacy clients always block stop. Retention-aware clients permit only
+	 * system sleep after every consumer acknowledged D3 and drained its work.
+	 * Their DMA and provider lifetime remain owned across DLA stop/restart.
 	 */
 	mutex_lock(&boot->lock);
-	if (boot->client_leases || (boot->sleep_prepared && !for_sleep)) {
+	if ((boot->client_leases &&
+	     (!for_sleep || !n1x_boot_clients_allow_sleep(boot, true))) ||
+	    (boot->sleep_prepared && !for_sleep)) {
 		mutex_unlock(&boot->lock);
 		return -EBUSY;
 	}
 	for (i = 0; i < ARRAY_SIZE(boot->dsp_buffers); i++) {
-		if (boot->dsp_buffers[i].published) {
+		if (boot->dsp_buffers[i].published &&
+		    (!for_sleep || !n1x_boot_clients_allow_sleep(boot, true))) {
 			mutex_unlock(&boot->lock);
 			return -EBUSY;
 		}
@@ -1884,7 +2009,8 @@ static int n1x_boot_stop_device(struct device *dev, bool for_sleep)
 			module_put(THIS_MODULE);
 		}
 	}
-	n1x_boot_drop_publication(boot);
+	if (!boot->client_leases)
+		n1x_boot_drop_publication(boot);
 	mutex_unlock(&boot->lock);
 	return 0;
 }
@@ -2605,7 +2731,6 @@ static int n1x_boot_prepare(struct device *dev)
 	struct n1x_boot_context *boot __free(n1x_boot_put) = n1x_boot_get(dev);
 	struct n1x_boot_endpoint *endpoint = dev_get_drvdata(dev);
 	bool active_boot;
-	unsigned int i;
 	int err = 0;
 
 	if (!endpoint || endpoint->sroot)
@@ -2618,16 +2743,10 @@ static int n1x_boot_prepare(struct device *dev)
 	mutex_lock(&boot->lock);
 	active_boot = (boot->upload_attempted || boot->hfrp.attempted) &&
 		      !boot->shutdown.released;
-	if (boot->client_leases ||
+	if (!n1x_boot_clients_allow_sleep(boot, false) ||
 	    (active_boot && (boot->stopping || !n1x_boot_stop_ready(boot)))) {
 		err = -EBUSY;
 		goto unlock;
-	}
-	for (i = 0; i < ARRAY_SIZE(boot->dsp_buffers); i++) {
-		if (boot->dsp_buffers[i].published) {
-			err = -EBUSY;
-			goto unlock;
-		}
 	}
 	boot->sleep_prepared = true;
 unlock:
@@ -2661,6 +2780,8 @@ static int n1x_boot_suspend(struct device *dev)
 	if (!boot)
 		return 0;
 	mutex_lock(&boot->lock);
+	if (!n1x_boot_clients_allow_sleep(boot, true))
+		err = -EBUSY;
 	active_boot = (boot->upload_attempted || boot->hfrp.attempted) &&
 		      !boot->shutdown.released;
 	if (active_boot && (boot->queue.active || boot->queue.owner_job ||
@@ -2690,9 +2811,10 @@ static int n1x_boot_resume(struct device *dev)
 	if (!boot)
 		return 0;
 	mutex_lock(&boot->lock);
-	if (boot->suspended && boot->dla && boot->sroot) {
-		boot->suspended = false;
-		err = n1x_boot_start_once(boot);
+	if (boot->suspended) {
+		err = boot->dla && boot->sroot ? n1x_boot_start_once(boot) : -ENODEV;
+		if (!err)
+			boot->suspended = false;
 		if (err) {
 			dev_err(dev,
 				"resume startup failed (%d); device remains fail-closed\n",
