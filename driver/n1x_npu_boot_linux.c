@@ -172,6 +172,8 @@ struct n1x_sroot_client {
 	struct device *supplier, *consumer;
 	struct device_link *link;
 	bool reserved, published, retention, ready, asleep;
+	u32 image_id;
+	u64 reinit_generation;
 };
 
 struct n1x_boot_context {
@@ -194,6 +196,7 @@ struct n1x_boot_context {
 	int upload_error;
 	bool upload_attempted, stopping, hfrp_held, upload_held;
 	bool sleep_prepared, suspended, loader_poisoned;
+	u64 sleep_generation;
 	struct n1x_boot_shutdown_state shutdown;
 	struct n1x_boot_hfrp_state hfrp;
 	struct n1x_boot_board_policy board_policy;
@@ -1026,6 +1029,8 @@ static int n1x_sroot_client_upload(struct n1x_sroot_client *client,
 	result->staging_released = released;
 	if (!err && released && client->retention) {
 		mutex_lock(&boot->lock);
+		if (!client->image_id)
+			client->image_id = image_id;
 		boot->dsp_buffers[image_id - 0xc0303].sleep_retained = true;
 		if (!client->ready) {
 			client->ready = true;
@@ -1125,6 +1130,76 @@ const struct n1x_sroot_client_sleep_ops *n1x_sroot_client_ops_v4(void)
 	return &n1x_sroot_sleep_ops;
 }
 EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v4);
+
+int n1x_sroot_reinit_dsp_v1(struct n1x_sroot_client *client,
+			    struct n1x_sroot_reinit_result *result)
+{
+	struct n1x_sroot_client_buffer *buffer;
+	struct n1x_sroot_reply reply;
+	struct n1x_boot_context *boot;
+	struct n1x_dla_io io;
+	u32 words[3];
+	int err = 0;
+
+	if (!result)
+		return -EINVAL;
+	memset(result, 0, sizeof(*result));
+	if (!client)
+		return -EINVAL;
+	boot = client->boot;
+	mutex_lock(&boot->lock);
+	if (!client->retention || !client->published || !client->ready ||
+	    client->image_id < 0xc0303 || client->image_id > 0xc0305 ||
+	    (!client->asleep && !boot->sleep_prepared) || !boot->sleep_generation) {
+		err = -EINVAL;
+		goto unlock;
+	}
+	if (boot->removing || !boot->dla || !boot->sroot ||
+	    boot->dla->dev != client->supplier) {
+		err = -ENODEV;
+		goto unlock;
+	}
+	if (boot->suspended || boot->stopping || boot->loader_poisoned || boot->upload_error) {
+		err = -EHOSTDOWN;
+		goto unlock;
+	}
+	if (client->reinit_generation == boot->sleep_generation) {
+		err = -EALREADY;
+		goto unlock;
+	}
+	buffer = &boot->dsp_buffers[client->image_id - 0xc0303];
+	if (!buffer->published || !buffer->staging_released || !buffer->sleep_retained) {
+		err = -ENOTRECOVERABLE;
+		goto unlock;
+	}
+	/* Native NotifySrootReinitFw expands (image_id, mode=1) into three
+	 * mailbox words: a zero-extended 64-bit image ID followed by the mode.
+	 */
+	words[0] = client->image_id;
+	words[1] = 0;
+	words[2] = 1;
+	io = (struct n1x_dla_io){ boot->sroot, n1x_boot_write, n1x_boot_read,
+				  n1x_boot_delay };
+	client->reinit_generation = boot->sleep_generation;
+	result->attempted = 1;
+	err = n1x_sroot_exchange(&io, 16, 0x1a, words, ARRAY_SIZE(words), &reply, 5001, 1000);
+	if (!err) {
+		result->reply_valid = 1;
+		result->reply_header = reply.header;
+		if (reply.command != 0x1a || reply.status || reply.detail)
+			err = -EREMOTEIO;
+		else if (reply.header != 0x1a || reply.count)
+			err = -EPROTO;
+		else
+			result->accepted = 1;
+	}
+	if (err)
+		boot->loader_poisoned = true;
+unlock:
+	mutex_unlock(&boot->lock);
+	return err;
+}
+EXPORT_SYMBOL_GPL(n1x_sroot_reinit_dsp_v1);
 
 /* Caller holds boot->lock. Keep the validated CPU image independent of DMA
  * staging so resume never depends on filesystem I/O or a userspace fallback.
@@ -2786,6 +2861,8 @@ static int n1x_boot_prepare(struct device *dev)
 		goto unlock;
 	}
 	boot->sleep_prepared = true;
+	if (!++boot->sleep_generation)
+		boot->sleep_generation++;
 unlock:
 	mutex_unlock(&boot->lock);
 	return err;

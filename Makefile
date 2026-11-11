@@ -48,6 +48,7 @@ test-portable:
 	$(PYTHON) scripts/test_npu_reload.py
 	$(PYTHON) scripts/test_sroot_cca_quirk.py
 	$(PYTHON) scripts/test_sroot_dsp_broker.py
+	$(PYTHON) scripts/test_sroot_dsp_reinit.py
 
 module:
 	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" modules

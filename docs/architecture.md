@@ -33,6 +33,35 @@ This is not a claim of general reset/recovery or upstream readiness.
 See [kernel driver architecture](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/blob/main/docs/kernel-driver-architecture.md)
 for subsystem boundaries and remaining upstream requirements.
 
+### Typed DSP resume command
+
+The additive kernel export `n1x_sroot_reinit_dsp_v1()` submits the native
+SROOT REINIT command (`0x1a`, three words: image ID, zero, mode 1) for the
+acknowledged image bound to a retention-aware client. It requires a genuine
+provider PM generation and a sleeping or rollback client while the provider
+is awake. Each generation permits one attempt; uncertain, rejected or malformed
+replies poison the loader. The operation allocates/releases no DMA memory and
+does not release client/module/PM leases. Existing v1–v4 operation tables retain
+their layouts and behavior.
+
+The pinned Windows `nvadsp.sys` (2.13.0.1, SHA256
+`8b21e4652bb0ac178a2c470c8d6f982155e715c46112ac3b93de3ebfe00b13d6`)
+marks reinitialization needed at D0 exit (`0x140007630`). Its next activation
+calls `0x14004e000`: write the shared operating-DRAM base/size, submit the
+four-byte image ID through IOCTL `0x150218`, and wait for firmware ready.
+In pinned `nvsrootmbx.sys` (SHA256
+`f814e861b5e076aa4e00619a8a588df3c4ae9ec2b5026c30748ba493ce0e6d8a`),
+`NotifySrootReinitFw` at `0x140031760` expands that ID into a zero-extended
+64-bit value followed by mode 1 and submits command `0x1a` with three payload
+words. It checks transport completion and remote status.
+
+This provider operation has offline fault/lifetime coverage. Complete DSP
+resume is not qualified: its consumer must restore the startup descriptor,
+require a fresh firmware-ready event, and rebuild any invalidated task graph
+before resuming ALSA. A device-only suspend test restored the NPU/provider but
+found changed DSP SRAM and correctly blocked the old retention-only consumer.
+The new export is not a userspace reset/recovery interface.
+
 ## 2. VBIOS Policy & HFRP Bring-Up
 
 ### Live VBIOS Carveout (GB10/T264 display / `0x1182bc80`)

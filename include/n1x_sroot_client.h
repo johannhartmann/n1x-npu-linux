@@ -78,4 +78,21 @@ struct n1x_sroot_client_sleep_ops {
 };
 
 const struct n1x_sroot_client_sleep_ops *n1x_sroot_client_ops_v4(void);
+
+/* Additive typed resume operation; v1-v4 tables retain their layout/semantics.
+ * After acknowledged DSP D3 and D0, restore its startup DRAM descriptor, call
+ * this operation, then require a fresh firmware-ready notification before
+ * releasing the v4 sleep vote. The provider serializes command 0x1a using the
+ * first successfully uploaded image bound to this handle. No image/DMA buffer
+ * is allocated or released. One attempt per provider PM generation; uncertain
+ * completion poisons the loader. A rollback may call while PM is prepared even
+ * if its sleep vote failed. This is not a general reset or live-recovery API.
+ */
+struct n1x_sroot_reinit_result {
+	__u32 reply_header;
+	__u8 attempted, reply_valid, accepted, reserved;
+};
+
+int n1x_sroot_reinit_dsp_v1(struct n1x_sroot_client *client,
+			    struct n1x_sroot_reinit_result *result);
 #endif
