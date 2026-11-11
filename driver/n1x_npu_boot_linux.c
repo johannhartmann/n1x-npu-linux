@@ -160,18 +160,22 @@ struct n1x_boot_lpwr_state {
 	int error;
 };
 
+struct n1x_sroot_client;
+
 struct n1x_sroot_client_buffer {
 	void *cpu;
 	dma_addr_t dma;
 	size_t bytes;
-	bool published, staging_released, sleep_retained;
+	bool published, staging_released, sleep_retained, stopped;
+	struct n1x_sroot_client *owner;
 };
 
 struct n1x_sroot_client {
 	struct n1x_boot_context *boot;
 	struct device *supplier, *consumer;
 	struct device_link *link;
-	bool reserved, published, retention, ready, asleep;
+	bool reserved, published, retention, ready, asleep, can_retire, stopping;
+	bool power_stopped;
 	u32 image_id;
 	u64 reinit_generation;
 };
@@ -660,7 +664,8 @@ static int n1x_boot_validate_firmware(const struct firmware *firmware)
 static int n1x_sroot_upload_dsp(struct n1x_boot_context *boot, u32 image_id,
 				const u8 *image, size_t bytes,
 				struct n1x_sroot_client_result *result,
-				bool release_staging, bool *staging_released)
+				bool release_staging, bool *staging_released,
+				struct n1x_sroot_client *owner)
 {
 	struct n1x_sroot_client_buffer *buffer;
 	struct n1x_sroot_reply reply = {};
@@ -681,6 +686,12 @@ static int n1x_sroot_upload_dsp(struct n1x_boot_context *boot, u32 image_id,
 		return err;
 	mutex_lock(&boot->lock);
 	buffer = &boot->dsp_buffers[index];
+	if (image_id == 0xc0305 &&
+	    ((boot->dsp_buffers[1].owner && boot->dsp_buffers[1].owner->stopping) ||
+	     (boot->dsp_buffers[1].stopped && !boot->dsp_buffers[1].published))) {
+		err = -ESHUTDOWN;
+		goto unlock;
+	}
 	if (!boot->sroot || !boot->dla) {
 		err = -ENODEV;
 		goto unlock;
@@ -695,6 +706,10 @@ static int n1x_sroot_upload_dsp(struct n1x_boot_context *boot, u32 image_id,
 	}
 	if (boot->loader_poisoned) {
 		err = -ENOTRECOVERABLE;
+		goto unlock;
+	}
+	if (buffer->owner && buffer->owner != owner) {
+		err = -EBUSY;
 		goto unlock;
 	}
 	if (buffer->published) {
@@ -741,6 +756,7 @@ static int n1x_sroot_upload_dsp(struct n1x_boot_context *boot, u32 image_id,
 				  n1x_boot_delay };
 	dma_wmb();
 	buffer->published = true;
+	buffer->stopped = false;
 	result->published = 1;
 	err = n1x_sroot_exchange(&io, 16, N1X_SROOT_CMD_UPLOAD, words, 3,
 				 &reply, 5001, 1000);
@@ -773,7 +789,9 @@ static int n1x_sroot_upload_dsp(struct n1x_boot_context *boot, u32 image_id,
 free:
 	dma_free_coherent(boot->sroot->dev, buffer->bytes, buffer->cpu,
 			  buffer->dma);
-	memset(buffer, 0, sizeof(*buffer));
+	buffer->cpu = NULL;
+	buffer->dma = 0;
+	buffer->bytes = 0;
 put:
 	pm_runtime_put(boot->sroot->dev);
 unlock:
@@ -794,7 +812,7 @@ int n1x_sroot_upload_dsp_v1(u32 image_id, const u8 *image, size_t bytes,
 		return PTR_ERR(boot);
 	}
 	return n1x_sroot_upload_dsp(boot, image_id, image, bytes, result, false,
-				    NULL);
+				    NULL, NULL);
 }
 EXPORT_SYMBOL_GPL(n1x_sroot_upload_dsp_v1);
 
@@ -813,7 +831,7 @@ int n1x_sroot_upload_dsp_v2(u32 image_id, const u8 *image, size_t bytes,
 	if (IS_ERR(boot))
 		return PTR_ERR(boot);
 	err = n1x_sroot_upload_dsp(boot, image_id, image, bytes, &upload, true,
-				   &released);
+				   &released, NULL);
 	result->reply_header = upload.reply_header;
 	result->published = upload.published;
 	result->reply_valid = upload.reply_valid;
@@ -972,6 +990,15 @@ static int n1x_sroot_client_cancel(struct n1x_sroot_client *client)
 	if (client->published) {
 		err = -EBUSY;
 	} else if (client->reserved) {
+		if (client->can_retire && client->image_id >= 0xc0303 &&
+		    client->image_id <= 0xc0305) {
+			struct n1x_sroot_client_buffer *buffer;
+
+			buffer = &boot->dsp_buffers[client->image_id - 0xc0303];
+			if (buffer->owner == client)
+				buffer->owner = NULL;
+			client->image_id = 0;
+		}
 		client->reserved = false;
 		boot->client_leases--;
 		if (client->retention)
@@ -1016,12 +1043,16 @@ static int n1x_sroot_client_upload(struct n1x_sroot_client *client,
 		mutex_unlock(&boot->lock);
 		return -EBUSY;
 	}
+	if (client->can_retire && client->image_id != image_id) {
+		mutex_unlock(&boot->lock);
+		return -EINVAL;
+	}
 	published = client->published;
 	mutex_unlock(&boot->lock);
 	if (!published)
 		return -EPERM;
 	err = n1x_sroot_upload_dsp(boot, image_id, image, bytes, &upload, true,
-				   &released);
+				   &released, client);
 	result->reply_header = upload.reply_header;
 	result->published = upload.published;
 	result->reply_valid = upload.reply_valid;
@@ -1130,6 +1161,187 @@ const struct n1x_sroot_client_sleep_ops *n1x_sroot_client_ops_v4(void)
 	return &n1x_sroot_sleep_ops;
 }
 EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v4);
+
+static struct n1x_sroot_client *n1x_sroot_client_get_v5(struct device *dev)
+{
+	struct n1x_sroot_client *client = n1x_sroot_client_get_v4(dev);
+
+	if (!IS_ERR(client))
+		client->can_retire = true;
+	return client;
+}
+
+static int n1x_sroot_client_prepare_image(struct n1x_sroot_client *client,
+					u32 image_id, u8 *previously_stopped)
+{
+	struct n1x_boot_context *boot = client->boot;
+	struct n1x_sroot_client_buffer *buffer;
+	int err;
+
+	if (!previously_stopped || image_id < 0xc0303 || image_id > 0xc0305)
+		return -EINVAL;
+	*previously_stopped = 0;
+	mutex_lock(&boot->lock);
+	err = n1x_sroot_client_ready(boot);
+	buffer = &boot->dsp_buffers[image_id - 0xc0303];
+	if (!err && boot->dla->dev != client->supplier)
+		err = -ENODEV;
+	if (!err && (!client->can_retire || !client->retention))
+		err = -EOPNOTSUPP;
+	if (!err && (client->reserved || client->published || client->image_id ||
+		     buffer->published || buffer->owner))
+		err = -EBUSY;
+	if (!err && image_id == 0xc0305 &&
+	    (!boot->dsp_buffers[1].published || !boot->dsp_buffers[1].owner ||
+	     !boot->dsp_buffers[1].owner->ready || boot->dsp_buffers[1].owner->stopping))
+		err = -EHOSTDOWN;
+	if (!err) {
+		client->reserved = true;
+		client->image_id = image_id;
+		buffer->owner = client;
+		boot->client_leases++;
+		boot->retention_leases++;
+		*previously_stopped = buffer->stopped;
+	}
+	mutex_unlock(&boot->lock);
+	return err;
+}
+
+static int n1x_sroot_client_admit_shutdown(struct n1x_sroot_client *client)
+{
+	struct n1x_boot_context *boot = client->boot;
+	struct n1x_sroot_client_buffer *buffer;
+	int err;
+
+	mutex_lock(&boot->lock);
+	err = n1x_sroot_client_ready(boot);
+	if (!err && boot->dla->dev != client->supplier)
+		err = -ENODEV;
+	if (!err && (!client->can_retire || !client->reserved || !client->published ||
+		     !client->ready || client->asleep || client->stopping ||
+		     client->image_id < 0xc0303 || client->image_id > 0xc0305))
+		err = -EINVAL;
+	if (!err) {
+		buffer = &boot->dsp_buffers[client->image_id - 0xc0303];
+		if (buffer->owner != client || !buffer->published ||
+		    !buffer->staging_released || buffer->cpu || buffer->dma)
+			err = -ENOTRECOVERABLE;
+	}
+	if (!err && client->image_id == 0xc0304 &&
+	    ((boot->dsp_buffers[2].owner && !boot->dsp_buffers[2].owner->power_stopped) ||
+	     (boot->dsp_buffers[2].published && !boot->dsp_buffers[2].owner)))
+		err = -EBUSY;
+	if (!err)
+		client->stopping = true;
+	mutex_unlock(&boot->lock);
+	return err;
+}
+
+static int n1x_sroot_client_mark_quiesced(struct n1x_sroot_client *client)
+{
+	struct n1x_boot_context *boot = client->boot;
+	int err = 0;
+
+	mutex_lock(&boot->lock);
+	if (!client->can_retire || !client->stopping || !client->published ||
+	    client->asleep || !client->ready)
+		err = -EINVAL;
+	else
+		client->power_stopped = true;
+	mutex_unlock(&boot->lock);
+	return err;
+}
+
+static int n1x_sroot_client_retire(struct n1x_sroot_client *client)
+{
+	struct n1x_boot_context *boot = client->boot;
+	struct n1x_sroot_client_buffer *buffer;
+	unsigned int i;
+	int err = 0;
+
+	mutex_lock(&boot->lock);
+	if (!client->can_retire || !client->retention || !client->reserved ||
+	    !client->published || !client->ready || client->asleep || !client->stopping ||
+	    !client->power_stopped ||
+	    client->image_id < 0xc0303 || client->image_id > 0xc0305) {
+		err = -EINVAL;
+		goto unlock;
+	}
+	if (boot->removing || !boot->sroot || !boot->dla ||
+	    boot->dla->dev != client->supplier) {
+		err = -ENODEV;
+		goto unlock;
+	}
+	if (boot->sleep_prepared || boot->stopping || boot->loader_poisoned) {
+		err = -ENOTRECOVERABLE;
+		goto unlock;
+	}
+	/* HiFi cores share platform resources. No operating-memory reclamation
+	 * starts until all published cores have completed native power-off.
+	 */
+	for (i = 0; i < ARRAY_SIZE(boot->dsp_buffers); i++) {
+		buffer = &boot->dsp_buffers[i];
+		if (buffer->published && (!buffer->owner || !buffer->owner->power_stopped)) {
+			err = -EBUSY;
+			goto unlock;
+		}
+	}
+	buffer = &boot->dsp_buffers[client->image_id - 0xc0303];
+	if (buffer->owner != client || !buffer->published ||
+	    !buffer->staging_released || buffer->cpu || buffer->dma ||
+	    !boot->client_leases || !boot->retention_leases || !boot->ready_clients) {
+		err = -ENOTRECOVERABLE;
+		goto unlock;
+	}
+	/* The consumer has completed native DSP power-off. Retire only this
+	 * image's lifetime reference; no shared provider/NPU state is reset.
+	 */
+	memset(buffer, 0, sizeof(*buffer));
+	buffer->stopped = true;
+	boot->client_leases--;
+	boot->retention_leases--;
+	boot->ready_clients--;
+	client->reserved = false;
+	client->published = false;
+	client->ready = false;
+	client->stopping = false;
+	client->power_stopped = false;
+	client->image_id = 0;
+	pm_runtime_put(boot->sroot->dev);
+	module_put(THIS_MODULE);
+unlock:
+	mutex_unlock(&boot->lock);
+	return err;
+}
+
+static const struct n1x_sroot_client_ops n1x_sroot_shutdown_client_ops = {
+	.get = n1x_sroot_client_get_v5,
+	.put = n1x_sroot_client_put,
+	.prepare = n1x_sroot_client_prepare,
+	.publish = n1x_sroot_client_publish,
+	.cancel = n1x_sroot_client_cancel,
+	.upload = n1x_sroot_client_upload,
+};
+
+static const struct n1x_sroot_client_sleep_ops n1x_sroot_shutdown_sleep_ops = {
+	.client = &n1x_sroot_shutdown_client_ops,
+	.suspend = n1x_sroot_client_suspend,
+	.resume = n1x_sroot_client_resume,
+};
+
+static const struct n1x_sroot_client_shutdown_ops n1x_sroot_shutdown_ops = {
+	.sleep = &n1x_sroot_shutdown_sleep_ops,
+	.prepare = n1x_sroot_client_prepare_image,
+	.admit = n1x_sroot_client_admit_shutdown,
+	.quiesced = n1x_sroot_client_mark_quiesced,
+	.retire = n1x_sroot_client_retire,
+};
+
+const struct n1x_sroot_client_shutdown_ops *n1x_sroot_client_ops_v5(void)
+{
+	return &n1x_sroot_shutdown_ops;
+}
+EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v5);
 
 int n1x_sroot_reinit_dsp_v1(struct n1x_sroot_client *client,
 			    struct n1x_sroot_reinit_result *result)
@@ -2059,6 +2271,8 @@ static bool n1x_boot_clients_allow_sleep(struct n1x_boot_context *boot, bool req
 	for (i = 0; i < ARRAY_SIZE(boot->dsp_buffers); i++) {
 		struct n1x_sroot_client_buffer *buffer = &boot->dsp_buffers[i];
 
+		if (buffer->owner && buffer->owner->stopping)
+			return false;
 		if (buffer->published &&
 		    (!boot->retention_leases || !buffer->sleep_retained ||
 		     !buffer->staging_released || buffer->cpu))

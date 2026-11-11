@@ -14,7 +14,7 @@ def main():
     registry = source[source.index('static void n1x_boot_release('):
                       source.index('static int n1x_boot_group_member(')]
     clients = source[source.index('static int n1x_sroot_client_ready('):
-                     source.index('EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v4);') + len('EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v4);')]
+                     source.index('EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v5);') + len('EXPORT_SYMBOL_GPL(n1x_sroot_client_ops_v5);')]
     matcher = source[source.index('static struct acpi_device *n1x_find_sroot('):source.index('static void n1x_match_put(')]
     diagnostics = source[source.index('static int n1x_debugfs_emit_attr('):source.index('static int n1x_debugfs_status_show(')]
     code = context_layout() + r'''
@@ -23,6 +23,7 @@ def main():
 #include "n1x_sroot_client.h"
 #define READ_ONCE(x) (x)
 #define WRITE_ONCE(x,v) ((x)=(v))
+#define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
 #define container_of(p,t,m) ((t *)((char *)(p)-offsetof(t,m)))
 #define IS_ERR(p) ((uintptr_t)(p)>=(uintptr_t)-4095)
 #define IS_ERR_OR_NULL(p) (!(p)||IS_ERR(p))
@@ -42,7 +43,7 @@ struct device {struct fwnode_handle *node;unsigned refs;};
 struct device_link {struct device *consumer,*supplier;};
 static struct mutex n1x_contexts_lock;
 static struct list_head n1x_contexts={&n1x_contexts,&n1x_contexts};
-static unsigned allocations,modules,links,fault,uploads;
+static unsigned allocations,modules,links,fault,uploads,pm_refs;
 static struct n1x_boot_context *expected_upload;
 static void mutex_lock(struct mutex *m) {assert(!m->value);m->value=1;}
 static void mutex_unlock(struct mutex *m) {assert(m->value);m->value=0;}
@@ -71,10 +72,18 @@ static void list_del(struct list_head *item)
 #define list_for_each_entry(pos,head,member) \
  for(struct list_head *it=(head)->next;it!=(head) && ((pos)=container_of(it,struct n1x_boot_context,member),1);it=it->next)
 static int n1x_sroot_upload_dsp(struct n1x_boot_context *b,u32 id,const u8 *image,size_t bytes,
- struct n1x_sroot_client_result *r,bool release,bool *released)
-{assert(b==expected_upload && id==0xc0304 && image && bytes==4 && release);
+ struct n1x_sroot_client_result *r,bool release,bool *released,
+ struct n1x_sroot_client *owner)
+{assert(b==expected_upload && id>=0xc0303 && id<=0xc0305 && image && bytes==4 && release);
+ if(owner && owner->can_retire) {
+  struct n1x_sroot_client_buffer *buffer=&b->dsp_buffers[id-0xc0303];
+  assert(buffer->owner==owner && !buffer->published);
+  buffer->published=buffer->staging_released=true;buffer->stopped=false;modules++;pm_refs++;
+ }
  uploads++;*r=(struct n1x_sroot_client_result){.reply_header=0x18,.published=1,.reply_valid=1,.accepted=1};
  *released=true;return 0;}
+static void pm_runtime_put(struct device *dev)
+{assert(expected_upload->lock.value && dev==expected_upload->sroot->dev && pm_refs);pm_refs--;}
 static unsigned firmware_releases;
 static void release_firmware(const struct firmware *f){if(f){assert(f==(void *)1);firmware_releases++;}}
 ''' + registry + clients + r'''
@@ -215,6 +224,62 @@ int main(void)
  b->sleep_prepared=true;assert(!sleep->suspend(c) && !sleep->resume(c));b->sleep_prepared=false;
  /* Test teardown only; no production operation releases a published handle. */
  c->published=false;b->ready_clients=0;assert(!r->put(c) && !b->client_leases && !b->retention_leases);
+
+ /* v5 binds an image before publication and retires only its own checked
+  * lifetime. The fake firmware upload models the broker's independent pin. */
+ memset(b->dsp_buffers,0,sizeof(b->dsp_buffers));
+ const struct n1x_sroot_client_shutdown_ops *shutdown=n1x_sroot_client_ops_v5();
+ const struct n1x_sroot_client_ops *v5=shutdown->sleep->client;
+ for(unsigned cycle=0;cycle<32;cycle++) {
+  struct n1x_sroot_client *clients[3];
+  for(unsigned i=0;i<3;i++) {clients[i]=v5->get(&cdev);assert(!IS_ERR(clients[i]));}
+  struct n1x_sroot_client *spare=v5->get(&cdev);assert(!IS_ERR(spare));
+  u8 previous=9;
+  assert(shutdown->prepare(clients[0],0,&previous)==-EINVAL);
+  assert(shutdown->prepare(clients[2],0xc0305,&previous)==-EHOSTDOWN && !clients[2]->reserved);
+  for(unsigned i=0;i<3;i++) {
+   assert(!shutdown->prepare(clients[i],0xc0303+i,&previous) && previous==(cycle!=0));
+   assert(shutdown->prepare(spare,0xc0303+i,&previous)==-EBUSY && !spare->reserved);
+   assert(!v5->publish(clients[i]));
+   assert(v5->upload(clients[i],0xc0303+(i+1)%3,image,4,&result)==-EINVAL);
+   assert(!v5->upload(clients[i],0xc0303+i,image,4,&result));
+   assert(v5->put(clients[i])==-EBUSY);
+   assert(shutdown->retire(clients[i])==-EINVAL);
+  }
+  assert(b->client_leases==3 && b->retention_leases==3 && b->ready_clients==3 && pm_refs==3);
+  assert(shutdown->admit(clients[1])==-EBUSY); /* Secondary must stop first. */
+  assert(!shutdown->admit(clients[2]));
+  assert(shutdown->admit(clients[2])==-EINVAL);
+  assert(!shutdown->quiesced(clients[2]));
+  assert(shutdown->retire(clients[2])==-EBUSY && pm_refs==3);
+  assert(!shutdown->admit(clients[1]) && !shutdown->quiesced(clients[1]));
+  assert(shutdown->prepare(spare,0xc0305,&previous)==-EBUSY);
+  assert(!shutdown->admit(clients[0]) && !shutdown->quiesced(clients[0]));
+
+  for(unsigned fault_case=0;fault_case<9;fault_case++) {
+   struct n1x_sroot_client_buffer *buf=&b->dsp_buffers[2];
+   if(fault_case==0)b->loader_poisoned=true;
+   if(fault_case==1)b->sleep_prepared=true;
+   if(fault_case==2)b->stopping=true;
+   if(fault_case==3)clients[2]->asleep=true;
+   if(fault_case==4)buf->cpu=(void *)1;
+   if(fault_case==5)buf->staging_released=false;
+   if(fault_case==6)buf->owner=clients[1];
+   if(fault_case==7)b->removing=true;
+   if(fault_case==8)b->client_leases=0;
+   assert(shutdown->retire(clients[2])<0 && pm_refs==3 && b->ready_clients==3);
+   b->loader_poisoned=b->sleep_prepared=b->stopping=b->removing=false;
+   clients[2]->asleep=false;buf->cpu=NULL;buf->staging_released=true;buf->owner=clients[2];b->client_leases=3;
+  }
+  assert(!shutdown->retire(clients[2]) && pm_refs==2 && b->dsp_buffers[2].stopped);
+  assert(shutdown->prepare(spare,0xc0305,&previous)==-EHOSTDOWN);
+  assert(!shutdown->retire(clients[1]) && pm_refs==1);
+  assert(shutdown->prepare(spare,0xc0305,&previous)==-EHOSTDOWN);
+  assert(!shutdown->retire(clients[0]) && !pm_refs);
+  for(unsigned i=0;i<3;i++)assert(!v5->put(clients[i]));
+  assert(!v5->put(spare) && !modules && !links);
+  assert(!b->client_leases && !b->retention_leases && !b->ready_clients);
+ }
  /* Ambiguous siblings fail, even when the second DLA is unbound. */
  fwnode_handle_put(b2->scope);b2->scope=&scope;scope.refs++;
  put_device(b2->consumer);b2->consumer=NULL;

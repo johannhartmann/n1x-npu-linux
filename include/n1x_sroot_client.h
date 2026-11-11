@@ -95,4 +95,33 @@ struct n1x_sroot_reinit_result {
 
 int n1x_sroot_reinit_dsp_v1(struct n1x_sroot_client *client,
 			    struct n1x_sroot_reinit_result *result);
+
+/* Opt-in lifetime operations for a consumer with a checked native power-off
+ * path. Existing v1-v4 semantics remain unchanged. prepare() replaces the
+ * ordinary prepare call, binds an exclusive image slot before DMA publication
+ * and reports whether this provider observed a previous complete retirement.
+ * That fact permits replacing stale startup descriptors, not live recovery.
+ * retire() requires the consumer to freeze new work, detach all PCM users,
+ * synchronize IRQ/work and complete the hardened platform D3/abandon path.
+ * It releases only the provider lifetime reservation; the consumer still owns
+ * its operating memory. Any uncertainty must retain every lease. A poisoned
+ * loader cannot retire, even if the DSP itself was powered down.
+ */
+struct n1x_sroot_client_shutdown_ops {
+	const struct n1x_sroot_client_sleep_ops *sleep;
+	int (*prepare)(struct n1x_sroot_client *client, __u32 image_id,
+		       __u8 *previously_stopped);
+	/* Freeze this image's lifetime; primary HiFi5 waits for secondary HiFi5.
+	 * On success no new dependent image may be prepared or uploaded.
+	 * A later power failure retains this grant until reboot.
+	 */
+	int (*admit)(struct n1x_sroot_client *client);
+	/* Record completed native D3/abandon; retain all references. retire()
+	 * waits until every published DSP image has reached this barrier.
+	 */
+	int (*quiesced)(struct n1x_sroot_client *client);
+	int (*retire)(struct n1x_sroot_client *client);
+};
+
+const struct n1x_sroot_client_shutdown_ops *n1x_sroot_client_ops_v5(void);
 #endif

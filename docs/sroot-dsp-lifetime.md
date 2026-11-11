@@ -105,3 +105,26 @@ unsupported. Runtime autosuspend and full DSP release are still unavailable. SET
 matching SRAM descriptors alone do not prove firmware liveness or safe DMA
 reclamation. Hardware sleep/audio/NPU qualification is still pending; this is
 not a claim that published DSP suspend now works on the running machine.
+
+
+## ABI v5 explicit shutdown candidate
+
+`n1x_sroot_client_ops_v5()` adds exclusive image reservation and explicit
+shutdown admission, quiesce recording and retirement. The consumer must first
+freeze IPC, detach ALSA users, synchronize IRQ/work and complete the hardened
+native platform D3/abandon path. Primary HiFi5 waits for secondary HiFi5. Every
+published core must be recorded quiesced before any lifetime reservation is
+retired. A legacy or non-quiesced image blocks that barrier. A stopping image
+also prevents provider system-sleep admission.
+
+Retirement releases only that image's provider PM/module reservation; operating
+DRAM and AFE SRAM remain the consumer's responsibility. Accepted staging must
+already be released and the loader healthy. Failed/uncertain transactions retain
+ownership. An exclusive new reservation can observe a previous retirement and
+replace stale startup descriptors. Keep this provider loaded across DSP/AFE
+reloads so the record remains available. Existing v1-v4 tables retain their
+semantics; none gains an implicit release operation.
+
+This source path is not yet hardware-qualified. Its consumer, kernel transport
+prerequisite, failure policy and two-cycle qualification procedure are maintained
+in the [platform audio guide](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/blob/main/docs/audio.md#module-reload-qualification).
