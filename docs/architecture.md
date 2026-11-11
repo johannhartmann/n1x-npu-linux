@@ -55,12 +55,18 @@ In pinned `nvsrootmbx.sys` (SHA256
 64-bit value followed by mode 1 and submits command `0x1a` with three payload
 words. It checks transport completion and remote status.
 
-This provider operation has offline fault/lifetime coverage. Complete DSP
-resume is not qualified: its consumer must restore the startup descriptor,
-require a fresh firmware-ready event, and rebuild any invalidated task graph
-before resuming ALSA. A device-only suspend test restored the NPU/provider but
-found changed DSP SRAM and correctly blocked the old retention-only consumer.
-The new export is not a userspace reset/recovery interface.
+This provider operation has offline fault/lifetime coverage. The companion
+[DSP 0.1.23 consumer](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/commit/218536d7931ecfba251176a608502ac54cc39886)
+restores the startup descriptor, requires a fresh firmware-ready event, and
+reconstructs the task graph on normal PCM preparation with the same retained
+allocations and ALSA owner. Consumer fault tests cover missing/invalid replies,
+stale ready completion, every reconstruction request and close-before-prepare.
+
+Complete DSP resume remains hardware-unqualified. The preceding 0.1.22
+device-only suspend test restored the NPU/provider but found changed DSP SRAM
+and correctly blocked the old retention-only consumer. No physical standby was
+attempted after that failure. The new export is not a userspace reset/recovery
+interface.
 
 ## 2. VBIOS Policy & HFRP Bring-Up
 
