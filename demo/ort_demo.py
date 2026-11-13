@@ -272,6 +272,8 @@ def main() -> None:
         "maximum_absolute_error": max_abs_err,
         "rmse": rmse,
         "cosine_similarity": round(cos_sim, 6),
+        "repeatability_verified": True,
+        "reference_accuracy_qualified": False,
         "partition_summary": summary,
     }
 
@@ -370,6 +372,8 @@ h2{{margin:28px 0 14px;font-size:18px;color:#8b949e;border-bottom:1px solid #212
 pre{{white-space:pre-wrap;background:#161b22;border:1px solid #30363d;padding:16px;border-radius:8px;font-size:13px}}
 </style>
 <h1>{html.escape(title)}</h1>
+<p>Repeated execution produced identical outputs. Reference accuracy is measured
+below; this demo does not apply a numerical pass/fail threshold.</p>
 <div class="summary">
   <div class="stat"><b>DLA / Host Stages</b><span>{summary["dla_stages"]} DLA / {summary["host_stages"]} Host</span></div>
   <div class="stat"><b>Compile / Cache</b><span>{compile_ms:.2f} ms</span></div>
@@ -384,7 +388,7 @@ pre{{white-space:pre-wrap;background:#161b22;border:1px solid #30363d;padding:16
 """
     (dest / "report.html").write_text(page)
     print(
-        f"PASS: {model_path.name} ({args.precision}) -> {dest / 'report.html'} "
+        f"REPEATABILITY PASS (reference accuracy not qualified): {model_path.name} ({args.precision}) -> {dest / 'report.html'} "
         f"(DLA stages={summary['dla_stages']}, Host stages={summary['host_stages']}, "
         f"exec={exec_ms:.2f}ms, reexec={reexec_ms:.2f}ms, "
         f"max_err={max_abs_err:.6g}, rmse={rmse:.6g}, cos={cos_sim:.6f})",
