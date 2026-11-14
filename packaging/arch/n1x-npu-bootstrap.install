@@ -2,8 +2,7 @@ post_install() {
   for kdir in /usr/lib/modules/*; do
     [[ -d "$kdir" ]] && depmod -a "${kdir##*/}"
   done
-  systemctl daemon-reload >/dev/null 2>&1 || true
-  printf '%s\n' 'Enable n1x-npu.service after installing firmware in /usr/lib/firmware/nvidia/n1x/.'
+  printf '%s\n' 'ACPI modaliases load the driver. Install firmware and use translated DMA domains.'
 }
 
 post_upgrade() {
@@ -14,5 +13,4 @@ post_remove() {
   for kdir in /usr/lib/modules/*; do
     [[ -d "$kdir" ]] && depmod -a "${kdir##*/}"
   done
-  systemctl daemon-reload >/dev/null 2>&1 || true
 }

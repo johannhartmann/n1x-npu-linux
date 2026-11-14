@@ -41,8 +41,8 @@ cancel a module unload after a failed hardware stop. Manual sysfs bind/unbind
 attributes are suppressed for the same reason. A failed stop retains its
 leases and must not be followed by forced module removal.
 
-The packaged `n1x-npu.service` uses
-[`n1x-npu-stop`](../packaging/systemd/n1x-npu-stop), which locates the bound DLA
+The optional explicit maintenance command
+[`n1x-npu-stop`](../packaging/tools/n1x-npu-stop), which locates the bound DLA
 shutdown attribute, writes `stop`, and attempts `modprobe -r` only after that
 write succeeds. It requires neither debugfs nor a particular ACPI instance
 number. Active client file descriptors can still prevent module removal.

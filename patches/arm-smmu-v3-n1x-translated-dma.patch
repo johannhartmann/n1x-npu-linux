@@ -1,0 +1,27 @@
+--- a/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c
++++ b/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c
+@@ -4291,8 +4291,24 @@
+ #define IS_HISI_PTT_DEVICE(pdev)	((pdev)->vendor == PCI_VENDOR_ID_HUAWEI && \
+ 					 (pdev)->device == 0xa12e)
+ 
++/* N1X secure firmware consumes translated DMA addresses, including on hosts
++ * whose distribution defaults unrelated devices to passthrough. Select the
++ * domain before driver binding and DMA-ops setup, not from a userspace hook.
++ */
++static const struct acpi_device_id n1x_translated_dma_ids[] = {
++	{ "NVDA200A", 0 },
++	{ "NVDA8600", 0 },
++	{ "NVDA8301", 0 },
++	{ "NVDA8302", 0 },
++	{ "NVDA8303", 0 },
++	{ }
++};
++
+ static int arm_smmu_def_domain_type(struct device *dev)
+ {
++	if (acpi_match_device(n1x_translated_dma_ids, dev))
++		return IOMMU_DOMAIN_DMA;
++
+ 	if (dev_is_pci(dev)) {
+ 		struct pci_dev *pdev = to_pci_dev(dev);
+ 

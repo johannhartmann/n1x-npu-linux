@@ -46,6 +46,7 @@ test-portable:
 	$(PYTHON) scripts/test_shutdown_transport.py
 	$(PYTHON) scripts/test_dla_runtime.py
 	$(PYTHON) scripts/test_npu_reload.py
+	$(PYTHON) scripts/test_dma_policy.py
 	$(PYTHON) scripts/test_sroot_cca_quirk.py
 	$(PYTHON) scripts/test_sroot_dsp_broker.py
 	$(PYTHON) scripts/test_sroot_dsp_reinit.py

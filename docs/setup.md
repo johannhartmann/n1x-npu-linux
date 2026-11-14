@@ -72,12 +72,21 @@ pkexec "$PWD/venv/bin/python" "$PWD/scripts/qualify_npu_reload.py" \
   --cycles 2 --output-dir "$PWD/results/NEW-reload"
 ```
 
-## 7. Enable Automatic Startup at Boot
+## 7. Normal module startup
 
-Build and install the `n1x-npu-driver` Arch package (see [updates](updates.md)), then enable the systemd service:
+Install the `n1x-npu-driver` Arch package and the firmware under
+`/usr/lib/firmware/nvidia/n1x/`. ACPI modaliases load `n1x_npu_bootstrap`;
+its C probe/component paths initialize the hardware and expose `/dev/accel/accel*`.
+No systemd startup service or Python helper is required. The udev rule only
+sets normal render-group/session access permissions.
 
-```sh
-sudo systemctl enable --now n1x-npu.service
-```
+The endpoints require translated DMA domains before binding. On a
+passthrough-default kernel, include
+[`arm-smmu-v3-n1x-translated-dma.patch`](../patches/arm-smmu-v3-n1x-translated-dma.patch).
+This chooses the domain through the IOMMU driver's standard callback using
+ACPI hardware IDs, without ASUS/BIOS names or physical-address checks.
+Do not switch the domain of an already bound device. Kernels already using
+translated DMA by default do not need that policy override.
 
-[`99-n1x-npu.rules`](../packaging/udev/99-n1x-npu.rules) and [`n1x-npu.service`](../packaging/systemd/n1x-npu.service) switch the `NVDA200A:00` and `NVDA8600:00` IOMMU groups from `identity` to `DMA`, load `n1x_npu_bootstrap`, and expose `/dev/accel/accel0` (`0660 root:render`, `TAG+="uaccess"`).
+The module has no Python runtime dependency. Python bindings, demos and
+qualification scripts are optional application/development interfaces.

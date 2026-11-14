@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a pinned, explicit-load Arch package from the committed NPU sources."""
+"""Build a pinned Arch module package from the committed NPU sources."""
 import hashlib
 from pathlib import Path
 import shutil
@@ -11,7 +11,7 @@ PACKAGING = ROOT / 'packaging/arch'
 OUTPUT = ROOT / 'results/arch-module-package'
 SOURCES = ('driver', 'include', 'runtime', 'README.md',
            'packaging/udev/99-n1x-npu.rules',
-           'packaging/systemd')
+           'packaging/tools')
 
 
 def run(*args, **kwargs):

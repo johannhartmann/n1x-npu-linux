@@ -1,7 +1,7 @@
 # Maintained template. scripts/build_arch_module_package.py pins the source archive.
 pkgname=n1x-npu-driver
 pkgver=0.1.0.rSOURCE_REV
-pkgrel=1
+pkgrel=2
 pkgdesc='NVIDIA N1X NPU kernel driver, compiler, and ONNX runtime for Linux'
 arch=('aarch64')
 license=('GPL-2.0-only')
@@ -48,10 +48,8 @@ package() {
     "${pkgdir}/usr/share/doc/${pkgname}/README.md"
   install -Dm644 "${srcdir}/npu-source/packaging/udev/99-n1x-npu.rules" \
     "${pkgdir}/usr/lib/udev/rules.d/99-n1x-npu.rules"
-  install -Dm644 "${srcdir}/npu-source/packaging/systemd/n1x-npu.service" \
-    "${pkgdir}/usr/lib/systemd/system/n1x-npu.service"
-  install -Dm755 "${srcdir}/npu-source/packaging/systemd/n1x-npu-stop" \
-    "${pkgdir}/usr/lib/n1x-npu/stop"
+  install -Dm755 "${srcdir}/npu-source/packaging/tools/n1x-npu-stop" \
+    "${pkgdir}/usr/bin/n1x-npu-stop"
   install -Dm755 "${srcdir}/npu-source/runtime/libn1x_dla.so" \
     "${pkgdir}/usr/lib/libn1x_dla.so"
   install -Dm755 "${srcdir}/npu-source/runtime/libn1x_compiler.so" \

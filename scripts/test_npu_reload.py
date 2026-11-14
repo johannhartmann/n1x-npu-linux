@@ -12,7 +12,7 @@ import qualify_npu_reload as q
 
 
 def service_stop_tests():
-    helper = (q.ROOT / 'packaging/systemd/n1x-npu-stop').read_text()
+    helper = (q.ROOT / 'packaging/tools/n1x-npu-stop').read_text()
     for mode in ('not-loaded', 'missing', 'multiple', 'stop-error', 'busy', 'ok'):
         with tempfile.TemporaryDirectory(prefix='n1x-service-stop-') as tmp:
             root = Path(tmp)

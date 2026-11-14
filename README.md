@@ -68,7 +68,7 @@ See [docs/setup.md](docs/setup.md) for vendor firmware/compiler acquisition and 
 | `driver/`, `include/`, `patches/` | Kernel module (`n1x_npu_bootstrap.ko`), `/dev/accel/accel0` UAPI (`uapi/n1x_dla_accel.h`), compiler/ORT C ABIs (`n1x_compiler.h`, `n1x_ort.h`), and kernel patches |
 | `runtime/` | Native `t254` compiler (`libn1x_compiler.so`, `n1x-compile`), ONNX EP (`libn1x_ort.so`, `n1x-ort-run`, `n1x_ort.py`), and cuDLA backend (`libnvcudla.so`) |
 | `demo/` | `./demo-onnx`, `./demo-superres`, `./demo-denoise`, and `./demo-classify` |
-| `packaging/`, `config/` | Arch `PKGBUILD`, `systemd` service (`n1x-npu.service`), and `udev` rules (`99-n1x-npu.rules`) |
+| `packaging/`, `config/` | Arch `PKGBUILD`, explicit stop tool and accelerator access rules |
 | `scripts/` | Qualification tools, packaging helpers, and unit/fault-injection test suites |
 | `docs/` | [Architecture](docs/architecture.md), [setup](docs/setup.md), [status](docs/status.md), [shutdown/reload](docs/shutdown-reload.md), [cuDLA backend](docs/cudla-backend.md), and [packaging/updates](docs/updates.md) |
 
