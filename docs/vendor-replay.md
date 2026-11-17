@@ -116,6 +116,12 @@ The static inventory establishes the following boundaries:
   then calls `nvdla::IRuntime::submit` at `0x18002b328`. These are the first
   verified hops from the public APIs; neither export itself constructs the
   D3DKMT private buffer.
+- The runtime submit continues through `0x180026590` to `0x180021958` and
+  `0x180021cd8`. The latter walks 0x58-byte task records, branches on record
+  types 1 and 2 (`0x180025d08` and `0x18003e8c8`), and then queues the work
+  through `0x1800220f0`. This narrows the next inspection to the record-specific
+  builders and the queue drain. The meaning of their fields and the eventual
+  KMD buffer still need data-flow verification.
 - The three platform drivers are separate ACPI services: `nvpep.inf` binds
   `NVDA6210` as boot-start, `nvSCP.inf` binds `NVDA8200` on demand, and
   `nvsrootmbx.inf` binds `NVDA8600` on demand. Their import tables contain no
