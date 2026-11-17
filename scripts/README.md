@@ -11,6 +11,7 @@
 | `qualify_npu_reload.py` | Physical startup, cuDLA inference, `REEXEC` reuse, HFRP power-down, unload, and reload qualification |
 | `qualify_cudla.py` | Physical cuDLA qualification (`--reuse` exercises `REEXEC_IO` across changing inputs) |
 | `replay_windows_startup.py`, `replay_firmware_hfrp.py` | Optional, hash-pinned Unicorn replays of original Windows startup and RV32 firmware client code; private memory only |
+| `inspect_windows_stack.py` | Optional, hash-pinned static PE import/export/string inventory of Windows DLA and related platform drivers; no execution |
 
 ## `Makefile` Test Targets
 

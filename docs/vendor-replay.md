@@ -80,6 +80,52 @@ HFRP controller/server, and behavior of this optional plaintext variant cannot
 be projected onto the production image. It supplies neither a controller reset
 contract nor a DMA-quiescence guarantee.
 
+## Windows userspace and platform-driver boundary
+
+[`inspect_windows_stack.py`](../scripts/inspect_windows_stack.py) checks the
+SHA-256 and ARM64 PE imports/exports of the pinned 617.42 display-driver files.
+With the separately extracted platform-driver package, it also checks the
+matching `nvpep.sys`, `nvSCP.sys` and `nvsrootmbx.sys`. For example:
+
+```sh
+venv/bin/python scripts/inspect_windows_stack.py \
+  --platform-driverstore /absolute/path/to/Windows/System32/DriverStore/FileRepository
+```
+
+The static inventory establishes the following boundaries:
+
+- `nvcudla.dll` imports `cuGetExportTable` from `nvcuda.dll`, and imports
+  `GetProcAddress` from `KERNEL32.dll`. Its `D3DKMTSubmitCommand` string at RVA
+  `0xc2468` is passed to `GetProcAddress` at VA `0x18000bc80`; the resolved
+  pointer is stored at `[x19+0xd8]` at `0x18000bc94`. This identifies a
+  dynamically resolved Windows graphics-kernel submission entry point. It
+  does not reveal the submitted private-data layout or prove a DLA job ran.
+- `nvdla_runtime.dll` exports `NvDlaRuntimeSubmit`, contains `NvDlaKmdSubmit`
+  and D3DKMT function names, and imports `GetProcAddress` but no D3DKMT entry
+  point directly. `nvcudla.dll` exports `cudlaDrvSubmitTask`. The next analysis
+  boundary is the call and data flow from these exports to the resolved
+  `D3DKMTSubmitCommand` pointer and its private command buffer.
+- The three platform drivers are separate ACPI services: `nvpep.inf` binds
+  `NVDA6210` as boot-start, `nvSCP.inf` binds `NVDA8200` on demand, and
+  `nvsrootmbx.inf` binds `NVDA8600` on demand. Their import tables contain no
+  cross-driver import, and these INF files declare no explicit service
+  dependency among the three. This does not rule out runtime, ACPI or firmware
+  interaction. No DLA HFRP peer-start sequence has been identified in them.
+
+The four non-plaintext envelopes in `nvlddmkm.sys` must not be counted as four
+new controller images. One at offset `0x1403000` is exactly the already pinned
+`sroot-v0.bin` (SHA-256 `0f16911cced7bb95773da5aff9d9a44dfd1b1a11f3c560ee698a5c99310ff2c4`).
+All four share the same signed-native envelope layout and 404-byte prefix as
+the plaintext families. Their payloads do not begin with the plaintext
+`0x10fe` header. Without a decoder or loader-path classification, their role
+and plaintext contents remain unknown.
+
+The actionable offline work is now to trace the Windows submit buffer and the
+loaders selecting these envelope variants, then compare any proven pre-HFRP
+dependency with Linux startup. A Windows driver reporting successful device
+start cannot establish that DLA task submission succeeded; the current replay
+also demonstrates successful outer initialization after some HFRP failures.
+
 ## Reproducibility boundary
 
 `make check` does not require proprietary inputs, `pefile`, or Unicorn. It runs
