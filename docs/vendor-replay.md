@@ -137,6 +137,15 @@ the plaintext families. Their payloads do not begin with the plaintext
 `0x10fe` header. Without a decoder or loader-path classification, their role
 and plaintext contents remain unknown.
 
+Each of the ten envelope addresses has one 64-bit pointer in a nearby KMD
+table at file offsets `0x108d878` through `0x108d930`, followed by its byte
+length (`67508` or `77492`). Two preceding 32-bit values are `0x254` and
+`0x256` at offsets `0x108d870` and `0x108d8d8`, respectively. Their purpose
+is not established, and the table alone does not tell us which entry Windows
+loads on a particular device. Static full-image radare2 analysis did not
+resolve a direct code reference to the first table address `0x14108fc70`;
+the loader-selection path remains open.
+
 The actionable offline work is now to trace the Windows submit buffer and the
 loaders selecting these envelope variants, then compare any proven pre-HFRP
 dependency with Linux startup. A Windows driver reporting successful device

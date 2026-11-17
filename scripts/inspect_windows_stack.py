@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import struct
 
 import pefile
 
@@ -24,6 +25,30 @@ PLATFORM = {
 }
 INTERESTING = (b'D3DKMTSubmitCommand', b'D3DKMTEscape', b'D3DKMTCreateAllocation',
                b'NvDlaKmdSubmit', b'HFRP is busy')
+FIRMWARE_POINTERS = (0x108d878, 0x108d888, 0x108d8a8, 0x108d8b8,
+                     0x108d8e0, 0x108d8f0, 0x108d900, 0x108d910,
+                     0x108d920, 0x108d930)
+
+
+def firmware_table(path):
+    raw = path.read_bytes()
+    image = pefile.PE(data=raw, fast_load=True)
+    if struct.unpack_from('<I', raw, 0x108d870)[0] != 0x254 or \
+            struct.unpack_from('<I', raw, 0x108d8d8)[0] != 0x256:
+        raise ValueError('unexpected KMD firmware table markers')
+    rows = []
+    for offset in FIRMWARE_POINTERS:
+        address, size = struct.unpack_from('<QQ', raw, offset)
+        rva = address - image.OPTIONAL_HEADER.ImageBase
+        envelope = image.get_data(rva, size)
+        if size not in (67508, 77492) or len(envelope) != size or \
+                not envelope.startswith(b'\x02\x03\x0c\x00'):
+            raise ValueError(f'invalid KMD firmware table row at {offset:#x}')
+        rows.append({'table_offset': hex(offset), 'image_rva': hex(rva),
+                     'bytes': size, 'sha256': hashlib.sha256(envelope).hexdigest()})
+    if len({row['image_rva'] for row in rows}) != 10:
+        raise ValueError('duplicate KMD firmware table address')
+    return rows
 
 
 def inspect(path, expected):
@@ -65,6 +90,7 @@ def main():
     results = {'hardware_access': False, 'display_driver': {}, 'platform': {}}
     for name, digest in ((Path(MANUAL[0][0]).name, MANUAL[0][1]), *WINDOWS.items()):
         results['display_driver'][name] = inspect(args.display_driver / name, digest)
+    results['firmware_table'] = firmware_table(args.display_driver / Path(MANUAL[0][0]).name)
     if args.platform_driverstore:
         for name, (folder, digest) in PLATFORM.items():
             matches = sorted(args.platform_driverstore.glob(f'{folder}/{name}'))
