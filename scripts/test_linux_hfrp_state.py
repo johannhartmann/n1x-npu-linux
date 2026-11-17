@@ -22,6 +22,7 @@ def main():
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -52,6 +53,25 @@ static void n1x_boot_delay(void *ctx,u32 us) {(void)ctx;(void)us;assert(0);}
  */
 static int sysfs_emit(char *buf,const char *fmt,...)
 {assert(boot_lock && strstr(fmt,"query_raw=%#x") && strstr(fmt,"query_error=%d"));
+ assert(strstr(fmt,"stage=%s initial_stamp_valid=%u initial_stamp=%#x") &&
+        strstr(fmt,"wait_offset=%#x wait_valid=%u wait_value=%#x wait_reads=%u"));
+ va_list args;va_start(args,fmt);
+ assert(!strcmp(va_arg(args,const char *),boot_hfrp.stage ?: "not-started"));
+ assert(va_arg(args,int)==boot_hfrp.initial_stamp_valid);
+ assert(va_arg(args,unsigned)==boot_hfrp.initial_stamp);
+ assert(va_arg(args,int)==boot_hfrp.handshake.mode_select_attempted);
+ assert(va_arg(args,int)==boot_hfrp.handshake.mode_selected);
+ assert(va_arg(args,int)==boot_hfrp.handshake.reset_attempted);
+ assert(va_arg(args,int)==boot_hfrp.handshake.reset_completed);
+ assert(va_arg(args,int)==boot_hfrp.handshake.peer_ready);
+ assert(va_arg(args,int)==boot_hfrp.handshake.ack_completed);
+ assert(va_arg(args,unsigned)==boot_hfrp.handshake.wait_offset);
+ assert(va_arg(args,int)==boot_hfrp.handshake.wait_value_valid);
+ assert(va_arg(args,unsigned)==boot_hfrp.handshake.wait_value);
+ assert(va_arg(args,unsigned)==boot_hfrp.handshake.wait_reads);
+ assert(va_arg(args,int)==boot_hfrp.handshake.tx.head_publish_attempted);
+ assert(va_arg(args,int)==boot_hfrp.handshake.reply_valid);
+ assert(va_arg(args,unsigned)==boot_hfrp.handshake.reply.header);va_end(args);
  emits++;strcpy(buf,"cached");return 6;}
 ''' + state + r'''
 int n1x_hfrp_query_power_state(const struct n1x_dla_io *io,struct n1x_hfrp_channel *c,
@@ -85,7 +105,14 @@ static void cached(void)
  assert(!strcmp(buf,"cached") && queries==calls && !boot_lock);
  assert(hfrp_status_show(&other_dev,NULL,buf)==-ENODEV && !boot_lock);cases++;}
 int main(void)
-{reset();privileged=false;rejected(&dla_dev,"query\n",-EPERM,0);
+{reset();cached();
+ boot_hfrp.stage="handshake";boot_hfrp.initial_stamp_valid=true;boot_hfrp.initial_stamp=0x20251722;
+ boot_hfrp.handshake.mode_select_attempted=boot_hfrp.handshake.mode_selected=1;
+ boot_hfrp.handshake.reset_attempted=1;boot_hfrp.handshake.wait_offset=0x100;
+ boot_hfrp.handshake.wait_value_valid=1;boot_hfrp.handshake.wait_value=1;boot_hfrp.handshake.wait_reads=5001;
+ struct n1x_boot_hfrp_state snapshot=boot_hfrp;cached();
+ assert(!memcmp(&snapshot,&boot_hfrp,sizeof(snapshot)));
+ reset();privileged=false;rejected(&dla_dev,"query\n",-EPERM,0);
  reset();rejected(&dla_dev,"query extra\n",-EPERM,0);
  reset();boot_dla=NULL;rejected(&dla_dev,"query\n",-ENODEV,1);
  reset();rejected(&other_dev,"query\n",-ENODEV,1);

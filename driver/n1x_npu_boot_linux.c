@@ -99,6 +99,8 @@ struct n1x_boot_shutdown_state {
 struct n1x_boot_hfrp_state {
 	struct n1x_hfrp_channel channel;
 	struct n1x_hfrp_version version;
+	/* Version/setup/power commands overwrite exchange; retain startup proof. */
+	struct n1x_hfrp_exchange_result handshake;
 	struct n1x_hfrp_exchange_result exchange;
 	struct n1x_hfrp_setup_result setup;
 	struct n1x_dla_vbios_policy policy;
@@ -109,6 +111,9 @@ struct n1x_boot_hfrp_state {
 	bool state_attempted;
 	int state_error;
 	bool attempted, powered;
+	const char *stage;
+	u32 initial_stamp;
+	bool initial_stamp_valid;
 	u32 phase;
 	int error;
 };
@@ -578,26 +583,40 @@ static int n1x_boot_prepare_hfrp_once(struct n1x_boot_context *boot)
 	u32 stamp;
 	int err;
 
-	if (!boot->dla || !boot->dla->hfrp || !boot->sroot)
-		return -ENODEV;
 	if (boot->hfrp.attempted || boot->upload_attempted)
 		return -EALREADY;
+	boot->hfrp.initial_stamp = 0;
+	boot->hfrp.initial_stamp_valid = false;
+	boot->hfrp.stage = "endpoints";
+	if (!boot->dla || !boot->dla->hfrp || !boot->sroot)
+		return -ENODEV;
+	boot->hfrp.stage = "dla-dma";
 	err = n1x_boot_dma_gate(boot->dla);
-	if (!err)
-		err = n1x_boot_dma_gate(boot->sroot);
 	if (err)
 		return err;
+	boot->hfrp.stage = "sroot-dma";
+	err = n1x_boot_dma_gate(boot->sroot);
+	if (err)
+		return err;
+	boot->hfrp.stage = "vbios-policy";
 	err = n1x_boot_live_board_policy(boot);
 	if (err)
 		return err;
+	boot->hfrp.stage = "runtime-pm";
 	err = pm_runtime_resume_and_get(boot->dla->dev);
 	if (err < 0)
 		return err;
+	boot->hfrp.stage = "stamp";
 	err = n1x_boot_hfrp_read(boot->dla, 0, &stamp);
+	if (!err) {
+		boot->hfrp.initial_stamp = stamp;
+		boot->hfrp.initial_stamp_valid = true;
+	}
 	if (!err && stamp < 0x20250425)
 		err = -EOPNOTSUPP;
 	if (err)
 		goto put;
+	boot->hfrp.stage = "module-reference";
 	if (!try_module_get(THIS_MODULE)) {
 		err = -ENODEV;
 		goto put;
@@ -608,11 +627,13 @@ static int n1x_boot_prepare_hfrp_once(struct n1x_boot_context *boot)
 	boot->hfrp.attempted = true;
 	boot->hfrp_held = true;
 	boot->hfrp.phase = 1;
+	boot->hfrp.stage = "handshake";
 	err = n1x_hfrp_handshake(&io, &boot->hfrp.channel, 5001, 1000,
-				 &boot->hfrp.exchange);
+				 &boot->hfrp.handshake);
 	if (err)
 		goto done;
 	boot->hfrp.phase = 2;
+	boot->hfrp.stage = "version";
 	err = n1x_hfrp_discover_version(&io, &boot->hfrp.channel, 5001, 1000,
 					&boot->hfrp.version,
 					&boot->hfrp.exchange);
@@ -622,23 +643,31 @@ static int n1x_boot_prepare_hfrp_once(struct n1x_boot_context *boot)
 	if (err)
 		goto done;
 	boot->hfrp.phase = 3;
+	boot->hfrp.stage = "policy";
 	err = n1x_hfrp_configure_policy(&io, &boot->hfrp.channel,
 					&boot->hfrp.version, &boot->hfrp.policy,
 					5001, 1000, &boot->hfrp.setup);
 	if (err)
 		goto done;
 	boot->hfrp.phase = 4;
+	boot->hfrp.stage = "power-on";
 	err = n1x_hfrp_power_on(&io, &boot->hfrp.channel, &boot->hfrp.version,
 				boot->hfrp.gating.policy_bytes[2], 5001, 1000,
 				&boot->hfrp.exchange);
 	if (!err) {
 		WRITE_ONCE(boot->hfrp.powered, true);
 		boot->hfrp.phase = 5;
+		boot->hfrp.stage = "ready";
 	}
 done:
 	dev_info(boot->dla->dev,
-		 "HFRP phase=%u error=%d version=%u.%u command=%u completed=%u setup_reply=%#x/%u final_reply=%#x/%u power_accepted=%u; retained until checked shutdown\n",
-		boot->hfrp.phase, err, boot->hfrp.version.major,
+		 "HFRP stage=%s phase=%u error=%d stamp_valid=%u stamp=%#x reset_completed=%u peer_ready=%u wait_offset=%#x wait_valid=%u wait_value=%#x wait_reads=%u version=%u.%u command=%u completed=%u setup_reply=%#x/%u final_reply=%#x/%u power_accepted=%u; retained until checked shutdown\n",
+		boot->hfrp.stage, boot->hfrp.phase, err,
+		boot->hfrp.initial_stamp_valid, boot->hfrp.initial_stamp,
+		boot->hfrp.handshake.reset_completed, boot->hfrp.handshake.peer_ready,
+		boot->hfrp.handshake.wait_offset, boot->hfrp.handshake.wait_value_valid,
+		boot->hfrp.handshake.wait_value, boot->hfrp.handshake.wait_reads,
+		boot->hfrp.version.major,
 		boot->hfrp.version.minor, boot->hfrp.setup.command,
 		boot->hfrp.setup.completed_commands,
 		boot->hfrp.setup.exchange.reply.header,
@@ -2034,7 +2063,18 @@ static ssize_t hfrp_status_show(struct device *dev, struct device_attribute *att
 		return -ENODEV;
 	}
 	size = sysfs_emit(buf,
-			  "attempted=%u phase=%u error=%d state=%u pending=%u stamp=%#x version=%u.%u configured=%u command=%u completed=%u setup_reply=%#x setup_length=%u setup_payload=%*phN final_reply=%#x final_length=%u final_payload=%*phN power_accepted=%u frequency_khz=%u gating=%#x query_attempted=%u query_error=%d query_valid=%u query_raw=%#x query_reply=%#x query_length=%u query_payload=%*phN\n",
+			  "stage=%s initial_stamp_valid=%u initial_stamp=%#x mode_select_attempted=%u mode_write_completed=%u reset_attempted=%u reset_completed=%u peer_ready=%u handshake_ack_completed=%u wait_offset=%#x wait_valid=%u wait_value=%#x wait_reads=%u handshake_head_attempted=%u handshake_reply_valid=%u handshake_reply=%#x attempted=%u phase=%u error=%d state=%u pending=%u stamp=%#x version=%u.%u configured=%u command=%u completed=%u setup_reply=%#x setup_length=%u setup_payload=%*phN final_reply=%#x final_length=%u final_payload=%*phN power_accepted=%u frequency_khz=%u gating=%#x query_attempted=%u query_error=%d query_valid=%u query_raw=%#x query_reply=%#x query_length=%u query_payload=%*phN\n",
+		boot->hfrp.stage ?: "not-started",
+		boot->hfrp.initial_stamp_valid, boot->hfrp.initial_stamp,
+		boot->hfrp.handshake.mode_select_attempted,
+		boot->hfrp.handshake.mode_selected,
+		boot->hfrp.handshake.reset_attempted,
+		boot->hfrp.handshake.reset_completed, boot->hfrp.handshake.peer_ready,
+		boot->hfrp.handshake.ack_completed,
+		boot->hfrp.handshake.wait_offset, boot->hfrp.handshake.wait_value_valid,
+		boot->hfrp.handshake.wait_value, boot->hfrp.handshake.wait_reads,
+		boot->hfrp.handshake.tx.head_publish_attempted,
+		boot->hfrp.handshake.reply_valid, boot->hfrp.handshake.reply.header,
 		boot->hfrp.attempted, boot->hfrp.phase, boot->hfrp.error,
 		boot->hfrp.channel.state, boot->hfrp.channel.pending_sequence,
 		boot->hfrp.version.stamp, boot->hfrp.version.major,
@@ -2802,6 +2842,8 @@ static int n1x_boot_probe(struct platform_device *pdev)
 	if (err)
 		return err;
 	platform_set_drvdata(pdev, endpoint);
+	dev_dbg(dev, "ACPI %s revision=%#llx registers=%pr mailbox=%pr irq=%d\n",
+		acpi_device_hid(adev), revision, first, second, endpoint->irq);
 	if (sroot) {
 		struct n1x_boot_context *boot = endpoint->boot;
 
@@ -2956,8 +2998,8 @@ static int n1x_master_bind(struct device *master)
 			start_err = n1x_boot_start_once(boot);
 			if (start_err) {
 				dev_err(boot->dla->dev,
-					"automatic startup failed (%d); device remains fail-closed\n",
-					start_err);
+					"automatic startup failed (%d), HFRP stage=%s; device remains fail-closed\n",
+					start_err, boot->hfrp.stage ?: "not-started");
 			} else {
 				/* Keep publication leases until explicit checked shutdown.
 				 * remove() cannot abort module unloading if a later stop fails.

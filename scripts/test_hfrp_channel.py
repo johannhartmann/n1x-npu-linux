@@ -52,7 +52,9 @@ class Result(ctypes.Structure):
                 ('reset_attempted', ctypes.c_uint8), ('reset_completed', ctypes.c_uint8),
                 ('peer_ready', ctypes.c_uint8), ('ack_attempted', ctypes.c_uint8),
                 ('ack_completed', ctypes.c_uint8), ('mode_select_attempted', ctypes.c_uint8),
-                ('mode_selected', ctypes.c_uint8)]
+                ('mode_selected', ctypes.c_uint8),
+                ('wait_offset', ctypes.c_uint32), ('wait_value', ctypes.c_uint32),
+                ('wait_reads', ctypes.c_uint32), ('wait_value_valid', ctypes.c_uint8)]
 
 
 class Peer:
@@ -222,6 +224,8 @@ def main():
         assert code == 0 and channel.state == READY and channel.pending_sequence == NO_SEQUENCE
         assert channel.next_sequence == 2 and result.reply_valid and result.reply.sequence == 1
         assert result.reset_completed and result.peer_ready and result.ack_completed
+        assert result.wait_offset == 0x104 and result.wait_value_valid
+        assert result.wait_value & 2 and result.wait_reads == options.get('ready_delay', 0) + 1
         assert result.mode_selected and peer.trace[0] == ('write', 4, 1)
         assert result.discarded_startup_replies == int(options.get('startup', False))
         assert peer.packets == [bytes.fromhex('090104000000ccdd00')]
@@ -245,8 +249,42 @@ def main():
             assert channel.pending_sequence == 1 and len(peer.packets) == 1
         if options.get('never_reset') or options.get('never_ready'):
             assert not peer.packets
+            assert result.wait_value_valid and result.wait_reads == 4
+            assert result.wait_offset == (0x100 if options.get('never_reset') else 0x104)
+            assert result.wait_value == (1 if options.get('never_reset') else 0)
+            assert bool(result.reset_completed) == bool(options.get('never_ready'))
+            assert not result.peer_ready
         failed_gate(peer, channel)
         cases.append({'case': 'handshake_failure', 'options': options, 'status': code})
+    # Public #30 register values with synthetic ring noise, not a hardware dump.
+    # An already-selected mode is not evidence that the peer can accept reset.
+    peer = Peer(never_reset=True)
+    noise = bytes((i * 37 + 11) & 255 for i in range(0xf0))
+    peer.ram[0x10:0x100] = noise
+    peer.ram[0x110:0x200] = noise
+    for offset, value in ((0, 0x20251722), (4, 1), (8, 0x683), (12, 0x05900000)):
+        peer.put(offset, value)
+    code, channel, result = handshake(peer, polls=5001)
+    assert code == -errno.ETIMEDOUT and result.mode_selected and result.reset_attempted
+    assert not result.reset_completed and not result.peer_ready and not result.ack_attempted
+    assert result.wait_offset == 0x100 and result.wait_value_valid
+    assert result.wait_value == 1 and result.wait_reads == 5001
+    assert len(peer.delays) == 5000 and not peer.packets
+    assert [entry for entry in peer.trace if entry[0] == 'write'] == [('write', 4, 1), ('write', 0x100, 1)]
+    failed_gate(peer, channel)
+    cases.append({'case': 'surface_30_reset_unconsumed_synthetic', 'polls': 5001})
+    # A failing accessor must not turn "not observed" into a successful read
+    # of zero. Keep the last successful value when a later read fails.
+    for successful_reads in (0, 1):
+        peer = Peer(never_reset=True)
+        peer.fail_at = 2 + successful_reads
+        code, channel, result = handshake(peer)
+        assert code == -errno.EIO and result.wait_offset == 0x100
+        assert result.wait_reads == successful_reads
+        assert bool(result.wait_value_valid) == bool(successful_reads)
+        assert result.wait_value == successful_reads
+        failed_gate(peer, channel)
+    cases.append({'case': 'poll_read_failure_preserves_validity'})
     # A confirmed command-level failure does not lose transport ownership.
     peer = Peer()
     _, channel, _ = handshake(peer)

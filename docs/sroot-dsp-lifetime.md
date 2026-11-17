@@ -37,9 +37,9 @@ P16 platform repository. Windows code is never executed by these checks.
 exchange failures, noncanonical replies, all three successful uploads and
 eight concurrent same-image callers. The shutdown tests independently check
 that a published lease with no CPU/DMA allocation still prevents shutdown.
-ABI v2 is an uninstalled candidate and has no hardware release qualification.
-Verified DSP core shutdown, operating-memory/provider-lease release and a
-fresh-boot hardware trial remain required.
+Staging release does not retire a published core. The current ABI v5 consumer
+and its native qualification are described below; v1/v2 alone provide no
+whole-core shutdown or provider-lease retirement contract.
 
 ## Device-bound ABI v3
 
@@ -60,11 +60,11 @@ staging rules. A failed upload cannot undo an earlier DSP address publication.
 
 The captured firmware has no `_DEP`/`_DSD` association for these devices. Unique
 siblings are therefore a checked platform fallback, not a universal firmware
-binding. Whole-core DSP shutdown remains unverified. ABI v3 does not make
-published DSPs removable or suspendable, and has not yet been loaded for a
-fresh-boot hardware trial.
+binding. ABI v3 does not itself make published DSPs removable or suspendable.
+The later interfaces add explicit sleep and shutdown contracts; their native
+qualification does not grant those operations to legacy v3 handles.
 
-## Retained system sleep (ABI v4 candidate)
+## Retained system sleep (ABI v4)
 
 `n1x_sroot_client_ops_v4()` adds a separate sleep operation table; v1/v2/v3
 interfaces and their fail-closed stop behavior remain intact. Its client
@@ -101,13 +101,17 @@ closed instead of attempting either access.
 
 The matching platform DSP driver limits this to ASoC-ordered DSP s2idle with retained AFE SRAM and defaults
 its experimental `enable_retention_sleep` option off. Legacy active clients without ASoC ordering, Hibernate and deep sleep remain
-unsupported. Runtime autosuspend and full DSP release are still unavailable. SET acknowledgement and
-matching SRAM descriptors alone do not prove firmware liveness or safe DMA
-reclamation. Hardware sleep/audio/NPU qualification is still pending; this is
-not a claim that published DSP suspend now works on the running machine.
+unsupported. Runtime autosuspend remains unavailable. Retained sleep does not
+release DSP memory or provider leases; explicit retirement belongs to ABI v5
+below. SET acknowledgment and matching SRAM descriptors alone do not prove firmware liveness or safe DMA
+reclamation. The companion kernel36
+[native qualification](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/blob/main/docs/evidence/kernel36-native-20261117.json)
+subsequently passed physical s2idle and post-resume audio/NPU checks on the P16
+with DSP 0.1.26 and AFE 0.1.29. Repeated long physical sleep, other boards and
+recovery from a hung firmware channel remain outside that evidence.
 
 
-## ABI v5 explicit shutdown candidate
+## ABI v5 explicit shutdown
 
 `n1x_sroot_client_ops_v5()` adds exclusive image reservation and explicit
 shutdown admission, quiesce recording and retirement. The consumer must first
@@ -125,6 +129,8 @@ replace stale startup descriptors. Keep this provider loaded across DSP/AFE
 reloads so the record remains available. Existing v1-v4 tables retain their
 semantics; none gains an implicit release operation.
 
-This source path is not yet hardware-qualified. Its consumer, kernel transport
-prerequisite, failure policy and two-cycle qualification procedure are maintained
-in the [platform audio guide](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/blob/main/docs/audio.md#module-reload-qualification).
+The same native qualification records two checked DSP/AFE reloads and numerical
+NPU verification with the deployed ABI v5 provider. This does not establish
+release after an uncertain stop. Its consumer, kernel transport prerequisite,
+failure policy and two-cycle procedure are maintained in the
+[platform audio guide](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/blob/main/docs/audio.md#module-reload-qualification).

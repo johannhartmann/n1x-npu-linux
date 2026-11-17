@@ -17,10 +17,13 @@ If any shutdown step fails, `accel->stop_failed` is set to `true` (and `boot_shu
 Published legacy [DSP client leases](sroot-dsp-lifetime.md) prevent this shutdown
 sequence with `EBUSY`, before accelerator or power changes. Retention-aware v4
 clients permit only system sleep after all DSP D3 votes, while retaining every
-DSP/provider lease; ordinary shutdown remains prohibited. Their guard is
-independent of whether temporary image staging remains allocated. A verified
-DSP core shutdown and provider-lease release contract is still required before
-the shared NPU/SROOT provider may shut down in that state.
+DSP/provider lease; ordinary shutdown remains prohibited while those leases
+exist. Their guard is independent of whether temporary image staging remains
+allocated. Current ABI v5 consumers can retire a lease only after checked core
+quiesce and the shared retirement barrier. Stop/remove those DSP/AFE consumers
+through the [companion procedure](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/blob/main/docs/audio.md#module-reload-qualification)
+before attempting to stop/unload the shared NPU/SROOT provider. Sleeping a DSP
+or freeing its staging buffer is not a substitute.
 
 Run the offline shutdown and transport regression suite:
 
@@ -68,5 +71,8 @@ Device-bound DSP clients also reserve the provider **before** publishing their
 own DRAM address. Stop and PM preparation reject even this pre-upload
 reservation. It can be canceled only before DSP publication. Unpublished DSP
 modules must be removed before unloading the NPU provider, because their
-probe-time handles hold its module and device references. A published DSP
-still requires a reboot; force unload is not a qualification procedure.
+probe-time handles hold its module and device references. A published legacy
+DSP or one whose checked quiesce/retirement failed still prevents unload;
+the successfully qualified ABI v5 path permits controlled DSP/AFE reload.
+An uncertain hardware state can still require a reboot. Force unload is not
+a qualification procedure. See [robustness boundaries](robustness.md).

@@ -74,6 +74,14 @@ struct n1x_hfrp_exchange_result {
 	__u8 ack_completed;
 	__u8 mode_select_attempted;
 	__u8 mode_selected;
+	/* Last reset/ready polling observation; never an additional MMIO read.
+	 * wait_reads counts successful reads of wait_offset. A failed read does
+	 * not invalidate an earlier observation or manufacture a zero value.
+	 */
+	__u32 wait_offset;
+	__u32 wait_value;
+	__u32 wait_reads;
+	__u8 wait_value_valid;
 };
 
 int n1x_hfrp_handshake(const struct n1x_dla_io *io,

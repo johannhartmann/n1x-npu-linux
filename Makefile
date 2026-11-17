@@ -32,6 +32,7 @@ test-portable:
 	$(PYTHON) scripts/test_linux_boot_delay.py
 	$(PYTHON) scripts/test_linux_bootstrap_ping.py
 	$(PYTHON) scripts/test_linux_hfrp_state.py
+	$(PYTHON) scripts/test_linux_hfrp_startup.py
 	$(PYTHON) scripts/test_linux_config_snapshot.py
 	$(PYTHON) scripts/test_linux_config_apply.py
 	$(PYTHON) scripts/test_linux_bypass_task.py

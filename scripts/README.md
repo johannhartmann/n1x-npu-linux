@@ -16,7 +16,7 @@
 | Target | Scope | Prerequisites |
 | --- | --- | --- |
 | `make check` | `check-repo` + `test-portable` (CI default) | Python 3.12 + C compiler |
-| `make test-portable` | 16 C/Python unit tests covering ACPI SROOT coherency, HFRP setup/shutdown, VBIOS policy, `/dev/accel` ioctls, `mmap`, statistics, preemption, and reload | Python 3.12 + C compiler |
+| `make test-portable` | C/Python tests covering ACPI SROOT coherency, HFRP startup failure/ownership and cached diagnostics, setup/shutdown, VBIOS policy, `/dev/accel` ioctls, `mmap`, statistics, preemption, and reload | Python 3.12 + C compiler |
 | `make test-compiler` | Native `t254` compiler (`test_n1x_compiler.py`), ONNX EP (`test_n1x_ort.py`), and super-resolution tiling (`test_superres_image.py`) | `make runtime` |
 | `make test-cudla` | `libnvcudla.so` model, API, CUDA staging, and vision partition tests | CUDA driver + cuDLA archive |
 | `make module` | Build `n1x_npu_bootstrap.ko` against `KERNEL_RELEASE` | Matching kernel headers |

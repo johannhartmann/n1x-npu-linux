@@ -62,13 +62,19 @@ reconstructs the task graph on normal PCM preparation with the same retained
 allocations and ALSA owner. Consumer fault tests cover missing/invalid replies,
 stale ready completion, every reconstruction request and close-before-prepare.
 
-Complete DSP resume remains hardware-unqualified. The preceding 0.1.22
-device-only suspend test restored the NPU/provider but found changed DSP SRAM
-and correctly blocked the old retention-only consumer. No physical standby was
-attempted after that failure. The new export is not a userspace reset/recovery
-interface.
+The preceding 0.1.22 device-only test found changed DSP SRAM and correctly
+blocked the old retention-only consumer. The companion kernel36 subsequently
+passed audio/NPU reload checks and physical s2idle with DSP 0.1.26 and AFE
+0.1.29; the exact scope is recorded in the
+[native qualification](https://github.com/johannhartmann/asus-proart-p16-rtx-spark-linux/blob/main/docs/evidence/kernel36-native-20261117.json).
+This is P16 evidence for the deployed revision, not proof of arbitrary firmware
+recovery, other boards or the latest uninstalled source changes. The REINIT
+export is not a userspace reset/recovery interface.
 
 ## 2. VBIOS Policy & HFRP Bring-Up
+
+See [startup diagnostics and recovery boundaries](robustness.md) for cached
+failure evidence, the Windows comparison and the unresolved cross-board contract.
 
 ### Live VBIOS Carveout (GB10/T264 display / `0x1182bc80`)
 [`n1x_boot_live_board_policy()`](../driver/n1x_npu_boot_linux.c) reads the GB10/T264 display locator register (`0x1182bc80`), computes the 32-bit physical carveout base (`(((u64)locator << 12) + N1X_VBIOS_CARVEOUT_BASE) & 0xffffffffULL`, yielding `0xe5b81800` for locator `0xffe5b812`), and parses the BIT `0x6c` table ([`driver/n1x_dla_vbios.c`](../driver/n1x_dla_vbios.c)) to extract the board's clock/power/gating policy (`892.8 MHz` nominal, gating mask `0x70`).

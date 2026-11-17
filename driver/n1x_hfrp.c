@@ -171,15 +171,23 @@ static int hfrp_parameters(const struct n1x_dla_io *io,
 }
 
 static int hfrp_wait_bit(const struct n1x_dla_io *io, __u32 offset,
-			 __u32 mask, __u32 expected, __u32 polls, __u32 interval)
+			 __u32 mask, __u32 expected, __u32 polls, __u32 interval,
+			 struct n1x_hfrp_exchange_result *result)
 {
 	__u32 i, value;
 	int err;
 
+	result->wait_offset = offset;
+	result->wait_value = 0;
+	result->wait_reads = 0;
+	result->wait_value_valid = 0;
 	for (i = 0; i < polls; ++i) {
 		err = io->read32(io->context, offset, &value);
 		if (err)
 			return err;
+		result->wait_value = value;
+		result->wait_reads++;
+		result->wait_value_valid = 1;
 		if ((value & mask) == expected)
 			return 0;
 		if (i + 1U < polls && interval)
@@ -329,11 +337,11 @@ int n1x_hfrp_handshake(const struct n1x_dla_io *io,
 	err = io->write32(io->context, 0x100, 1);
 	if (err)
 		goto failed;
-	err = hfrp_wait_bit(io, 0x100, 1, 0, polls, interval_us);
+	err = hfrp_wait_bit(io, 0x100, 1, 0, polls, interval_us, result);
 	if (err)
 		goto failed;
 	result->reset_completed = 1;
-	err = hfrp_wait_bit(io, 0x104, 2, 2, polls, interval_us);
+	err = hfrp_wait_bit(io, 0x104, 2, 2, polls, interval_us, result);
 	if (err)
 		goto failed;
 	result->peer_ready = 1;
