@@ -10,7 +10,7 @@ HOST = 0x80000000
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def main():
+def main(extra_cases='', *, extra_helpers='', sanitize=False):
     source = (ROOT / 'driver/n1x_dla_accel.c').read_text()
     body = source[source.index('#define N1X_JOB_PREFIX'):source.index('static int n1x_accel_open(')]
     shim = r'''
@@ -109,6 +109,7 @@ static void dma_wmb(void) {}
 static void dma_rmb(void) {}
 '''
     tests = r'''
+static void randomized_cases(void);
 static struct device device;
 static struct drm_file owner,other;
 static struct n1x_dla_accel accel;
@@ -352,13 +353,17 @@ int main(int argc,char **argv)
  vma.vm_ops->close(&vma);
  assert(!accel.count&&!accel.retained&&frees==frees_before_mapped_stop+1);
  n1x_dla_accel_resume(&accel);assert(!accel.stopped);
+ randomized_cases();
  printf("%d exact accel EXEC cases plus READ/INFO/mmap/ownership/close checks passed; no hardware access\n",cases);
 }
 '''
+    tests += extra_helpers + '\nstatic void randomized_cases(void)\n{\n' + extra_cases + '\n}\n'
     with tempfile.TemporaryDirectory(prefix='n1x-accel-') as directory:
         code, binary = Path(directory)/'test.c', Path(directory)/'test'
         code.write_text('#define CAPTURE_DMA '+hex(HOST)+'ULL\n'+shim + body + tests)
-        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) + [
+        sanitizer_flags = (['-fsanitize=address,undefined', '-fno-sanitize-recover=all',
+                            '-fno-omit-frame-pointer'] if sanitize else [])
+        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) + sanitizer_flags + [
             '-O2', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
             '-I'+str(ROOT/'include'), str(code), str(ROOT/'driver/n1x_dla_task.c'),
             str(ROOT/'driver/n1x_dla_command.c'), str(ROOT/'driver/n1x_dla_statistics.c'),

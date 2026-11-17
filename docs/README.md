@@ -4,6 +4,7 @@
 - [Setup and Reproduction](setup.md): Dependencies, pinned vendor inputs, firmware extraction, model compilation, and module build.
 - [Support Status](status.md): Qualified hardware/software configuration and benchmark summary.
 - [Robustness and Startup Diagnostics](robustness.md): Failure stages, retained handshake evidence, Surface issue #30, Windows reference and hardware recovery boundaries.
+- [Offline Vendor-Code Replay](vendor-replay.md): Pinned Windows initializer and RV32 firmware-client execution, observed error propagation, and explicit emulator boundaries.
 - [Controlled Shutdown and Reload](shutdown-reload.md): HFRP power-down contract, DMA/VMA lifetime, and reload qualification.
 - [Shared SROOT DSP Clients](sroot-dsp-lifetime.md): Image-staging lifetime, retained provider leases and the DSP shutdown guard.
 - [cuDLA Backend](cudla-backend.md): `libnvcudla.so` implementation and hardware qualification.

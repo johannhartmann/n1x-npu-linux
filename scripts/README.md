@@ -10,6 +10,7 @@
 | `qualify_n1x_ort.py` | Physical NPU qualification of `N1xInferenceSession` (`mnist-12`, `emotion-ferplus-8`, `super-resolution-10`, and 3-stage `DLA->Host->DLA`) |
 | `qualify_npu_reload.py` | Physical startup, cuDLA inference, `REEXEC` reuse, HFRP power-down, unload, and reload qualification |
 | `qualify_cudla.py` | Physical cuDLA qualification (`--reuse` exercises `REEXEC_IO` across changing inputs) |
+| `replay_windows_startup.py`, `replay_firmware_hfrp.py` | Optional, hash-pinned Unicorn replays of original Windows startup and RV32 firmware client code; private memory only |
 
 ## `Makefile` Test Targets
 
@@ -17,6 +18,7 @@
 | --- | --- | --- |
 | `make check` | `check-repo` + `test-portable` (CI default) | Python 3.12 + C compiler |
 | `make test-portable` | C/Python tests covering ACPI SROOT coherency, HFRP startup failure/ownership and cached diagnostics, setup/shutdown, VBIOS policy, `/dev/accel` ioctls, `mmap`, statistics, preemption, and reload | Python 3.12 + C compiler |
+| `make research-hfrp` | Execute pinned vendor instructions offline; never part of CI or hardware qualification | `requirements-research.txt` + local verified vendor inputs |
 | `make test-compiler` | Native `t254` compiler (`test_n1x_compiler.py`), ONNX EP (`test_n1x_ort.py`), and super-resolution tiling (`test_superres_image.py`) | `make runtime` |
 | `make test-cudla` | `libnvcudla.so` model, API, CUDA staging, and vision partition tests | CUDA driver + cuDLA archive |
 | `make module` | Build `n1x_npu_bootstrap.ko` against `KERNEL_RELEASE` | Matching kernel headers |

@@ -1,0 +1,3 @@
+# Optional offline vendor-code replays; not driver/runtime dependencies.
+pefile==2024.8.26
+unicorn==2.1.4

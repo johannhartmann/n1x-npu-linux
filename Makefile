@@ -6,12 +6,13 @@ CUDLA_PACKAGE ?= $(CURDIR)/sources/cudla-13.4.92/libcudla-linux-sbsa-13.4.92-arc
 CUDA_ROOT ?= /opt/cuda
 
 .DEFAULT_GOAL := help
-.PHONY: help check check-repo test test-portable module clean runtime compiler ort test-compiler cudla test-cudla
+.PHONY: help check check-repo test test-portable research-hfrp module clean runtime compiler ort test-compiler cudla test-cudla
 
 help:
 	@echo 'make check           Repository consistency and portable driver/runtime unit tests'
 	@echo 'make check-repo      Documentation links, Python syntax, JSON and demo provenance'
 	@echo 'make test-portable   Portable driver/protocol/lifetime unit tests'
+	@echo 'make research-hfrp   Replay pinned Windows/firmware code offline (optional deps and inputs)'
 	@echo 'make runtime cudla   Build userspace compiler, ONNX EP, and cuDLA backend'
 	@echo 'make test-compiler   Run native t254 compiler and ONNX Execution Provider tests'
 	@echo 'make test-cudla      Run cuDLA backend, model, and CUDA staging tests'
@@ -28,6 +29,7 @@ check-repo:
 test-portable:
 	$(PYTHON) scripts/test_prepare_inputs.py
 	$(PYTHON) scripts/test_hfrp_channel.py
+	$(PYTHON) scripts/test_hfrp_fuzz.py
 	$(PYTHON) scripts/test_linux_bootstrap_guards.py
 	$(PYTHON) scripts/test_linux_boot_delay.py
 	$(PYTHON) scripts/test_linux_bootstrap_ping.py
@@ -38,6 +40,7 @@ test-portable:
 	$(PYTHON) scripts/test_linux_bypass_task.py
 	$(PYTHON) scripts/test_linux_fence_order.py
 	$(PYTHON) scripts/test_linux_accel.py
+	$(PYTHON) scripts/test_linux_accel_fuzz.py
 	$(PYTHON) scripts/test_linux_accel_backend.py
 	$(PYTHON) scripts/test_linux_shutdown.py
 	$(PYTHON) scripts/test_firmware_cache.py
@@ -51,6 +54,10 @@ test-portable:
 	$(PYTHON) scripts/test_sroot_cca_quirk.py
 	$(PYTHON) scripts/test_sroot_dsp_broker.py
 	$(PYTHON) scripts/test_sroot_dsp_reinit.py
+
+research-hfrp:
+	$(PYTHON) scripts/replay_windows_startup.py
+	$(PYTHON) scripts/replay_firmware_hfrp.py
 
 module:
 	$(MAKE) -C "/usr/lib/modules/$(KERNEL_RELEASE)/build" M="$(CURDIR)/driver" modules

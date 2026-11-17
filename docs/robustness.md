@@ -98,7 +98,15 @@ r2 -e bin.strings=false -e scr.color=false -q \
 The earlier [original-code replay](https://github.com/johannhartmann/n1x-npu-linux/blob/597ae9d6afa836fb26ab3ea3edf5354bf3ae0be6/docs/hfrp-irq.md#complete-original-handshake-in-the-emulator)
 also observed the ignored initial reset timeout. Linux deliberately rejects
 that timeout. Ignoring it would not resolve the reported missing ready bit.
-This evidence does not identify who starts the HFRP peer on the Surface.
+The current [offline vendor replay](vendor-replay.md) additionally executes the
+original global initializer, HFRP wrapper, mode selector and version discovery.
+It demonstrates that the replayed Windows outer initializer can return success
+with no HFRP context, with HFRP mode 0, or after an early handshake failure;
+the original no-transport power branch executes, while the loader remains
+modeled. This is vendor error-propagation evidence, not an observed Windows
+device or inference run. Device Manager success alone would consequently not
+prove a working DLA transport. This evidence still does not identify who starts
+the HFRP peer on the Surface.
 
 The recovered Windows engine-reset path sends HFRP `RESET_IDLE`, `RESET`,
 then `RESET_IDLE` before loading firmware. The
@@ -116,6 +124,10 @@ balanced cleanup before publication, retained PM/module/context ownership after
 publication, preservation of the initial handshake, and rejection of retries.
 Shutdown, binding, queue and DSP-client tests cover additional lifetime and
 concurrency failures; they do not model an entire SoC or firmware controller.
+Seeded ASan/UBSan property tests add 32,768 malformed HFRP replies and 16,384
+accelerator IOCTL/lifetime combinations. They exercise actual repository C
+functions with bounded host buffers; they do not execute DLA task firmware,
+model arbitrary invalid userspace pointers or prove concurrent hardware safety.
 
 The remaining hardware contracts are:
 
