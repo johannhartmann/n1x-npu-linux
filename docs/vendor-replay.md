@@ -109,6 +109,13 @@ The static inventory establishes the following boundaries:
   dynamic graphics-kernel submission path; the next analysis boundary is the
   data flow from these exports to each DLL's resolved function pointer and
   its private command buffer.
+- The exported `cudlaDrvSubmitTask` at `0x18000d9c8` validates its arguments
+  and dispatches through the device object's vtable slot `0x28` at
+  `0x18000da5c`. The exported `NvDlaRuntimeSubmit` at `0x18002b290` accepts at
+  most four synchronization objects, converts each through `0x18002b588`,
+  then calls `nvdla::IRuntime::submit` at `0x18002b328`. These are the first
+  verified hops from the public APIs; neither export itself constructs the
+  D3DKMT private buffer.
 - The three platform drivers are separate ACPI services: `nvpep.inf` binds
   `NVDA6210` as boot-start, `nvSCP.inf` binds `NVDA8200` on demand, and
   `nvsrootmbx.inf` binds `NVDA8600` on demand. Their import tables contain no
