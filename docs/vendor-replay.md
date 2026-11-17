@@ -102,9 +102,13 @@ The static inventory establishes the following boundaries:
   does not reveal the submitted private-data layout or prove a DLA job ran.
 - `nvdla_runtime.dll` exports `NvDlaRuntimeSubmit`, contains `NvDlaKmdSubmit`
   and D3DKMT function names, and imports `GetProcAddress` but no D3DKMT entry
-  point directly. `nvcudla.dll` exports `cudlaDrvSubmitTask`. The next analysis
-  boundary is the call and data flow from these exports to the resolved
-  `D3DKMTSubmitCommand` pointer and its private command buffer.
+  point directly. Its `D3DKMTSubmitCommand` name at VA `0x180098290` is passed
+  to `GetProcAddress` at `0x180078358`, and the resulting pointer is stored at
+  `[x19+0x70]` at `0x18007836c` in that initialization function.
+  `nvcudla.dll` exports `cudlaDrvSubmitTask`. Both DLLs therefore have a
+  dynamic graphics-kernel submission path; the next analysis boundary is the
+  data flow from these exports to each DLL's resolved function pointer and
+  its private command buffer.
 - The three platform drivers are separate ACPI services: `nvpep.inf` binds
   `NVDA6210` as boot-start, `nvSCP.inf` binds `NVDA8200` on demand, and
   `nvsrootmbx.inf` binds `NVDA8600` on demand. Their import tables contain no
