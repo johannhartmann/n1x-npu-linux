@@ -142,9 +142,10 @@ table at file offsets `0x108d878` through `0x108d930`, followed by its byte
 length (`67508` or `77492`). Two preceding 32-bit values are `0x254` and
 `0x256` at offsets `0x108d870` and `0x108d8d8`, respectively. Their purpose
 is not established, and the table alone does not tell us which entry Windows
-loads on a particular device. Static full-image radare2 analysis did not
-resolve a direct code reference to the first table address `0x14108fc70`;
-the loader-selection path remains open.
+loads on a particular device. A targeted ARM64 ADRP/ADD scan found function
+`0x140d46760`, which returns the table base `0x14108fc70` through its second
+argument and writes value 2 through its third argument. This is a verified
+table-access function, but its caller and loader-selection policy remain open.
 
 The actionable offline work is now to trace the Windows submit buffer and the
 loaders selecting these envelope variants, then compare any proven pre-HFRP
